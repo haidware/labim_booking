@@ -1,0 +1,1 @@
+<table><thead><tr><th>Room</th><th>Method</th><th>Amount</th><th>Balance</th><th>By</th><th>Date</th></tr></thead><tbody>{% for record in payment_records %}<tr>{% for value in record %}<td>{% if loop.index in [3,4] %}₦{{ '{:,.0f}'.format(value) }}{% else %}{{ value }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody></table>

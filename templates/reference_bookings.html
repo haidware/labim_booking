@@ -1,0 +1,1 @@
+<table><thead><tr><th>Room</th><th>Guest</th><th>Status</th><th>Total</th><th>Paid</th><th>Balance</th><th>Method</th></tr></thead><tbody>{% for booking in bookings %}<tr>{% for value in booking %}<td>{% if loop.index in [4,5,6] %}₦{{ '{:,.0f}'.format(value) }}{% else %}{{ value }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody></table>

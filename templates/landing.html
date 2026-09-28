@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HAIDWARE Hotel Booking System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="entry-page">
+  <main class="entry-panel">
+    <h1>HAIDWARE HOTEL BOOKING SYSTEM</h1>
+    <p class="entry-subtitle">Choose your workspace</p>
+    <div class="workspace-cards">
+      <a class="workspace-card" href="{{ url_for('login', role='director') }}"><span class="workspace-icon director">📊</span><strong>Director</strong></a>
+      <a class="workspace-card" href="{{ url_for('login', role='manager') }}"><span class="workspace-icon manager">🏨</span><strong>Manager</strong></a>
+      <a class="workspace-card" href="{{ url_for('login', role='reception') }}"><span class="workspace-icon reception">🛎️</span><strong>Reception</strong></a>
+    </div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Labim Booking OS{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="{{ url_for('dashboard', role=active_role) }}"><span class="brand-mark">L</span><span>labim<span class="brand-muted">/</span>booking</span></a>
+      <div class="workspace-label">Workspace</div>
+      <nav>
+        <a class="nav-item {% if request.endpoint == 'dashboard' %}selected{% endif %}" href="{{ url_for('dashboard', role=active_role) }}"><span>◫</span> Overview</a>
+        <a class="nav-item {% if request.endpoint in ['reservations', 'new_reservation'] %}selected{% endif %}" href="{{ url_for('reservations', role=active_role) }}"><span>▤</span> Reservations</a>
+        <a class="nav-item" href="{{ url_for('dashboard', role=active_role) }}#rooms"><span>□</span> Rooms</a>
+        <a class="nav-item" href="{{ url_for('dashboard', role=active_role) }}#payments"><span>◌</span> Payments</a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="live-indicator"><i></i> Local workspace</div>
+        <div class="user-chip"><span class="avatar">AO</span><span><strong>Admin operator</strong><small>{{ active_role|capitalize }} access</small></span><span class="dots">•••</span></div>
+      </div>
+    </aside>
+    <main class="main-content">
+      <header class="topbar">
+        <div class="mobile-brand">labim<span>/</span>booking</div>
+        <div class="topbar-actions"><span class="date-label">{{ today }}</span><button class="icon-button" aria-label="Notifications">♧<b></b></button><button class="avatar avatar-small">AO</button></div>
+      </header>
+      <div class="page-content">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}<div class="flash-stack">{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+  </div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

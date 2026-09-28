@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Team Accounts | HAIDWARE Hotel Booking System</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference.css') }}">
+</head>
+<body class="reference-app">
+  <header class="reference-header">
+    <div><strong>HAIDWARE HOTEL BOOKING SYSTEM</strong><span>LABIM HOTEL AND SUITE</span><small>Manager</small></div>
+    <nav class="header-nav"><a href="{{ url_for('reference_workspace', role='manager', page='dashboard') }}">🏨 Operational Overview</a><a href="{{ url_for('reference_workspace', role='manager', page='bookings') }}">📅 Bookings</a><a href="{{ url_for('reference_workspace', role='manager', page='finance') }}">📊 Finance</a><a href="{{ url_for('home') }}">Log Out</a></nav>
+  </header>
+  <div class="reference-layout">
+    <aside class="reference-sidebar"><a href="{{ url_for('reference_workspace', role='manager', page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role='manager', page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role='manager', page='bookings') }}">Bookings</a><a href="{{ url_for('reference_workspace', role='manager', page='finance') }}">Booking Finance</a><a class="active" href="{{ url_for('manager_signup') }}">Team Accounts</a></aside>
+    <main class="reference-main account-main">
+      <div class="heading-row"><div><h1>{{ 'Team Accounts' if editing else 'Manager Sign Up' }}</h1><p>{{ 'Create or update the Director and Reception login details.' if editing else 'Create the Manager account and assign access for Director and Reception.' }}</p></div><span class="read-only-note">Manager access</span></div>
+      {% if error %}<div class="account-error">{{ error }}</div>{% endif %}
+      <section class="data-panel account-panel"><div class="panel-heading"><strong>Workspace Credentials</strong><small>Created and managed by Manager</small></div><p class="account-intro">Set the login details that Director and Reception will use to enter their workspaces.</p><form class="reference-account-form" method="post">
+        {% if not editing %}<fieldset><legend>Manager login</legend><label>Username / Staff ID<input name="manager_username" required></label><label>Password<input name="manager_password" type="password" placeholder="Enter password" required></label></fieldset>{% endif %}{% for role_name, label in [('director','Director'),('reception','Reception')] %}<fieldset><legend>{{ label }} login</legend><label>Username / Staff ID<input name="{{ role_name }}_username" value="{{ account_map.get(role_name, '') if account_map else '' }}" required></label><label>Password<input name="{{ role_name }}_password" type="password" placeholder="Enter password" required></label></fieldset>{% endfor %}
+        <div class="account-actions"><span>Passwords are protected by the authentication layer and are never displayed.</span><button class="primary-button" type="submit">{{ 'Save account changes' if editing else 'Create accounts' }}</button></div>
+      </form></section>
+    </main>
+  </div>
+</body>
+</html>

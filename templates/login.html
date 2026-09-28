@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HAIDWARE Hotel Booking System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="entry-page">
+  <main class="login-panel">
+    <a class="back-link" href="{{ url_for('home') }}">← Back</a>
+    <h1>{{ role|capitalize }} Login</h1>
+    {% if error %}<p class="login-error">{{ error }}</p>{% endif %}
+    {% if role == 'manager' and not account_exists %}<p class="signup-prompt">Manager access has not been configured yet. <a href="{{ url_for('manager_signup') }}">Sign up first</a>.</p>{% endif %}
+    <form class="login-form" method="post">
+      <label>Username / Staff ID<input name="username" autocomplete="username" required></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="button primary" type="submit" {% if role != 'manager' and not account_exists %}disabled{% endif %}>Sign in <span>→</span></button>
+    </form>
+  </main>
+</body>
+</html>
