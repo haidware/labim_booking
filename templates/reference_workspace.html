@@ -5,10 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>HAIDWARE Hotel Booking System</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='reference.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference_match.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
 </head>
 <body class="reference-app">
   <header class="reference-header">
-    <div><strong>HAIDWARE HOTEL BOOKING SYSTEM</strong><span>LABIM HOTEL AND SUITE</span><small>{{ 'Receptionist' if role == 'reception' else role|capitalize }}</small></div>
+    <div><strong><span class="brand-prefix">HAIDWARE</span> <span class="brand-title">HOTEL BOOKING SYSTEM</span></strong><span>LABIM HOTEL AND SUITE</span><small>{{ 'Receptionist' if role == 'reception' else role|capitalize }}</small></div>
     <nav class="header-nav">
       {% if role == 'director' %}<a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">🔵 Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">📊 Finance</a>{% elif role == 'manager' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">🏨 Operational Overview</a><a href="{{ url_for('reference_workspace', role=role, page='bookings') }}">📅 Bookings</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">📊 Finance</a>{% else %}<a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">📅 Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='roomstatus') }}">🔵 Room Status</a><a href="{{ url_for('reference_workspace', role=role, page='payments') }}">💳 Payments</a>{% endif %}<a href="{{ url_for('logout') }}">Log Out</a>
     </nav>
