@@ -1,16 +1,45 @@
 from datetime import date, datetime
+from functools import lru_cache
+import os
 from pathlib import Path
 import sqlite3
 
+from dotenv import load_dotenv
 from flask import Flask, flash, g, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
+try:
+    from supabase import create_client
+except ImportError:
+    create_client = None
+
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE = BASE_DIR / "instance" / "booking_os.sqlite3"
+load_dotenv(BASE_DIR / ".env")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://frmekmypefrwvocepjmg.supabase.co")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_ENABLED = bool(SUPABASE_URL and SUPABASE_ANON_KEY and SUPABASE_SECRET_KEY and create_client)
+FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
+if os.getenv("RAILWAY_ENVIRONMENT") and not FLASK_SECRET_KEY:
+    raise RuntimeError("Set FLASK_SECRET_KEY in Railway service variables before deploying.")
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "labim-booking-os-local"
+app.config["SECRET_KEY"] = FLASK_SECRET_KEY or "local-development-key-change-before-deploy"
 app.config["DATABASE"] = DATABASE
+
+
+@lru_cache(maxsize=1)
+def get_supabase_admin():
+    if not SUPABASE_ENABLED:
+        return None
+    return create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
+
+
+def get_supabase_auth():
+    if not SUPABASE_ENABLED:
+        return None
+    return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 ROOMS = [
     ("101", "Standard", 1, 45000, "available"),
@@ -190,6 +219,11 @@ def home():
     return render_template("landing.html")
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}, 200
+
+
 @app.route("/login/<role>", methods=["GET", "POST"])
 def login(role):
     if role not in {"director", "manager", "reception"}:
@@ -363,4 +397,4 @@ with app.app_context():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=os.getenv("FLASK_DEBUG", "false").lower() == "true", port=int(os.getenv("PORT", "5000")), host="0.0.0.0")
