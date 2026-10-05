@@ -8,8 +8,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='login_match.css') }}">
 </head>
-<body class="entry-page">
+<body class="entry-page login-screen">
   <main class="login-panel">
     <a class="back-link" href="{{ url_for('home') }}">← Back</a>
     <h1>{{ role|capitalize }} Login</h1>
