@@ -9,7 +9,7 @@
 <body class="reference-app">
   <header class="reference-header">
     <div><strong>HAIDWARE HOTEL BOOKING SYSTEM</strong><span>LABIM HOTEL AND SUITE</span><small>Manager</small></div>
-    <nav class="header-nav"><a href="{{ url_for('reference_workspace', role='manager', page='dashboard') }}">🏨 Operational Overview</a><a href="{{ url_for('reference_workspace', role='manager', page='bookings') }}">📅 Bookings</a><a href="{{ url_for('reference_workspace', role='manager', page='finance') }}">📊 Finance</a><a href="{{ url_for('home') }}">Log Out</a></nav>
+    <nav class="header-nav"><a href="{{ url_for('reference_workspace', role='manager', page='dashboard') }}">🏨 Operational Overview</a><a href="{{ url_for('reference_workspace', role='manager', page='bookings') }}">📅 Bookings</a><a href="{{ url_for('reference_workspace', role='manager', page='finance') }}">📊 Finance</a><a href="{{ url_for('logout') }}">Log Out</a></nav>
   </header>
   <div class="reference-layout">
     <aside class="reference-sidebar"><a href="{{ url_for('reference_workspace', role='manager', page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role='manager', page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role='manager', page='bookings') }}">Bookings</a><a href="{{ url_for('reference_workspace', role='manager', page='finance') }}">Booking Finance</a><a class="active" href="{{ url_for('manager_signup') }}">Team Accounts</a></aside>

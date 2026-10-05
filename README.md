@@ -19,14 +19,21 @@ Open http://127.0.0.1:5000.
 - Manager: monitor room operations and reservation activity.
 - Director: review the same operational data with revenue and payment visibility.
 
-The SQLite database is created at `instance/booking_os.sqlite3` on first launch. Supabase client configuration is read from environment variables; business data operations still use SQLite until the Supabase schema and credentials are fully configured.
+Supabase is the production data backend when `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and server-only `SUPABASE_SECRET_KEY` are configured. The secret key is used only by Flask for Manager-managed Auth users; passwords are stored by Supabase Auth, never in public tables. Without those variables, local development falls back to SQLite at `instance/booking_os.sqlite3`.
+
+## Supabase Setup
+
+1. Run `supabase_schema.sql` in the Supabase SQL Editor for the project.
+2. In Railway service variables, set `SUPABASE_URL`, `SUPABASE_ANON_KEY` (the publishable key), and `SUPABASE_SECRET_KEY` (the Supabase secret/server key). Do not put the secret key in `.env.example`, source control, or browser code.
+3. Deploy the service. Open Manager Login and use the initial Manager Sign Up flow to create Manager, Director, and Reception Auth accounts.
+
+The public Data API must expose the `profiles`, `rooms`, `reservations`, and `payments` tables. The schema grants authenticated users role-scoped access through RLS. All role values used by policies are assigned in Supabase Auth `app_metadata` by the server-side Manager account workflow.
 
 ## Deploy to Railway
 
 1. Create a Railway project and deploy this GitHub repository.
 2. Set `FLASK_SECRET_KEY` to a long random value in the Railway service variables.
-3. Set `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and the server-only `SUPABASE_SECRET_KEY` when enabling Supabase. Never use the secret key in browser code or commit it.
-4. Deploy with the included `railway.json`; Railway builds from `requirements.txt`, starts Gunicorn, and checks `/health`.
-5. Until Supabase data operations are enabled, attach a Railway volume mounted at `/app/instance` to persist SQLite across deployments.
+3. Set Supabase variables as described above, then run `supabase_schema.sql` in the Supabase SQL Editor.
+4. Deploy with the included Railway config and Procfile; Gunicorn serves the Flask app and `/health` is the health endpoint.
 
-Reservation, room, and account operations still use SQLite; Supabase persistence is not active merely by setting the project URL and keys. Railway's container filesystem is ephemeral, so the volume is required to retain local database writes across deployments.
+SQLite remains a local fallback. The current Railway volume is mounted at `/app/instance` for that fallback only.
