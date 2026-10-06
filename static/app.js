@@ -19,7 +19,7 @@ document.querySelectorAll('[data-close-dialog]').forEach((button) => {
   button.addEventListener('click', () => button.closest('dialog')?.close());
 });
 
-document.querySelectorAll('.extend-dialog').forEach((dialog) => {
+document.querySelectorAll('.extend-dialog[data-current-departure]').forEach((dialog) => {
   const departureInput = dialog.querySelector('input[name="check_out"]');
   const quote = dialog.querySelector('.extension-quote');
   const nightlyRate = Number(dialog.dataset.nightlyRate);

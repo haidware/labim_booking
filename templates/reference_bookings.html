@@ -1,1 +1,62 @@
-{% if bookings %}<table><thead><tr><th>Room</th><th>Guest</th><th>Status</th><th>Total</th><th>Paid</th><th>Balance</th><th>Method</th></tr></thead><tbody>{% for booking in bookings %}<tr>{% for value in booking %}<td>{% if loop.index in [4,5,6] %}₦{{ '{:,.0f}'.format(value) }}{% else %}{{ value }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody></table>{% else %}<p class="empty-state">No bookings have been recorded yet.</p>{% endif %}
+{% if bookings %}
+<div class="table-wrap">
+  <table class="manager-bookings">
+    <thead><tr><th>Room / Category</th><th>Guest</th><th>Stay</th><th>Total</th><th>Paid</th><th>Balance</th><th>Method</th><th>Status</th><th>Manager Actions</th></tr></thead>
+    <tbody>
+      {% for booking in bookings %}
+      <tr>
+        <td><strong>{{ booking.room_number }}</strong><small>{{ booking.room_type }}</small></td>
+        <td><strong>{{ booking.guest_name }}</strong><small>{{ booking.phone }}{% if booking.email %} · {{ booking.email }}{% endif %}</small></td>
+        <td><strong>{{ booking.check_in }}</strong><small>to {{ booking.check_out }}</small></td>
+        <td>₦{{ '{:,.0f}'.format(booking.amount) }}</td>
+        <td>₦{{ '{:,.0f}'.format(booking.amount_paid) }}</td>
+        <td>₦{{ '{:,.0f}'.format(booking.balance) }}</td>
+        <td>{{ booking.payment_method }}</td>
+        <td>{{ booking.status_label }}</td>
+        <td>
+          {% if booking.status in ['booked', 'checked_in'] %}
+          <div class="manager-booking-actions">
+            <button class="secondary-button" type="button" data-open-dialog="edit-booking-{{ booking.id }}">Edit</button>
+            <form method="post" action="{{ url_for('update_reservation', reservation_id=booking.id) }}" onsubmit="return confirm('Cancel this booking? Its payment records will be retained.');">
+              <input type="hidden" name="action" value="manager_cancel">
+              <input type="hidden" name="role" value="manager">
+              <button class="cancel-button" type="submit">Cancel</button>
+            </form>
+          </div>
+          <dialog class="extend-dialog manager-booking-dialog" id="edit-booking-{{ booking.id }}">
+            <form method="post" action="{{ url_for('update_reservation', reservation_id=booking.id) }}">
+              <input type="hidden" name="action" value="manager_edit">
+              <input type="hidden" name="role" value="manager">
+              <h2>Edit booking</h2>
+              <p>Change the guest, stay, room category, and booking total. Recorded payments are not edited here.</p>
+              <label>Guest name<input name="guest_name" value="{{ booking.guest_name }}" maxlength="160" required></label>
+              <label>Phone<input name="phone" value="{{ booking.phone }}" maxlength="40" required></label>
+              <label>Email<input name="email" type="email" value="{{ booking.email }}" maxlength="254"></label>
+              <label>Room / category<select name="room_number" required>
+                {% for room in booking_rooms %}
+                <option value="{{ room.number }}" {% if room.number == booking.room_number %}selected{% endif %} {% if room.number != booking.room_number and room.status|lower in ['cleaning', 'unavailable'] %}disabled{% endif %}>{{ room.number }} · {{ room.type }}{% if room.number != booking.room_number and room.status|lower in ['cleaning', 'unavailable'] %} ({{ room.status }}){% endif %}</option>
+                {% endfor %}
+              </select></label>
+              <div class="manager-booking-date-fields">
+                <label>Arrival<input name="check_in" type="date" value="{{ booking.check_in }}" required></label>
+                <label>Departure<input name="check_out" type="date" value="{{ booking.check_out }}" required></label>
+              </div>
+              <label>Total amount (₦)<input name="amount" type="number" min="{{ booking.amount_paid }}" step="1" value="{{ booking.amount }}" required></label>
+              <label>Payment method<select name="payment_method" required>
+                {% for method in ['Cash', 'POS', 'Transfer'] %}<option {% if method == booking.payment_method %}selected{% endif %}>{{ method }}</option>{% endfor %}
+              </select></label>
+              <p class="manager-payment-note">Recorded paid amount: ₦{{ '{:,.0f}'.format(booking.amount_paid) }}. Payment records remain unchanged.</p>
+              <div class="dialog-actions">
+                <button class="secondary-button" type="button" data-close-dialog>Cancel</button>
+                <button class="primary-button" type="submit">Save changes</button>
+              </div>
+            </form>
+          </dialog>
+          {% else %}<small>No actions for closed booking</small>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}<p class="empty-state">No bookings have been recorded yet.</p>{% endif %}

@@ -16,7 +16,7 @@ Open http://127.0.0.1:5000.
 ## Roles
 
 - Reception: create reservations, extend active stays, check guests out, and update payments.
-- Manager: register rooms and monitor room operations and reservation activity.
+- Manager: register rooms, review the booking calendar, and edit or cancel active bookings while retaining payment history.
 - Director: review the same operational data with revenue and payment visibility.
 
 Supabase is the production data backend when `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and server-only `SUPABASE_SECRET_KEY` are configured. The secret key is used only by Flask for Manager-managed Auth users; passwords are stored by Supabase Auth, never in public tables. Without those variables, local development falls back to SQLite at `instance/booking_os.sqlite3`.
@@ -25,7 +25,7 @@ Existing SQLite databases are cleaned once at startup: the known sample booking 
 
 ## Supabase Setup
 
-1. Run `supabase_schema.sql` in the Supabase SQL Editor for the project. It creates an empty room inventory; the Manager registers the property's rooms from the Rooms workspace.
+1. Run `supabase_schema.sql` in the Supabase SQL Editor for the project. It creates an empty room inventory; the Manager registers the property's rooms from the Rooms workspace. Rerun the updated schema after application updates to apply compatible status and RLS policy changes.
 2. If this project was previously initialized with the sample-room seed, run `supabase_remove_demo_data.sql` once. It removes only matching sample rooms with no reservation or payment history.
 3. In Railway service variables, set `SUPABASE_URL`, `SUPABASE_ANON_KEY` (the publishable key), and `SUPABASE_SECRET_KEY` (the Supabase secret/server key). Do not put the secret key in `.env.example`, source control, or browser code.
 4. Deploy the service. Open Manager Login and use the initial Manager Sign Up flow to create Manager, Director, and Reception Auth accounts.

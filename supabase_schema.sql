@@ -31,7 +31,7 @@ create table if not exists public.reservations (
   amount_paid bigint not null default 0 check (amount_paid >= 0),
   payment_method text not null check (payment_method in ('Cash', 'POS', 'Transfer')),
   payment_status text not null default 'pending' check (payment_status in ('pending', 'partial', 'paid')),
-  status text not null default 'checked_in' check (status in ('booked', 'checked_in', 'checked_out')),
+  status text not null default 'checked_in' check (status in ('booked', 'checked_in', 'checked_out', 'cancelled')),
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now(),
   check (check_out > check_in),
@@ -54,6 +54,9 @@ create index if not exists reservations_dates_idx on public.reservations(check_i
 create index if not exists payments_reservation_id_idx on public.payments(reservation_id);
 
 alter table public.reservations alter column status set default 'checked_in';
+alter table public.reservations drop constraint if exists reservations_status_check;
+alter table public.reservations add constraint reservations_status_check
+  check (status in ('booked', 'checked_in', 'checked_out', 'cancelled'));
 
 alter table public.profiles enable row level security;
 alter table public.rooms enable row level security;
@@ -103,6 +106,18 @@ create policy "Reception updates reservations" on public.reservations
 for update to authenticated
 using ((select auth.jwt() -> 'app_metadata' ->> 'role') = 'reception')
 with check ((select auth.jwt() -> 'app_metadata' ->> 'role') = 'reception');
+
+drop policy if exists "Managers manage reservations" on public.reservations;
+create policy "Managers manage reservations" on public.reservations
+for update to authenticated
+using ((select auth.jwt() -> 'app_metadata' ->> 'role') = 'manager')
+with check ((select auth.jwt() -> 'app_metadata' ->> 'role') = 'manager');
+
+drop policy if exists "Managers update room status" on public.rooms;
+create policy "Managers update room status" on public.rooms
+for update to authenticated
+using ((select auth.jwt() -> 'app_metadata' ->> 'role') = 'manager')
+with check ((select auth.jwt() -> 'app_metadata' ->> 'role') = 'manager');
 
 drop policy if exists "Hotel roles read payments" on public.payments;
 create policy "Hotel roles read payments" on public.payments

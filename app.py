@@ -268,12 +268,7 @@ def reference_reservations():
     if SUPABASE_ENABLED:
         return get_request_supabase().table("reservations").select("*").order("check_in").execute().data
     rows = get_db().execute("SELECT * FROM reservations ORDER BY check_in, id DESC").fetchall()
-    reservations = []
-    for row in rows:
-        reservation = dict(row)
-        reservation["amount_paid"] = reservation["amount"] if reservation["payment_status"] == "paid" else 0
-        reservations.append(reservation)
-    return reservations
+    return [dict(row) for row in rows]
 
 
 def reference_payments():
@@ -297,30 +292,36 @@ def reference_payments():
     ]
 
 
-def reference_bookings(reservations):
-    status_labels = {"checked_in": "Occupied", "checked_out": "Checked out"}
+def reference_bookings(reservations, rooms):
+    room_types = {room["number"]: room["type"] for room in rooms}
+    status_labels = {
+        "booked": "Active",
+        "checked_in": "Occupied",
+        "checked_out": "Checked out",
+        "cancelled": "Cancelled",
+    }
     return [
-        (
-            row["room_number"],
-            row["guest_name"],
-            status_labels.get(row["status"], row["status"].replace("_", " ").capitalize()),
-            row["amount"],
-            row.get("amount_paid", 0),
-            row["amount"] - row.get("amount_paid", 0),
-            row["payment_method"],
-        )
+        {
+            **row,
+            "room_type": room_types.get(row["room_number"], "Unknown"),
+            "status_label": status_labels.get(
+                row["status"], row["status"].replace("_", " ").capitalize()
+            ),
+            "balance": row["amount"] - row.get("amount_paid", 0),
+        }
         for row in reservations
     ]
 
 
 def reference_finance(reservations, payments):
-    active = [row for row in reservations if row["status"] != "checked_out"]
+    active = [row for row in reservations if row["status"] not in {"checked_out", "cancelled"}]
     total = sum(row["amount"] for row in active)
-    paid = sum(row.get("amount_paid", 0) for row in active)
+    paid = sum(row.get("amount_paid", 0) for row in reservations)
+    active_paid = sum(row.get("amount_paid", 0) for row in active)
     return {
         "booking_value": total,
         "collected": paid,
-        "outstanding": total - paid,
+        "outstanding": total - active_paid,
         "stay_records": len(reservations),
     }
 
@@ -336,7 +337,7 @@ def reference_calendar(rooms, reservations, reference_date=None):
             booking = next((
                 reservation for reservation in reservations
                 if reservation["room_number"] == room["number"]
-                and reservation["status"] != "checked_out"
+                and reservation["status"] in {"booked", "checked_in"}
                 and reservation["check_in"] <= current_day.isoformat() < reservation["check_out"]
             ), None)
             cells.append({
@@ -397,12 +398,20 @@ def dashboard_stats():
             "amount_paid, payment_status, status, check_in, check_out"
         ).execute().data
         today = date.today().isoformat()
-        reservation_count = sum(row["status"] != "checked_out" for row in reservations)
+        reservation_count = sum(
+            row["status"] not in {"checked_out", "cancelled"} for row in reservations
+        )
         revenue = sum(row["amount_paid"] for row in reservations)
-        pending = sum(row["payment_status"] == "pending" for row in reservations)
+        pending = sum(
+            row["payment_status"] == "pending" and row["status"] != "cancelled"
+            for row in reservations
+        )
         occupied = sum(room["status"] == "occupied" for room in rooms)
         occupancy = round(occupied * 100 / len(rooms)) if rooms else 0
-        arrivals_today = sum(row["check_in"] == today for row in reservations)
+        arrivals_today = sum(
+            row["check_in"] == today and row["status"] != "cancelled"
+            for row in reservations
+        )
         check_outs = sum(
             row["status"] in {"booked", "checked_in"} and row["check_out"] == today
             for row in reservations
@@ -418,19 +427,19 @@ def dashboard_stats():
     db = get_db()
     rooms = db.execute("SELECT * FROM rooms ORDER BY number").fetchall()
     reservation_count = db.execute(
-        "SELECT COUNT(*) FROM reservations WHERE status != 'checked_out'"
+        "SELECT COUNT(*) FROM reservations WHERE status NOT IN ('checked_out', 'cancelled')"
     ).fetchone()[0]
     revenue = db.execute(
         "SELECT COALESCE(SUM(amount_paid), 0) FROM reservations"
     ).fetchone()[0]
     pending = db.execute(
-        "SELECT COUNT(*) FROM reservations WHERE payment_status = 'pending'"
+        "SELECT COUNT(*) FROM reservations WHERE payment_status = 'pending' AND status != 'cancelled'"
     ).fetchone()[0]
     occupied = sum(room["status"] == "occupied" for room in rooms)
     occupancy = round(occupied * 100 / len(rooms)) if rooms else 0
     today = date.today().isoformat()
     arrivals_today = db.execute(
-        "SELECT COUNT(*) FROM reservations WHERE check_in = ?", (today,)
+        "SELECT COUNT(*) FROM reservations WHERE check_in = ? AND status != 'cancelled'", (today,)
     ).fetchone()[0]
     check_outs = db.execute(
         "SELECT COUNT(*) FROM reservations WHERE status IN ('booked', 'checked_in') AND check_out = ?", (today,)
@@ -463,7 +472,7 @@ def require_workspace_login():
         return None
     if endpoint == "reference_workspace":
         required_role = (request.view_args or {}).get("role")
-    elif endpoint in {"update_room"}:
+    elif endpoint == "update_room":
         required_role = "reception"
     elif endpoint in {"dashboard", "reservations", "new_reservation"}:
         required_role = request.args.get("role", "reception")
@@ -815,6 +824,169 @@ def extend_reference_reservation(reservation_id, form):
     return extra_nights, extension_charge, new_departure
 
 
+def get_manager_reservation(reservation_id):
+    if SUPABASE_ENABLED:
+        rows = get_request_supabase().table("reservations").select("*").eq(
+            "id", reservation_id
+        ).limit(1).execute().data
+        return rows[0] if rows else None
+    row = get_db().execute(
+        "SELECT * FROM reservations WHERE id = ?", (reservation_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def update_room_status_from_reservations(room_number):
+    if SUPABASE_ENABLED:
+        client = get_request_supabase()
+        rooms = client.table("rooms").select("status").eq(
+            "number", room_number
+        ).limit(1).execute().data
+        room = rooms[0] if rooms else None
+        stays = client.table("reservations").select("status").eq(
+            "room_number", room_number
+        ).in_("status", ["booked", "checked_in"]).execute().data
+    else:
+        db = get_db()
+        room = db.execute(
+            "SELECT status FROM rooms WHERE number = ?", (room_number,)
+        ).fetchone()
+        stays = db.execute(
+            "SELECT status FROM reservations WHERE room_number = ? AND status IN ('booked', 'checked_in')",
+            (room_number,),
+        ).fetchall()
+    if not room:
+        raise ValueError("The assigned room could not be found.")
+    if any(stay["status"] == "checked_in" for stay in stays):
+        status = "occupied"
+    elif stays:
+        status = "booked"
+    elif room["status"] in {"booked", "occupied"}:
+        status = "available"
+    else:
+        return
+    if SUPABASE_ENABLED:
+        get_request_supabase().table("rooms").update({"status": status}).eq(
+            "number", room_number
+        ).execute()
+    else:
+        get_db().execute(
+            "UPDATE rooms SET status = ? WHERE number = ?", (status, room_number)
+        )
+
+
+def update_manager_reservation(reservation_id, form):
+    reservation = get_manager_reservation(reservation_id)
+    if not reservation or reservation["status"] not in {"booked", "checked_in"}:
+        raise ValueError("Only an active booking can be edited.")
+    guest_name = form.get("guest_name", "").strip()
+    phone = form.get("phone", "").strip()
+    email = form.get("email", "").strip()
+    room_number = form.get("room_number", "").strip()
+    payment_method = form.get("payment_method", "")
+    if not guest_name or not phone or not room_number:
+        raise ValueError("Guest name, phone, and room are required.")
+    if payment_method not in {"Cash", "POS", "Transfer"}:
+        raise ValueError("Choose a valid payment method.")
+    try:
+        check_in = date.fromisoformat(form["check_in"])
+        check_out = date.fromisoformat(form["check_out"])
+        amount = int(form["amount"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("Enter valid stay dates and booking amount.") from error
+    if check_out <= check_in:
+        raise ValueError("Departure must be after arrival.")
+    if amount < 0:
+        raise ValueError("Booking amount cannot be negative.")
+    amount_paid = int(reservation.get("amount_paid") or 0)
+    if amount < amount_paid:
+        raise ValueError("Booking amount cannot be less than the amount already paid.")
+
+    if SUPABASE_ENABLED:
+        client = get_request_supabase()
+        rooms = client.table("rooms").select("number, status").eq(
+            "number", room_number
+        ).limit(1).execute().data
+        other_stays = client.table("reservations").select(
+            "id, check_in, check_out"
+        ).eq("room_number", room_number).in_(
+            "status", ["booked", "checked_in"]
+        ).execute().data
+    else:
+        db = get_db()
+        rooms = db.execute(
+            "SELECT number, status FROM rooms WHERE number = ?", (room_number,)
+        ).fetchall()
+        other_stays = db.execute(
+            """SELECT id, check_in, check_out FROM reservations
+            WHERE room_number = ? AND status IN ('booked', 'checked_in')""",
+            (room_number,),
+        ).fetchall()
+    room = rooms[0] if rooms else None
+    if not room:
+        raise ValueError("Choose a registered room.")
+    if room["status"] in {"unavailable", "cleaning"} and room_number != reservation["room_number"]:
+        raise ValueError("Choose a room that is not unavailable or being cleaned.")
+    for stay in other_stays:
+        if str(stay["id"]) == str(reservation_id):
+            continue
+        other_start = date.fromisoformat(stay["check_in"])
+        other_end = date.fromisoformat(stay["check_out"])
+        if check_in < other_end and check_out > other_start:
+            raise ValueError("That room already has a booking during the selected dates.")
+
+    payment_status = "paid" if amount_paid == amount else "partial" if amount_paid else "pending"
+    updates = {
+        "guest_name": guest_name,
+        "email": email,
+        "phone": phone,
+        "room_number": room_number,
+        "check_in": check_in.isoformat(),
+        "check_out": check_out.isoformat(),
+        "amount": amount,
+        "payment_method": payment_method,
+        "payment_status": payment_status,
+    }
+    if SUPABASE_ENABLED:
+        client.table("reservations").update(updates).eq(
+            "id", reservation_id
+        ).execute()
+    else:
+        db.execute(
+            """UPDATE reservations SET guest_name = ?, email = ?, phone = ?,
+            room_number = ?, check_in = ?, check_out = ?, amount = ?,
+            payment_method = ?, payment_status = ? WHERE id = ?""",
+            (
+                guest_name, email, phone, room_number, check_in.isoformat(),
+                check_out.isoformat(), amount, payment_method, payment_status,
+                reservation_id,
+            ),
+        )
+    if room_number != reservation["room_number"]:
+        update_room_status_from_reservations(reservation["room_number"])
+    update_room_status_from_reservations(room_number)
+    if not SUPABASE_ENABLED:
+        get_db().commit()
+
+
+def cancel_manager_reservation(reservation_id):
+    reservation = get_manager_reservation(reservation_id)
+    if not reservation or reservation["status"] not in {"booked", "checked_in"}:
+        raise ValueError("Only an active booking can be cancelled.")
+    if SUPABASE_ENABLED:
+        get_request_supabase().table("reservations").update(
+            {"status": "cancelled"}
+        ).eq("id", reservation_id).execute()
+    else:
+        get_db().execute(
+            "UPDATE reservations SET status = 'cancelled' WHERE id = ?",
+            (reservation_id,),
+        )
+    update_room_status_from_reservations(reservation["room_number"])
+    if not SUPABASE_ENABLED:
+        get_db().commit()
+
+
 @app.route("/workspace/<role>/<page>", methods=["GET", "POST"])
 def reference_workspace(role, page):
     if role == "reception" and page == "checkin":
@@ -864,7 +1036,8 @@ def reference_workspace(role, page):
         rooms=rooms,
         room_metrics=reference_room_metrics(),
         payment_records=payments,
-        bookings=reference_bookings(reservations),
+        bookings=reference_bookings(reservations, rooms),
+        booking_rooms=rooms,
         reservations=reservations,
         available_rooms=available_rooms,
         finance=reference_finance(reservations, payments),
@@ -937,6 +1110,21 @@ def new_reservation():
 def update_reservation(reservation_id):
     action = request.form["action"]
     role = request.form.get("role", "reception")
+    if action in {"manager_edit", "manager_cancel"}:
+        if role != "manager":
+            return redirect(url_for("home"))
+        try:
+            if action == "manager_edit":
+                update_manager_reservation(reservation_id, request.form)
+                flash("Booking details updated.", "success")
+            else:
+                cancel_manager_reservation(reservation_id)
+                flash("Booking cancelled. Payment records have been retained.", "success")
+        except (KeyError, ValueError) as error:
+            flash(str(error) or "Check the booking details and try again.", "error")
+        return redirect(url_for("reference_workspace", role="manager", page="bookings"))
+    if role != "reception" or action not in {"check_out", "mark_paid", "extend"}:
+        return redirect(url_for("home"))
     if action == "extend":
         try:
             extra_nights, extension_charge, new_departure = extend_reference_reservation(
@@ -959,6 +1147,9 @@ def update_reservation(reservation_id):
                 client.table("reservations").update({"status": "checked_out"}).eq("id", reservation_id).execute()
                 client.table("rooms").update({"status": "cleaning"}).eq("number", reservation["room_number"]).execute()
             elif action == "mark_paid":
+                if reservation["status"] == "cancelled":
+                    flash("Cancelled bookings cannot receive additional payments.", "error")
+                    return redirect(url_for("reference_workspace", role="reception", page=request.form.get("return_page", "payments")))
                 balance = reservation["amount"] - reservation.get("amount_paid", 0)
                 amount = int(request.form.get("amount", balance))
                 if amount < 1 or amount > balance:
@@ -988,6 +1179,9 @@ def update_reservation(reservation_id):
             db.execute("UPDATE reservations SET status = 'checked_out' WHERE id = ?", (reservation_id,))
             db.execute("UPDATE rooms SET status = 'cleaning' WHERE number = ?", (reservation["room_number"],))
         elif action == "mark_paid":
+            if reservation["status"] == "cancelled":
+                flash("Cancelled bookings cannot receive additional payments.", "error")
+                return redirect(url_for("reference_workspace", role="reception", page=request.form.get("return_page", "payments")))
             balance = reservation["amount"] - reservation["amount_paid"]
             amount = int(request.form.get("amount", balance))
             if amount < 1 or amount > balance:
