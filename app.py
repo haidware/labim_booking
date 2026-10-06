@@ -10,8 +10,11 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 try:
     from supabase import create_client
+    from supabase_auth.errors import AuthApiError, AuthSessionMissingError
 except ImportError:
     create_client = None
+    AuthApiError = None
+    AuthSessionMissingError = None
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE = BASE_DIR / "instance" / "booking_os.sqlite3"
@@ -35,6 +38,11 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = bool(os.getenv("RAILWAY_ENVIRONMENT"))
 
 
+class SupabaseSessionExpired(Exception):
+    def __init__(self, role):
+        self.role = role
+
+
 @lru_cache(maxsize=1)
 def get_supabase_admin():
     if not SUPABASE_ENABLED:
@@ -54,14 +62,21 @@ def get_request_supabase():
     if g.get("supabase_client") is not None:
         return g.supabase_client
     client = get_supabase_auth()
-    client.auth.set_session(
-        session["supabase_access_token"],
-        session.get("supabase_refresh_token", ""),
-    )
-    refreshed = client.auth.get_session()
-    if refreshed:
-        session["supabase_access_token"] = refreshed.access_token
-        session["supabase_refresh_token"] = refreshed.refresh_token
+    try:
+        auth_response = client.auth.set_session(
+            session["supabase_access_token"],
+            session.get("supabase_refresh_token", ""),
+        )
+    except (AuthApiError, AuthSessionMissingError) as error:
+        role = session.get("user_role", "reception")
+        session.clear()
+        raise SupabaseSessionExpired(role) from error
+    if not auth_response.session:
+        role = session.get("user_role", "reception")
+        session.clear()
+        raise SupabaseSessionExpired(role)
+    session["supabase_access_token"] = auth_response.session.access_token
+    session["supabase_refresh_token"] = auth_response.session.refresh_token
     g.supabase_client = client
     return client
 
@@ -424,6 +439,12 @@ def dashboard_stats():
 @app.context_processor
 def inject_globals():
     return {"today": date.today().isoformat(), "active_role": request.args.get("role", "reception")}
+
+
+@app.errorhandler(SupabaseSessionExpired)
+def handle_supabase_session_expired(error):
+    flash("Your session has expired. Please sign in again.", "error")
+    return redirect(url_for("login", role=error.role))
 
 
 @app.before_request
