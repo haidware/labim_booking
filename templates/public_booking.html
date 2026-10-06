@@ -3,30 +3,37 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Book a Room · HAIDWARE Hotel</title>
+  <title>Book a Room · HAIDWARE Hotel Platform</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='reference.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
 </head>
 <body class="public-booking-page">
   <header class="public-booking-header">
-    <a href="{{ url_for('home') }}">HAIDWARE HOTEL AND SUITE</a>
+    <a href="{{ url_for('home') }}">HAIDWARE HOTEL BOOKING</a>
     <span>Guest online booking</span>
   </header>
   <main class="public-booking-main">
     <h1>Find your room</h1>
-    <p>Choose your stay dates to see rooms currently listed and available for those dates.</p>
+    <p>Select a hotel and your stay dates to see rooms listed and available there.</p>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}<div class="account-error">{{ message }}</div>{% endfor %}
     {% endwith %}
     <form class="public-date-search" method="get" action="{{ url_for('public_booking') }}">
+      <label>Hotel<select name="hotel" required>
+        <option value="">Choose a hotel</option>
+        {% for hotel in hotels %}<option value="{{ hotel.slug }}" {% if selected_hotel and selected_hotel.id == hotel.id %}selected{% endif %}>{{ hotel.name }}</option>{% endfor %}
+      </select></label>
       <label>Arrival<input name="check_in" type="date" min="{{ today }}" value="{{ check_in }}" required></label>
       <label>Departure<input name="check_out" type="date" min="{{ today }}" value="{{ check_out }}" required></label>
       <button class="primary-button" type="submit">Search available rooms</button>
     </form>
+    {% if selected_hotel %}<p class="selected-hotel-name">Booking at <strong>{{ selected_hotel.name }}</strong></p>{% endif %}
     {% if rooms %}
     <h2>Available rooms</h2>
     <form class="public-room-booking-form" method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="hotel_id" value="{{ selected_hotel.id }}">
+      <input type="hidden" name="hotel_slug" value="{{ selected_hotel.slug }}">
       <input type="hidden" name="check_in" value="{{ check_in }}">
       <input type="hidden" name="check_out" value="{{ check_out }}">
       <label class="booking-honeypot" aria-hidden="true">Website<input name="website" tabindex="-1" autocomplete="off"></label>
@@ -52,8 +59,10 @@
         <button class="primary-button" type="submit">Request booking and get payment details</button>
       </section>
     </form>
-    {% else %}
+    {% elif selected_hotel %}
     <section class="public-no-rooms"><h2>No listed rooms available for those dates</h2><p>Try different dates, or contact the hotel for assistance.</p></section>
+    {% else %}
+    <section class="public-no-rooms"><h2>Choose a hotel to begin</h2><p>After selecting a hotel and dates, available rooms and its payment details will be shown in the booking flow.</p></section>
     {% endif %}
     <footer><a href="{{ url_for('home') }}">Back to hotel home</a></footer>
   </main>

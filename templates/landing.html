@@ -11,9 +11,10 @@
 </head>
 <body class="entry-page">
   <main class="entry-panel">
-    <h1>HAIDWARE HOTEL BOOKING SYSTEM</h1>
-    <p class="entry-subtitle">Book your stay or choose a workspace</p>
+    <h1>HAIDWARE HOTEL BOOKING PLATFORM</h1>
+    <p class="entry-subtitle">Book a stay, register your hotel, or choose a workspace</p>
     <p><a class="public-booking-link" href="{{ url_for('public_booking') }}">Explore rooms and book online</a></p>
+    <p><a href="{{ url_for('manager_signup') }}">Hotel Manager? Register your hotel</a></p>
     <div class="workspace-cards">
       <a class="workspace-card" href="{{ url_for('login', role='director') }}"><span class="workspace-icon director">📊</span><strong>Director</strong></a>
       <a class="workspace-card" href="{{ url_for('login', role='manager') }}"><span class="workspace-icon manager">🏨</span><strong>Manager</strong></a>

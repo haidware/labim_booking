@@ -27,6 +27,7 @@ DATABASE = BASE_DIR / "instance" / "booking_os.sqlite3"
 ROOM_PHOTO_DIRECTORY = BASE_DIR / "instance" / "room_photos"
 ROOM_PHOTO_BUCKET = "room-photos"
 ONLINE_HOLD_MINUTES = 30
+DEFAULT_HOTEL_ID = "00000000-0000-0000-0000-000000000001"
 MAX_ROOM_PHOTO_BYTES = 5 * 1024 * 1024
 ALLOWED_ROOM_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 load_dotenv(BASE_DIR / ".env")
@@ -107,6 +108,35 @@ def get_db():
     return g.db
 
 
+def current_hotel_id():
+    return session.get("hotel_id", DEFAULT_HOTEL_ID)
+
+
+def hotel_details(hotel_id=None):
+    hotel_id = hotel_id or current_hotel_id()
+    if SUPABASE_ENABLED:
+        result = get_supabase_admin().table("hotels").select(
+            "id, name, slug"
+        ).eq("id", hotel_id).limit(1).execute().data
+        return result[0] if result else None
+    row = get_db().execute(
+        "SELECT id, name, slug FROM hotels WHERE id = ?", (hotel_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def public_hotels():
+    if SUPABASE_ENABLED:
+        return get_supabase_admin().table("hotels").select(
+            "id, name, slug"
+        ).eq("is_active", True).order("name").execute().data
+    return [
+        dict(row) for row in get_db().execute(
+            "SELECT id, name, slug FROM hotels WHERE is_active = 1 ORDER BY name"
+        ).fetchall()
+    ]
+
+
 @app.teardown_appcontext
 def close_db(exception=None):
     db = g.pop("db", None)
@@ -124,15 +154,25 @@ def init_db():
     db = get_db()
     db.executescript(
         """
+        CREATE TABLE IF NOT EXISTS hotels (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL UNIQUE,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS rooms (
-            number TEXT PRIMARY KEY,
+            number TEXT NOT NULL,
+            hotel_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
             name TEXT NOT NULL,
             beds INTEGER NOT NULL,
             rate INTEGER NOT NULL,
-            status TEXT NOT NULL
+            status TEXT NOT NULL,
+            PRIMARY KEY (hotel_id, number)
         );
         CREATE TABLE IF NOT EXISTS reservations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hotel_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
             guest_name TEXT NOT NULL,
             email TEXT NOT NULL,
             phone TEXT NOT NULL,
@@ -148,13 +188,16 @@ def init_db():
         );
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            role TEXT NOT NULL UNIQUE,
+            hotel_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+            role TEXT NOT NULL,
             username TEXT NOT NULL UNIQUE,
             password TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            UNIQUE(hotel_id, role)
         );
         CREATE TABLE IF NOT EXISTS payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hotel_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
             reservation_id INTEGER NOT NULL,
             room_number TEXT NOT NULL,
             amount INTEGER NOT NULL,
@@ -167,23 +210,128 @@ def init_db():
             name TEXT PRIMARY KEY
         );
         CREATE TABLE IF NOT EXISTS online_room_listings (
-            room_number TEXT PRIMARY KEY,
+            hotel_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+            room_number TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
             photo_path TEXT NOT NULL DEFAULT '',
             enabled INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (hotel_id, room_number)
         );
         CREATE TABLE IF NOT EXISTS online_booking_settings (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
+            hotel_id TEXT PRIMARY KEY,
             bank_name TEXT NOT NULL DEFAULT '',
             account_name TEXT NOT NULL DEFAULT '',
             account_number TEXT NOT NULL DEFAULT '',
             reception_whatsapp TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL
         );
-        INSERT OR IGNORE INTO online_booking_settings (id, updated_at)
-        VALUES (1, CURRENT_TIMESTAMP);
         """
+    )
+    db.execute(
+        """INSERT OR IGNORE INTO hotels (id, name, slug, is_active, created_at)
+        VALUES (?, 'Labim Hotel and Suite', 'labim-hotel-and-suite', 1, CURRENT_TIMESTAMP)""",
+        (DEFAULT_HOTEL_ID,),
+    )
+    for table in ("rooms", "reservations", "payments", "online_room_listings"):
+        columns = {column[1] for column in db.execute(f"PRAGMA table_info({table})")}
+        if "hotel_id" not in columns:
+            db.execute(
+                f"ALTER TABLE {table} ADD COLUMN hotel_id TEXT NOT NULL DEFAULT '{DEFAULT_HOTEL_ID}'"
+            )
+    users_info = list(db.execute("PRAGMA table_info(users)"))
+    users_indexes = db.execute("PRAGMA index_list(users)").fetchall()
+    if "hotel_id" not in {column[1] for column in users_info} or any(
+        index["unique"] and index["origin"] == "u"
+        and [
+            column["name"] for column in db.execute(
+                f"PRAGMA index_info({index['name']})"
+            )
+        ] == ["role"]
+        for index in users_indexes
+    ):
+        db.execute("ALTER TABLE users RENAME TO users_legacy")
+        db.execute(
+            """CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hotel_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                username TEXT NOT NULL UNIQUE,
+                password TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(hotel_id, role)
+            )"""
+        )
+        legacy_columns = {column[1] for column in db.execute("PRAGMA table_info(users_legacy)")}
+        legacy_hotel_expr = "hotel_id" if "hotel_id" in legacy_columns else "?"
+        copy_values = (
+            "SELECT id, hotel_id, role, username, password, created_at FROM users_legacy"
+            if legacy_hotel_expr == "hotel_id"
+            else "SELECT id, ?, role, username, password, created_at FROM users_legacy"
+        )
+        db.execute(
+            "INSERT INTO users (id, hotel_id, role, username, password, created_at) "
+            + copy_values,
+            () if legacy_hotel_expr == "hotel_id" else (DEFAULT_HOTEL_ID,),
+        )
+        db.execute("DROP TABLE users_legacy")
+    room_info = list(db.execute("PRAGMA table_info(rooms)"))
+    if not any(column["name"] == "hotel_id" and column["pk"] for column in room_info):
+        db.execute("ALTER TABLE rooms RENAME TO rooms_legacy")
+        db.execute(
+            """CREATE TABLE rooms (
+                number TEXT NOT NULL, hotel_id TEXT NOT NULL, name TEXT NOT NULL,
+                beds INTEGER NOT NULL, rate INTEGER NOT NULL, status TEXT NOT NULL,
+                PRIMARY KEY (hotel_id, number)
+            )"""
+        )
+        db.execute(
+            """INSERT INTO rooms (number, hotel_id, name, beds, rate, status)
+            SELECT number, hotel_id, name, beds, rate, status FROM rooms_legacy"""
+        )
+        db.execute("DROP TABLE rooms_legacy")
+    listing_info = list(db.execute("PRAGMA table_info(online_room_listings)"))
+    if not any(
+        column["name"] == "hotel_id" and column["pk"] for column in listing_info
+    ):
+        db.execute("ALTER TABLE online_room_listings RENAME TO online_room_listings_legacy")
+        db.execute(
+            """CREATE TABLE online_room_listings (
+                hotel_id TEXT NOT NULL, room_number TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '', photo_path TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
+                PRIMARY KEY (hotel_id, room_number)
+            )"""
+        )
+        db.execute(
+            """INSERT INTO online_room_listings
+            (hotel_id, room_number, description, photo_path, enabled, updated_at)
+            SELECT hotel_id, room_number, description, photo_path, enabled, updated_at
+            FROM online_room_listings_legacy"""
+        )
+        db.execute("DROP TABLE online_room_listings_legacy")
+    settings_info = list(db.execute("PRAGMA table_info(online_booking_settings)"))
+    if "hotel_id" not in {column[1] for column in settings_info}:
+        db.execute("ALTER TABLE online_booking_settings RENAME TO online_booking_settings_legacy")
+        db.execute(
+            """CREATE TABLE online_booking_settings (
+                hotel_id TEXT PRIMARY KEY, bank_name TEXT NOT NULL DEFAULT '',
+                account_name TEXT NOT NULL DEFAULT '', account_number TEXT NOT NULL DEFAULT '',
+                reception_whatsapp TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+            )"""
+        )
+        db.execute(
+            """INSERT INTO online_booking_settings
+            (hotel_id, bank_name, account_name, account_number, reception_whatsapp, updated_at)
+            SELECT ?, bank_name, account_name, account_number, reception_whatsapp, updated_at
+            FROM online_booking_settings_legacy WHERE id = 1""",
+            (DEFAULT_HOTEL_ID,),
+        )
+        db.execute("DROP TABLE online_booking_settings_legacy")
+    db.execute(
+        """INSERT OR IGNORE INTO online_booking_settings (hotel_id, updated_at)
+        VALUES (?, CURRENT_TIMESTAMP)""",
+        (DEFAULT_HOTEL_ID,),
     )
     reservation_columns = {column[1] for column in db.execute("PRAGMA table_info(reservations)")}
     if "amount_paid" not in reservation_columns:
@@ -202,10 +350,11 @@ def init_db():
     if not db.execute("SELECT 1 FROM app_migrations WHERE name = 'remove_seeded_demo_data'").fetchone():
         demo_reservations = db.execute(
             """SELECT id FROM reservations
-            WHERE guest_name = 'Amara Okafor' AND email = 'amara@example.com'
+            WHERE hotel_id = ? AND guest_name = 'Amara Okafor' AND email = 'amara@example.com'
               AND phone = '+234 803 555 0121' AND room_number = '301'
               AND check_in = '2026-10-02' AND check_out = '2026-10-05'
-              AND amount = 555 AND payment_method = 'Card'"""
+              AND amount = 555 AND payment_method = 'Card'""",
+            (DEFAULT_HOTEL_ID,),
         ).fetchall()
         if demo_reservations:
             reservation_ids = [reservation["id"] for reservation in demo_reservations]
@@ -234,19 +383,28 @@ def init_db():
         ]:
             db.execute(
                 """DELETE FROM rooms WHERE number = ? AND name = ? AND beds = ? AND rate = ?
-                AND NOT EXISTS (SELECT 1 FROM reservations WHERE room_number = ?)
-                AND NOT EXISTS (SELECT 1 FROM payments WHERE room_number = ?)""",
-                (number, name, beds, rate, number, number),
+                AND hotel_id = ?
+                AND NOT EXISTS (SELECT 1 FROM reservations WHERE hotel_id = ? AND room_number = ?)
+                AND NOT EXISTS (SELECT 1 FROM payments WHERE hotel_id = ? AND room_number = ?)""",
+                (number, name, beds, rate, DEFAULT_HOTEL_ID,
+                 DEFAULT_HOTEL_ID, number, DEFAULT_HOTEL_ID, number),
             )
         db.execute("INSERT INTO app_migrations (name) VALUES ('remove_seeded_demo_data')")
     db.commit()
 
 
-def reference_rooms():
+def reference_rooms(hotel_id=None):
+    hotel_id = hotel_id or current_hotel_id()
     if SUPABASE_ENABLED:
         client = get_request_supabase()
-        rows = client.table("rooms").select("*").order("number").execute().data
-        bookings = client.table("reservations").select("room_number, guest_name, status").in_("status", ["booked", "checked_in"]).execute().data
+        rows = client.table("rooms").select("*").eq(
+            "hotel_id", hotel_id
+        ).order("number").execute().data
+        bookings = client.table("reservations").select(
+            "room_number, guest_name, status"
+        ).eq("hotel_id", hotel_id).in_(
+            "status", ["booked", "checked_in"]
+        ).execute().data
         guest_by_room = {booking["room_number"]: booking["guest_name"] for booking in bookings}
         active_room_numbers = {booking["room_number"] for booking in bookings}
         return [
@@ -263,12 +421,15 @@ def reference_rooms():
         ]
     guest_by_room = {}
     booking_guests = get_db().execute(
-        "SELECT room_number, guest_name FROM reservations WHERE status IN ('booked', 'checked_in') ORDER BY created_at"
+        """SELECT room_number, guest_name FROM reservations
+        WHERE hotel_id = ? AND status IN ('booked', 'checked_in') ORDER BY created_at""",
+        (hotel_id,),
     ).fetchall()
     guest_by_room.update({row["room_number"]: row["guest_name"] for row in booking_guests})
     active_room_numbers = {row["room_number"] for row in booking_guests}
     rows = get_db().execute(
-        "SELECT number, name, beds, rate, status FROM rooms ORDER BY number"
+        "SELECT number, name, beds, rate, status FROM rooms WHERE hotel_id = ? ORDER BY number",
+        (hotel_id,),
     ).fetchall()
     return [
         {
@@ -299,7 +460,8 @@ def reference_room_metrics():
             ("Cleaning", values.get("cleaning", 0)),
         ]
     counts = get_db().execute(
-        "SELECT status, COUNT(*) AS total FROM rooms GROUP BY status"
+        "SELECT status, COUNT(*) AS total FROM rooms WHERE hotel_id = ? GROUP BY status",
+        (current_hotel_id(),),
     ).fetchall()
     values = {row["status"]: row["total"] for row in counts}
     return [
@@ -313,20 +475,29 @@ def reference_room_metrics():
 
 def reference_reservations():
     if SUPABASE_ENABLED:
-        return get_request_supabase().table("reservations").select("*").order("check_in").execute().data
-    rows = get_db().execute("SELECT * FROM reservations ORDER BY check_in, id DESC").fetchall()
+        return get_request_supabase().table("reservations").select("*").eq(
+            "hotel_id", current_hotel_id()
+        ).order("check_in").execute().data
+    rows = get_db().execute(
+        "SELECT * FROM reservations WHERE hotel_id = ? ORDER BY check_in, id DESC",
+        (current_hotel_id(),),
+    ).fetchall()
     return [dict(row) for row in rows]
 
 
 def reference_payments():
     if SUPABASE_ENABLED:
-        rows = get_request_supabase().table("payments").select("*").order("created_at", desc=True).execute().data
+        rows = get_request_supabase().table("payments").select("*").eq(
+            "hotel_id", current_hotel_id()
+        ).order("created_at", desc=True).execute().data
         return [
             (row["room_number"], row["method"], row["amount"], row["balance"], row["received_by"], row["created_at"][:10])
             for row in rows
         ]
     rows = get_db().execute(
-        "SELECT room_number, method, amount, balance, received_by, created_at FROM payments ORDER BY id DESC"
+        """SELECT room_number, method, amount, balance, received_by, created_at
+        FROM payments WHERE hotel_id = ? ORDER BY id DESC""",
+        (current_hotel_id(),),
     ).fetchall()
     if rows:
         return [
@@ -406,24 +577,30 @@ def expire_online_booking_holds():
     get_db().commit()
 
 
-def online_booking_settings(public=False):
+def online_booking_settings(public=False, hotel_id=None):
+    hotel_id = hotel_id or current_hotel_id()
     if SUPABASE_ENABLED:
         client = get_supabase_admin() if public else get_request_supabase()
         rows = client.table("online_booking_settings").select("*").eq(
-            "id", True
+            "hotel_id", hotel_id
         ).limit(1).execute().data
         return rows[0] if rows else {}
     row = get_db().execute(
-        "SELECT * FROM online_booking_settings WHERE id = 1"
+        "SELECT * FROM online_booking_settings WHERE hotel_id = ?", (hotel_id,)
     ).fetchone()
     return dict(row) if row else {}
 
 
-def online_room_listings(manager=False):
+def online_room_listings(manager=False, hotel_id=None):
+    hotel_id = hotel_id or current_hotel_id()
     if SUPABASE_ENABLED:
         client = get_request_supabase() if manager else get_supabase_admin()
-        room_rows = client.table("rooms").select("*").order("number").execute().data
-        query = client.table("online_room_listings").select("*")
+        room_rows = client.table("rooms").select("*").eq(
+            "hotel_id", hotel_id
+        ).order("number").execute().data
+        query = client.table("online_room_listings").select("*").eq(
+            "hotel_id", hotel_id
+        )
         if not manager:
             query = query.eq("enabled", True)
         listings = query.execute().data
@@ -440,12 +617,13 @@ def online_room_listings(manager=False):
             for row in room_rows
         ]
     else:
-        rooms = reference_rooms()
-        query = "SELECT * FROM online_room_listings"
+        rooms = reference_rooms(hotel_id=hotel_id)
+        query = "SELECT * FROM online_room_listings WHERE hotel_id = ?"
+        params = [hotel_id]
         if not manager:
-            query += " WHERE enabled = 1"
+            query += " AND enabled = 1"
         listings = [
-            dict(row) for row in get_db().execute(query).fetchall()
+            dict(row) for row in get_db().execute(query, params).fetchall()
         ]
     listing_by_room = {item["room_number"]: item for item in listings}
     result = []
@@ -476,9 +654,10 @@ def online_photo_url(photo_path):
     return url_for("online_room_photo", photo_path=photo_path)
 
 
-def available_online_rooms(check_in, check_out):
+def available_online_rooms(check_in, check_out, hotel_id=None):
+    hotel_id = hotel_id or current_hotel_id()
     expire_online_booking_holds()
-    listings = online_room_listings()
+    listings = online_room_listings(hotel_id=hotel_id)
     available = []
     for room in listings:
         if room["status"].lower() in {"unavailable", "cleaning"}:
@@ -486,16 +665,16 @@ def available_online_rooms(check_in, check_out):
         if SUPABASE_ENABLED:
             stays = get_supabase_admin().table("reservations").select(
                 "id, check_in, check_out, status, hold_expires_at"
-            ).eq("room_number", room["number"]).in_(
+            ).eq("hotel_id", hotel_id).eq("room_number", room["number"]).in_(
                 "status", ["booked", "checked_in", "pending_payment"]
             ).execute().data
         else:
             stays = [
                 dict(row) for row in get_db().execute(
                     """SELECT id, check_in, check_out, status, hold_expires_at
-                    FROM reservations WHERE room_number = ?
+                    FROM reservations WHERE hotel_id = ? AND room_number = ?
                     AND status IN ('booked', 'checked_in', 'pending_payment')""",
-                    (room["number"],),
+                    (hotel_id, room["number"]),
                 ).fetchall()
             ]
         collision = False
@@ -515,7 +694,8 @@ def available_online_rooms(check_in, check_out):
     return available
 
 
-def save_online_booking_settings(form):
+def save_online_booking_settings(form, hotel_id=None):
+    hotel_id = hotel_id or current_hotel_id()
     bank_name = form.get("bank_name", "").strip()
     account_name = form.get("account_name", "").strip()
     account_number = re.sub(r"\s", "", form.get("account_number", ""))
@@ -536,15 +716,21 @@ def save_online_booking_settings(form):
     }
     if SUPABASE_ENABLED:
         get_request_supabase().table("online_booking_settings").upsert({
-            "id": True,
+            "hotel_id": hotel_id,
             **settings,
         }).execute()
     else:
         get_db().execute(
-            """UPDATE online_booking_settings SET bank_name = ?, account_name = ?,
-            account_number = ?, reception_whatsapp = ?, updated_at = ? WHERE id = 1""",
+            """INSERT INTO online_booking_settings
+            (hotel_id, bank_name, account_name, account_number, reception_whatsapp, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(hotel_id) DO UPDATE SET
+            bank_name = excluded.bank_name, account_name = excluded.account_name,
+            account_number = excluded.account_number,
+            reception_whatsapp = excluded.reception_whatsapp,
+            updated_at = excluded.updated_at""",
             (
-                settings["bank_name"], settings["account_name"],
+                hotel_id, settings["bank_name"], settings["account_name"],
                 settings["account_number"], settings["reception_whatsapp"],
                 settings["updated_at"],
             ),
@@ -553,13 +739,16 @@ def save_online_booking_settings(form):
 
 
 def save_online_room_listing(room_number, form):
+    hotel_id = current_hotel_id()
     if SUPABASE_ENABLED:
         room = get_request_supabase().table("rooms").select("number").eq(
-            "number", room_number
+            "hotel_id", hotel_id
+        ).eq("number", room_number
         ).limit(1).execute().data
     else:
         room = get_db().execute(
-            "SELECT number FROM rooms WHERE number = ?", (room_number,)
+            "SELECT number FROM rooms WHERE hotel_id = ? AND number = ?",
+            (hotel_id, room_number),
         ).fetchone()
     if not room:
         raise ValueError("Room not found.")
@@ -570,11 +759,13 @@ def save_online_room_listing(room_number, form):
     if SUPABASE_ENABLED:
         client = get_request_supabase()
         old = client.table("online_room_listings").select("photo_path").eq(
-            "room_number", room_number
+            "hotel_id", hotel_id
+        ).eq("room_number", room_number
         ).limit(1).execute().data
         if enabled and (not old or not old[0].get("photo_path")):
             raise ValueError("Upload a room photo before publishing this room.")
         client.table("online_room_listings").upsert({
+            "hotel_id": hotel_id,
             "room_number": room_number,
             "description": description,
             "enabled": enabled,
@@ -583,17 +774,18 @@ def save_online_room_listing(room_number, form):
     else:
         db = get_db()
         old = db.execute(
-            "SELECT photo_path FROM online_room_listings WHERE room_number = ?",
-            (room_number,),
+            "SELECT photo_path FROM online_room_listings WHERE hotel_id = ? AND room_number = ?",
+            (hotel_id, room_number),
         ).fetchone()
         if enabled and (not old or not old["photo_path"]):
             raise ValueError("Upload a room photo before publishing this room.")
         db.execute(
             """INSERT INTO online_room_listings
-            (room_number, description, enabled, updated_at) VALUES (?, ?, ?, ?)
-            ON CONFLICT(room_number) DO UPDATE SET description = excluded.description,
+            (hotel_id, room_number, description, enabled, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(hotel_id, room_number) DO UPDATE SET description = excluded.description,
             enabled = excluded.enabled, updated_at = excluded.updated_at""",
-            (room_number, description, int(enabled), now_iso()),
+            (hotel_id, room_number, description, int(enabled), now_iso()),
         )
         db.commit()
 
@@ -624,25 +816,28 @@ def save_room_photo(room_number, uploaded_file):
     )
     if not valid_signature:
         raise ValueError("The selected file is not a valid JPG, PNG, or WebP image.")
+    hotel_id = current_hotel_id()
     if SUPABASE_ENABLED:
         admin = get_supabase_admin()
         room = admin.table("rooms").select("number").eq(
-            "number", room_number
+            "hotel_id", hotel_id
+        ).eq("number", room_number
         ).limit(1).execute().data
         if not room:
             raise ValueError("Room not found.")
         existing = admin.table("online_room_listings").select(
             "photo_path, description, enabled"
-        ).eq(
+        ).eq("hotel_id", hotel_id).eq(
             "room_number", room_number
         ).limit(1).execute().data
-        photo_path = f"{uuid4().hex}{extension}"
+        photo_path = f"{hotel_id}/{uuid4().hex}{extension}"
         admin.storage.from_(ROOM_PHOTO_BUCKET).upload(
             photo_path,
             content,
             {"content-type": expected_types[extension], "upsert": "true"},
         )
         admin.table("online_room_listings").upsert({
+            "hotel_id": hotel_id,
             "room_number": room_number,
             "photo_path": photo_path,
             "description": existing[0]["description"] if existing else "",
@@ -657,26 +852,28 @@ def save_room_photo(room_number, uploaded_file):
 
     db = get_db()
     room = db.execute(
-        "SELECT number FROM rooms WHERE number = ?", (room_number,)
+        "SELECT number FROM rooms WHERE hotel_id = ? AND number = ?",
+        (hotel_id, room_number),
     ).fetchone()
     if not room:
         raise ValueError("Room not found.")
     ROOM_PHOTO_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    photo_path = f"{uuid4().hex}{extension}"
+    photo_path = f"{hotel_id}/{uuid4().hex}{extension}"
     destination = ROOM_PHOTO_DIRECTORY / photo_path
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(content)
     existing = db.execute(
-        "SELECT description, enabled, photo_path FROM online_room_listings WHERE room_number = ?",
-        (room_number,),
+        """SELECT description, enabled, photo_path FROM online_room_listings
+        WHERE hotel_id = ? AND room_number = ?""",
+        (hotel_id, room_number),
     ).fetchone()
     db.execute(
         """INSERT INTO online_room_listings
-        (room_number, description, photo_path, enabled, updated_at)
-        VALUES (?, ?, ?, ?, ?) ON CONFLICT(room_number) DO UPDATE SET
+        (hotel_id, room_number, description, photo_path, enabled, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(hotel_id, room_number) DO UPDATE SET
         photo_path = excluded.photo_path, updated_at = excluded.updated_at""",
         (
-            room_number,
+            hotel_id, room_number,
             existing["description"] if existing else "",
             photo_path,
             existing["enabled"] if existing else 0,
@@ -705,6 +902,7 @@ def create_online_booking(form):
     phone = form.get("phone", "").strip()
     email = form.get("email", "").strip()
     room_number = form.get("room_number", "").strip()
+    hotel_id = form.get("hotel_id", "").strip()
     if not guest_name or len(guest_name) > 160 or not phone or len(phone) > 40:
         raise ValueError("Enter a guest name and valid phone number.")
     if len(email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
@@ -712,12 +910,26 @@ def create_online_booking(form):
     if form.get("website", "").strip():
         raise ValueError("Booking could not be submitted.")
 
-    settings = online_booking_settings(public=True)
+    hotel = None
+    if SUPABASE_ENABLED:
+        hotel_rows = get_supabase_admin().table("hotels").select(
+            "id, name, slug"
+        ).eq("id", hotel_id).eq("is_active", True).limit(1).execute().data
+        hotel = hotel_rows[0] if hotel_rows else None
+    else:
+        row = get_db().execute(
+            "SELECT id, name, slug FROM hotels WHERE id = ? AND is_active = 1",
+            (hotel_id,),
+        ).fetchone()
+        hotel = dict(row) if row else None
+    if not hotel:
+        raise ValueError("Choose a hotel that is currently accepting bookings.")
+    settings = online_booking_settings(public=True, hotel_id=hotel_id)
     if not all(settings.get(key) for key in (
         "bank_name", "account_name", "account_number", "reception_whatsapp"
     )):
         raise ValueError("Online booking is not available yet. Please contact the hotel.")
-    available = available_online_rooms(check_in, check_out)
+    available = available_online_rooms(check_in, check_out, hotel_id=hotel_id)
     room = next((item for item in available if item["number"] == room_number), None)
     if not room:
         raise ValueError("That room is no longer available for the selected dates.")
@@ -730,6 +942,7 @@ def create_online_booking(form):
 
         try:
             result = get_supabase_admin().rpc("create_online_booking", {
+                "p_hotel_id": hotel_id,
                 "p_guest_name": guest_name,
                 "p_email": email,
                 "p_phone": phone,
@@ -751,25 +964,25 @@ def create_online_booking(form):
         db = get_db()
         db.execute("BEGIN IMMEDIATE")
         overlap = db.execute(
-            """SELECT 1 FROM reservations WHERE room_number = ?
+            """SELECT 1 FROM reservations WHERE hotel_id = ? AND room_number = ?
             AND status IN ('booked', 'checked_in', 'pending_payment')
             AND check_in < ? AND check_out > ?
             AND (status != 'pending_payment' OR hold_expires_at > ?)
             LIMIT 1""",
-            (room_number, check_out.isoformat(), check_in.isoformat(), now_iso()),
+            (hotel_id, room_number, check_out.isoformat(), check_in.isoformat(), now_iso()),
         ).fetchone()
         if overlap:
             db.rollback()
             raise ValueError("That room was just booked for the selected dates.")
         cursor = db.execute(
             """INSERT INTO reservations
-            (guest_name, email, phone, room_number, check_in, check_out, amount,
+            (hotel_id, guest_name, email, phone, room_number, check_in, check_out, amount,
              amount_paid, payment_method, payment_status, status, created_at,
              booking_source, hold_expires_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'Transfer', 'pending',
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'Transfer', 'pending',
                     'pending_payment', ?, 'online', ?)""",
             (
-                guest_name, email, phone, room_number, check_in.isoformat(),
+                hotel_id, guest_name, email, phone, room_number, check_in.isoformat(),
                 check_out.isoformat(), (check_out - check_in).days * room["rate"],
                 now_iso(), hold_expires_at,
             ),
@@ -778,6 +991,7 @@ def create_online_booking(form):
         db.commit()
     message = (
         f"Hello, I submitted online booking request {reservation_id} for "
+        f"{hotel['name']}, "
         f"{guest_name}, room {room_number}, {check_in.isoformat()} to "
         f"{check_out.isoformat()}. I am sending the bank transfer for "
         f"NGN {(check_out - check_in).days * room['rate']:,.0f}. "
@@ -786,6 +1000,9 @@ def create_online_booking(form):
     wa_number = re.sub(r"\D", "", settings["reception_whatsapp"])
     session["online_booking_confirmation"] = {
         "reference": str(reservation_id),
+        "hotel_id": hotel_id,
+        "hotel_name": hotel["name"],
+        "hotel_slug": hotel["slug"],
         "room_number": room_number,
         "room_type": room["type"],
         "check_in": check_in.isoformat(),
@@ -812,31 +1029,31 @@ def confirm_online_booking(reservation_id, received_by):
     db = get_db()
     db.execute("BEGIN IMMEDIATE")
     reservation = db.execute(
-        "SELECT * FROM reservations WHERE id = ? AND status = 'pending_payment'",
-        (reservation_id,),
+        "SELECT * FROM reservations WHERE id = ? AND hotel_id = ? AND status = 'pending_payment'",
+        (reservation_id, current_hotel_id()),
     ).fetchone()
     if not reservation:
         db.rollback()
         raise ValueError("This online request is no longer awaiting confirmation.")
     if not reservation["hold_expires_at"] or reservation["hold_expires_at"] <= now_iso():
         db.execute(
-            "UPDATE reservations SET status = 'cancelled', hold_expires_at = NULL WHERE id = ?",
-            (reservation_id,),
+            "UPDATE reservations SET status = 'cancelled', hold_expires_at = NULL WHERE id = ? AND hotel_id = ?",
+            (reservation_id, current_hotel_id()),
         )
         db.commit()
         raise ValueError("The 30-minute room hold expired. Ask the guest to submit a new request.")
     db.execute(
         """UPDATE reservations SET status = 'booked', amount_paid = amount,
-        payment_status = 'paid', hold_expires_at = NULL WHERE id = ?""",
-        (reservation_id,),
+        payment_status = 'paid', hold_expires_at = NULL WHERE id = ? AND hotel_id = ?""",
+        (reservation_id, current_hotel_id()),
     )
     if reservation["amount"] > 0:
         db.execute(
             """INSERT INTO payments
-            (reservation_id, room_number, amount, balance, method, received_by, created_at)
-            VALUES (?, ?, ?, 0, 'Transfer', ?, ?)""",
+            (hotel_id, reservation_id, room_number, amount, balance, method, received_by, created_at)
+            VALUES (?, ?, ?, ?, 0, 'Transfer', ?, ?)""",
             (
-                reservation_id, reservation["room_number"], reservation["amount"],
+                reservation["hotel_id"], reservation_id, reservation["room_number"], reservation["amount"],
                 received_by[:120], now_iso(),
             ),
         )
@@ -847,16 +1064,17 @@ def pending_online_bookings():
     now = now_iso()
     if SUPABASE_ENABLED:
         return get_request_supabase().table("reservations").select("*").eq(
-            "booking_source", "online"
+            "hotel_id", current_hotel_id()
+        ).eq("booking_source", "online"
         ).eq("status", "pending_payment").gt(
             "hold_expires_at", now
         ).order("created_at").execute().data
     return [
         dict(row) for row in get_db().execute(
             """SELECT * FROM reservations WHERE booking_source = 'online'
-            AND status = 'pending_payment' AND hold_expires_at > ?
+            AND hotel_id = ? AND status = 'pending_payment' AND hold_expires_at > ?
             ORDER BY created_at""",
-            (now,),
+            (current_hotel_id(), now),
         ).fetchall()
     ]
 
@@ -911,10 +1129,13 @@ def create_reference_room(form):
 
     if SUPABASE_ENABLED:
         client = get_request_supabase()
-        existing = client.table("rooms").select("number").eq("number", number).limit(1).execute().data
+        existing = client.table("rooms").select("number").eq(
+            "hotel_id", current_hotel_id()
+        ).eq("number", number).limit(1).execute().data
         if existing:
             raise ValueError("A room with that number is already registered.")
         client.table("rooms").insert({
+            "hotel_id": current_hotel_id(),
             "number": number,
             "name": name,
             "beds": beds,
@@ -924,12 +1145,16 @@ def create_reference_room(form):
         return
 
     db = get_db()
-    existing = db.execute("SELECT 1 FROM rooms WHERE number = ?", (number,)).fetchone()
+    existing = db.execute(
+        "SELECT 1 FROM rooms WHERE hotel_id = ? AND number = ?",
+        (current_hotel_id(), number),
+    ).fetchone()
     if existing:
         raise ValueError("A room with that number is already registered.")
     db.execute(
-        "INSERT INTO rooms (number, name, beds, rate, status) VALUES (?, ?, ?, ?, 'available')",
-        (number, name, beds, rate),
+        """INSERT INTO rooms (number, hotel_id, name, beds, rate, status)
+        VALUES (?, ?, ?, ?, ?, 'available')""",
+        (number, current_hotel_id(), name, beds, rate),
     )
     db.commit()
 
@@ -949,7 +1174,8 @@ def update_reference_room(room_number, form):
     if SUPABASE_ENABLED:
         client = get_request_supabase()
         existing = client.table("rooms").select("number").eq(
-            "number", room_number
+            "hotel_id", current_hotel_id()
+        ).eq("number", room_number
         ).limit(1).execute().data
         if not existing:
             raise ValueError("Room not found.")
@@ -958,16 +1184,19 @@ def update_reference_room(room_number, form):
             "beds": beds,
             "rate": rate,
             "updated_at": datetime.now().isoformat(),
-        }).eq("number", room_number).execute()
+        }).eq("hotel_id", current_hotel_id()).eq("number", room_number).execute()
         return
 
     db = get_db()
-    existing = db.execute("SELECT 1 FROM rooms WHERE number = ?", (room_number,)).fetchone()
+    existing = db.execute(
+        "SELECT 1 FROM rooms WHERE hotel_id = ? AND number = ?",
+        (current_hotel_id(), room_number),
+    ).fetchone()
     if not existing:
         raise ValueError("Room not found.")
     db.execute(
-        "UPDATE rooms SET name = ?, beds = ?, rate = ? WHERE number = ?",
-        (name, beds, rate, room_number),
+        "UPDATE rooms SET name = ?, beds = ?, rate = ? WHERE hotel_id = ? AND number = ?",
+        (name, beds, rate, current_hotel_id(), room_number),
     )
     db.commit()
 
@@ -976,18 +1205,22 @@ def room_has_history(room_number):
     if SUPABASE_ENABLED:
         client = get_request_supabase()
         reservations = client.table("reservations").select("id").eq(
-            "room_number", room_number
+            "hotel_id", current_hotel_id()
+        ).eq("room_number", room_number
         ).limit(1).execute().data
         payments = client.table("payments").select("id").eq(
-            "room_number", room_number
+            "hotel_id", current_hotel_id()
+        ).eq("room_number", room_number
         ).limit(1).execute().data
         return bool(reservations or payments)
     db = get_db()
     reservation = db.execute(
-        "SELECT 1 FROM reservations WHERE room_number = ? LIMIT 1", (room_number,)
+        "SELECT 1 FROM reservations WHERE hotel_id = ? AND room_number = ? LIMIT 1",
+        (current_hotel_id(), room_number),
     ).fetchone()
     payment = db.execute(
-        "SELECT 1 FROM payments WHERE room_number = ? LIMIT 1", (room_number,)
+        "SELECT 1 FROM payments WHERE hotel_id = ? AND room_number = ? LIMIT 1",
+        (current_hotel_id(), room_number),
     ).fetchone()
     return bool(reservation or payment)
 
@@ -997,14 +1230,15 @@ def room_has_active_booking(room_number):
         bookings = get_request_supabase().table("reservations").select(
             "status, hold_expires_at"
         ).eq(
-            "room_number", room_number
+            "hotel_id", current_hotel_id()
+        ).eq("room_number", room_number
         ).in_("status", ["booked", "checked_in", "pending_payment"]).execute().data
     else:
         bookings = [
             dict(row) for row in get_db().execute(
-                "SELECT status, hold_expires_at FROM reservations WHERE room_number = ? "
+                "SELECT status, hold_expires_at FROM reservations WHERE hotel_id = ? AND room_number = ? "
                 "AND status IN ('booked', 'checked_in', 'pending_payment')",
-                (room_number,),
+                (current_hotel_id(), room_number),
             ).fetchall()
         ]
     return any(
@@ -1019,14 +1253,16 @@ def remove_reference_room(room_number):
     if SUPABASE_ENABLED:
         client = get_request_supabase()
         existing = client.table("rooms").select("number").eq(
-            "number", room_number
+            "hotel_id", current_hotel_id()
+        ).eq("number", room_number
         ).limit(1).execute().data
         if not existing:
             raise ValueError("Room not found.")
     else:
         db = get_db()
         existing = db.execute(
-            "SELECT 1 FROM rooms WHERE number = ?", (room_number,)
+            "SELECT 1 FROM rooms WHERE hotel_id = ? AND number = ?",
+            (current_hotel_id(), room_number),
         ).fetchone()
         if not existing:
             raise ValueError("Room not found.")
@@ -1039,11 +1275,13 @@ def remove_reference_room(room_number):
             get_request_supabase().table("rooms").update({
                 "status": "unavailable",
                 "updated_at": datetime.now().isoformat(),
-            }).eq("number", room_number).execute()
+            }).eq("hotel_id", current_hotel_id()).eq(
+                "number", room_number
+            ).execute()
         else:
             db.execute(
-                "UPDATE rooms SET status = 'unavailable' WHERE number = ?",
-                (room_number,),
+                "UPDATE rooms SET status = 'unavailable' WHERE hotel_id = ? AND number = ?",
+                (current_hotel_id(), room_number),
             )
             db.commit()
         return False
@@ -1051,7 +1289,9 @@ def remove_reference_room(room_number):
     if SUPABASE_ENABLED:
         listings = get_request_supabase().table("online_room_listings").select(
             "photo_path"
-        ).eq("room_number", room_number).limit(1).execute().data
+        ).eq("hotel_id", current_hotel_id()).eq(
+            "room_number", room_number
+        ).limit(1).execute().data
         if listings:
             photo_path = listings[0].get("photo_path")
             if photo_path:
@@ -1059,29 +1299,36 @@ def remove_reference_room(room_number):
                     [photo_path]
                 )
             get_request_supabase().table("online_room_listings").delete().eq(
-                "room_number", room_number
+                "hotel_id", current_hotel_id()
+            ).eq("room_number", room_number
             ).execute()
         get_request_supabase().table("rooms").delete().eq(
-            "number", room_number
+            "hotel_id", current_hotel_id()
+        ).eq("number", room_number
         ).execute()
     else:
         listing = db.execute(
-            "SELECT photo_path FROM online_room_listings WHERE room_number = ?",
-            (room_number,),
+            """SELECT photo_path FROM online_room_listings
+            WHERE hotel_id = ? AND room_number = ?""",
+            (current_hotel_id(), room_number),
         ).fetchone()
         if listing:
             photo_path = listing["photo_path"]
             if photo_path and re.fullmatch(
-                r"[a-f0-9]{32}\.(?:jpg|jpeg|png|webp)", photo_path
+                rf"(?:{re.escape(current_hotel_id())}/)?[a-f0-9]{{32}}\.(?:jpg|jpeg|png|webp)",
+                photo_path,
             ):
                 photo = ROOM_PHOTO_DIRECTORY / photo_path
                 if photo.is_file():
                     photo.unlink()
             db.execute(
-                "DELETE FROM online_room_listings WHERE room_number = ?",
-                (room_number,),
+                "DELETE FROM online_room_listings WHERE hotel_id = ? AND room_number = ?",
+                (current_hotel_id(), room_number),
             )
-        db.execute("DELETE FROM rooms WHERE number = ?", (room_number,))
+        db.execute(
+            "DELETE FROM rooms WHERE hotel_id = ? AND number = ?",
+            (current_hotel_id(), room_number),
+        )
         db.commit()
     return True
 
@@ -1097,10 +1344,12 @@ def rooms_with_history(rooms):
 def dashboard_stats():
     if SUPABASE_ENABLED:
         client = get_request_supabase()
-        rooms = client.table("rooms").select("*").order("number").execute().data
+        rooms = client.table("rooms").select("*").eq(
+            "hotel_id", current_hotel_id()
+        ).order("number").execute().data
         reservations = client.table("reservations").select(
             "amount_paid, payment_status, status, check_in, check_out"
-        ).execute().data
+        ).eq("hotel_id", current_hotel_id()).execute().data
         today = date.today().isoformat()
         reservation_count = sum(
             row["status"] not in {"checked_out", "cancelled"} for row in reservations
@@ -1129,24 +1378,36 @@ def dashboard_stats():
             "check_outs": check_outs,
         }
     db = get_db()
-    rooms = db.execute("SELECT * FROM rooms ORDER BY number").fetchall()
+    hotel_id = current_hotel_id()
+    rooms = db.execute(
+        "SELECT * FROM rooms WHERE hotel_id = ? ORDER BY number", (hotel_id,)
+    ).fetchall()
     reservation_count = db.execute(
-        "SELECT COUNT(*) FROM reservations WHERE status NOT IN ('checked_out', 'cancelled')"
+        """SELECT COUNT(*) FROM reservations WHERE hotel_id = ?
+        AND status NOT IN ('checked_out', 'cancelled')""",
+        (hotel_id,),
     ).fetchone()[0]
     revenue = db.execute(
-        "SELECT COALESCE(SUM(amount_paid), 0) FROM reservations"
+        "SELECT COALESCE(SUM(amount_paid), 0) FROM reservations WHERE hotel_id = ?",
+        (hotel_id,),
     ).fetchone()[0]
     pending = db.execute(
-        "SELECT COUNT(*) FROM reservations WHERE payment_status = 'pending' AND status != 'cancelled'"
+        """SELECT COUNT(*) FROM reservations WHERE hotel_id = ?
+        AND payment_status = 'pending' AND status != 'cancelled'""",
+        (hotel_id,),
     ).fetchone()[0]
     occupied = sum(room["status"] == "occupied" for room in rooms)
     occupancy = round(occupied * 100 / len(rooms)) if rooms else 0
     today = date.today().isoformat()
     arrivals_today = db.execute(
-        "SELECT COUNT(*) FROM reservations WHERE check_in = ? AND status != 'cancelled'", (today,)
+        """SELECT COUNT(*) FROM reservations
+        WHERE hotel_id = ? AND check_in = ? AND status != 'cancelled'""",
+        (hotel_id, today),
     ).fetchone()[0]
     check_outs = db.execute(
-        "SELECT COUNT(*) FROM reservations WHERE status IN ('booked', 'checked_in') AND check_out = ?", (today,)
+        """SELECT COUNT(*) FROM reservations WHERE hotel_id = ?
+        AND status IN ('booked', 'checked_in') AND check_out = ?""",
+        (hotel_id, today),
     ).fetchone()[0]
     return rooms, {
         "reservations": reservation_count,
@@ -1160,7 +1421,13 @@ def dashboard_stats():
 
 @app.context_processor
 def inject_globals():
-    return {"today": date.today().isoformat(), "active_role": request.args.get("role", "reception")}
+    hotel = hotel_details(session.get("hotel_id")) if session.get("hotel_id") else None
+    return {
+        "today": date.today().isoformat(),
+        "active_role": request.args.get("role", "reception"),
+        "hotel_name": hotel["name"] if hotel else "Hotel Booking Platform",
+        "hotel_slug": hotel["slug"] if hotel else "",
+    }
 
 
 @app.errorhandler(SupabaseSessionExpired)
@@ -1190,7 +1457,9 @@ def require_workspace_login():
         required_role = request.form.get("role", "reception")
     else:
         required_role = None
-    if required_role and session.get("user_role") != required_role:
+    if required_role and (
+        session.get("user_role") != required_role or not session.get("hotel_id")
+    ):
         return redirect(url_for("login", role=required_role))
     return None
 
@@ -1200,6 +1469,15 @@ def public_booking():
     today = date.today()
     default_check_in = today + timedelta(days=1)
     default_check_out = default_check_in + timedelta(days=1)
+    hotels = public_hotels()
+    requested_hotel_slug = (
+        request.form.get("hotel_slug", "") if request.method == "POST"
+        else request.args.get("hotel", "")
+    )
+    selected_hotel = next(
+        (hotel for hotel in hotels if hotel["slug"] == requested_hotel_slug),
+        None,
+    )
     try:
         submitted_dates = request.form if request.method == "POST" else request.args
         check_in = date.fromisoformat(submitted_dates.get(
@@ -1221,6 +1499,10 @@ def public_booking():
         else:
             session["public_booking_csrf"] = secrets.token_urlsafe(32)
             try:
+                if not selected_hotel or request.form.get(
+                    "hotel_id"
+                ) != selected_hotel["id"]:
+                    raise ValueError("Choose the hotel you want to book.")
                 create_online_booking(request.form)
                 return redirect(url_for("online_booking_confirmation"))
             except ValueError as error:
@@ -1228,10 +1510,14 @@ def public_booking():
     session.setdefault("public_booking_csrf", secrets.token_urlsafe(32))
 
     rooms = []
-    if check_in >= today and check_out > check_in:
-        rooms = available_online_rooms(check_in, check_out)
+    if selected_hotel and check_in >= today and check_out > check_in:
+        rooms = available_online_rooms(
+            check_in, check_out, hotel_id=selected_hotel["id"]
+        )
     return render_template(
         "public_booking.html",
+        hotels=hotels,
+        selected_hotel=selected_hotel,
         rooms=rooms,
         check_in=check_in.isoformat(),
         check_out=check_out.isoformat(),
@@ -1250,7 +1536,11 @@ def online_booking_confirmation():
 
 @app.get("/room-photos/<path:photo_path>")
 def online_room_photo(photo_path):
-    if SUPABASE_ENABLED or not re.fullmatch(r"[a-f0-9]{32}\.(?:jpg|jpeg|png|webp)", photo_path):
+    valid_path = re.fullmatch(
+        r"(?:[0-9a-f-]{36}/)?[a-f0-9]{32}\.(?:jpg|jpeg|png|webp)",
+        photo_path,
+    )
+    if SUPABASE_ENABLED or not valid_path:
         return "", 404
     return send_from_directory(ROOM_PHOTO_DIRECTORY, photo_path)
 
@@ -1284,7 +1574,8 @@ def cancel_online_booking_route(reservation_id):
             "status": "cancelled",
             "hold_expires_at": None,
         }).eq("id", reservation_id).eq(
-            "status", "pending_payment"
+            "hotel_id", current_hotel_id()
+        ).eq("status", "pending_payment"
         ).select("id").execute().data
         if not result:
             flash("This request has expired or is no longer awaiting payment.", "error")
@@ -1294,8 +1585,8 @@ def cancel_online_booking_route(reservation_id):
     else:
         result = get_db().execute(
             """UPDATE reservations SET status = 'cancelled', hold_expires_at = NULL
-            WHERE id = ? AND status = 'pending_payment'""",
-            (reservation_id,),
+            WHERE hotel_id = ? AND id = ? AND status = 'pending_payment'""",
+            (current_hotel_id(), reservation_id),
         )
         if not result.rowcount:
             flash("This request has expired or is no longer awaiting payment.", "error")
@@ -1342,7 +1633,9 @@ def login(role):
                     {"email": auth_email(username), "password": submitted_password}
                 )
                 user = auth_response.user
-                profiles = client.table("profiles").select("username, role").eq("id", user.id).limit(1).execute().data
+                profiles = client.table("profiles").select(
+                    "username, role, hotel_id"
+                ).eq("id", user.id).limit(1).execute().data
                 profile = profiles[0] if profiles else None
                 if not profile or profile["role"] != role:
                     client.auth.sign_out()
@@ -1350,6 +1643,7 @@ def login(role):
                 session.clear()
                 session["user_role"] = profile["role"]
                 session["username"] = profile["username"]
+                session["hotel_id"] = profile["hotel_id"]
                 session["supabase_user_id"] = user.id
                 session["supabase_access_token"] = auth_response.session.access_token
                 session["supabase_refresh_token"] = auth_response.session.refresh_token
@@ -1369,40 +1663,104 @@ def login(role):
                 get_db().commit()
             session["user_role"] = role
             session["username"] = user["username"]
+            session["hotel_id"] = user["hotel_id"]
             return redirect(url_for("reference_workspace", role=role, page="dashboard"))
         return render_template("login.html", role=role, account_exists=True, error="Invalid login details.")
     if SUPABASE_ENABLED:
         account_exists = bool(
-            get_supabase_admin().table("profiles").select("id").eq("role", role).limit(1).execute().data
+            get_supabase_admin().table("profiles").select("id").eq(
+                "role", role
+            ).limit(1).execute().data
         )
     else:
-        account_exists = get_db().execute("SELECT 1 FROM users WHERE role = ?", (role,)).fetchone() is not None
+        account_exists = get_db().execute(
+            "SELECT 1 FROM users WHERE role = ?", (role,),
+        ).fetchone() is not None
     return render_template("login.html", role=role, account_exists=account_exists)
+
+
+def hotel_slug_from_name(name, hotel_id):
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:70].strip("-")
+    suffix = (
+        "" if hotel_id == DEFAULT_HOTEL_ID
+        else f"-{hotel_id.replace('-', '')[:8]}"
+    )
+    return f"{base or 'hotel'}{suffix}"
 
 
 @app.route("/signup/manager", methods=["GET", "POST"])
 def manager_signup():
+    editing = session.get("user_role") == "manager" and bool(session.get("hotel_id"))
+    hotel_id = current_hotel_id() if editing else None
     if SUPABASE_ENABLED:
         supabase_admin = get_supabase_admin()
-        existing_profiles = supabase_admin.table("profiles").select("id, role, username").execute().data
-        has_accounts = bool(existing_profiles)
+        existing_profiles = (
+            supabase_admin.table("profiles").select("id, role, username").eq(
+                "hotel_id", hotel_id
+            ).execute().data if editing else []
+        )
     else:
         supabase_admin = None
         existing_profiles = []
-        has_accounts = get_db().execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
-    if has_accounts and session.get("user_role") != "manager":
-        return redirect(url_for("login", role="manager"))
+        if editing:
+            existing_profiles = [
+                dict(row) for row in get_db().execute(
+                    "SELECT id, role, username FROM users WHERE hotel_id = ?",
+                    (hotel_id,),
+                ).fetchall()
+            ]
+    account_map = {profile["role"]: profile["username"] for profile in existing_profiles}
+    current_hotel = hotel_details(hotel_id) if editing else None
     if request.method == "POST":
+        hotel_name = request.form.get("hotel_name", "").strip()
         fields = {
             "director": (request.form.get("director_username", "").strip(), request.form.get("director_password", "")),
             "reception": (request.form.get("reception_username", "").strip(), request.form.get("reception_password", "")),
         }
-        if not has_accounts:
+        if not editing:
             fields["manager"] = (request.form.get("manager_username", "").strip(), request.form.get("manager_password", ""))
+        if not 2 <= len(hotel_name) <= 120:
+            return render_template(
+                "manager_signup.html", error="Enter a hotel name between 2 and 120 characters.",
+                account_map=account_map, editing=editing,
+                hotel_name=hotel_name, hotel_id=hotel_id,
+            )
         if any(not username or not password for username, password in fields.values()):
-            return render_template("manager_signup.html", error="Complete all three role accounts.")
+            return render_template(
+                "manager_signup.html", error="Complete every required hotel team account.",
+                account_map=account_map, editing=editing,
+                hotel_name=hotel_name, hotel_id=hotel_id,
+            )
         if SUPABASE_ENABLED:
             try:
+                if editing:
+                    saved_hotel_id = hotel_id
+                elif existing_profiles:
+                    raise ValueError("This hotel already has a Manager account.")
+                else:
+                    saved_hotel_id = str(uuid4())
+                    if not supabase_admin.table("profiles").select(
+                        "id"
+                    ).eq("hotel_id", DEFAULT_HOTEL_ID).limit(1).execute().data:
+                        saved_hotel_id = DEFAULT_HOTEL_ID
+                    supabase_admin.table("hotels").upsert({
+                        "id": saved_hotel_id,
+                        "name": hotel_name,
+                        "slug": hotel_slug_from_name(hotel_name, saved_hotel_id),
+                        "is_active": True,
+                    }).execute()
+                    supabase_admin.table("online_booking_settings").upsert({
+                        "hotel_id": saved_hotel_id,
+                        "bank_name": "",
+                        "account_name": "",
+                        "account_number": "",
+                        "reception_whatsapp": "",
+                        "updated_at": now_iso(),
+                    }).execute()
+                supabase_admin.table("hotels").update({
+                    "name": hotel_name,
+                    "slug": hotel_slug_from_name(hotel_name, saved_hotel_id),
+                }).eq("id", saved_hotel_id).execute()
                 existing_by_role = {profile["role"]: profile for profile in existing_profiles}
                 for account_role, (username, password) in fields.items():
                     email = auth_email(username)
@@ -1415,19 +1773,34 @@ def manager_signup():
                                 "email": email,
                                 "password": password,
                                 "email_confirm": True,
-                                "app_metadata": {"role": account_role},
-                                "user_metadata": {"username": username},
+                                "app_metadata": {
+                                    "role": account_role,
+                                    "hotel_id": saved_hotel_id,
+                                },
+                                "user_metadata": {
+                                    "username": username,
+                                    "hotel_id": saved_hotel_id,
+                                },
                             },
                         )
-                        supabase_admin.table("profiles").update({"username": username}).eq("id", user_id).execute()
+                        supabase_admin.table("profiles").update({
+                            "username": username,
+                            "hotel_id": saved_hotel_id,
+                        }).eq("id", user_id).execute()
                     else:
                         created_user = supabase_admin.auth.admin.create_user(
                             {
                                 "email": email,
                                 "password": password,
                                 "email_confirm": True,
-                                "app_metadata": {"role": account_role},
-                                "user_metadata": {"username": username},
+                                "app_metadata": {
+                                    "role": account_role,
+                                    "hotel_id": saved_hotel_id,
+                                },
+                                "user_metadata": {
+                                    "username": username,
+                                    "hotel_id": saved_hotel_id,
+                                },
                             }
                         ).user
                         supabase_admin.table("profiles").insert(
@@ -1435,36 +1808,83 @@ def manager_signup():
                                 "id": created_user.id,
                                 "role": account_role,
                                 "username": username,
+                                "hotel_id": saved_hotel_id,
                                 "created_by": session.get("supabase_user_id"),
                             }
                         ).execute()
                 return redirect(url_for("login", role="manager"))
             except Exception:
-                return render_template("manager_signup.html", error="Could not save the workspace accounts. Check usernames and try again.")
+                app.logger.exception("Failed to save hotel team accounts")
+                return render_template(
+                    "manager_signup.html",
+                    error="Could not save the hotel accounts. Check usernames and try again.",
+                    account_map=account_map, editing=editing,
+                    hotel_name=hotel_name, hotel_id=hotel_id,
+                )
         db = get_db()
         try:
-            existing = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-            if existing:
-                db.executemany(
-                    "UPDATE users SET username = ?, password = ? WHERE role = ?",
-                    [(username, generate_password_hash(password), role) for role, (username, password) in fields.items()],
+            if editing:
+                saved_hotel_id = hotel_id
+                db.execute(
+                    "UPDATE hotels SET name = ?, slug = ? WHERE id = ?",
+                    (hotel_name, hotel_slug_from_name(hotel_name, hotel_id), hotel_id),
                 )
+                for account_role, (username, password) in fields.items():
+                    db.execute(
+                        """UPDATE users SET username = ?, password = ?
+                        WHERE hotel_id = ? AND role = ?""",
+                        (
+                            username, generate_password_hash(password),
+                            hotel_id, account_role,
+                        ),
+                    )
             else:
+                saved_hotel_id = str(uuid4())
+                if not db.execute(
+                    "SELECT 1 FROM users WHERE hotel_id = ? LIMIT 1",
+                    (DEFAULT_HOTEL_ID,),
+                ).fetchone():
+                    saved_hotel_id = DEFAULT_HOTEL_ID
+                db.execute(
+                    """INSERT INTO hotels (id, name, slug, is_active, created_at)
+                    VALUES (?, ?, ?, 1, ?) ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name, slug = excluded.slug""",
+                    (
+                        saved_hotel_id, hotel_name,
+                        hotel_slug_from_name(hotel_name, saved_hotel_id), now_iso(),
+                    ),
+                )
+                db.execute(
+                    """INSERT OR IGNORE INTO online_booking_settings
+                    (hotel_id, updated_at) VALUES (?, ?)""",
+                    (saved_hotel_id, now_iso()),
+                )
                 db.executemany(
-                    "INSERT INTO users (role, username, password, created_at) VALUES (?, ?, ?, ?)",
-                    [(role, username, generate_password_hash(password), datetime.now().isoformat(timespec="seconds")) for role, (username, password) in fields.items()],
+                    """INSERT INTO users
+                    (hotel_id, role, username, password, created_at)
+                    VALUES (?, ?, ?, ?, ?)""",
+                    [
+                        (
+                            saved_hotel_id, account_role, username,
+                            generate_password_hash(password), now_iso(),
+                        )
+                        for account_role, (username, password) in fields.items()
+                    ],
                 )
             db.commit()
         except sqlite3.IntegrityError:
             db.rollback()
-            return render_template("manager_signup.html", error="An account or username already exists.")
+            return render_template(
+                "manager_signup.html", error="An account or username already exists.",
+                account_map=account_map, editing=editing,
+                hotel_name=hotel_name, hotel_id=hotel_id,
+            )
         return redirect(url_for("login", role="manager"))
-    if SUPABASE_ENABLED:
-        account_map = {profile["role"]: profile["username"] for profile in existing_profiles}
-    else:
-        accounts = get_db().execute("SELECT role, username FROM users ORDER BY role").fetchall()
-        account_map = {account["role"]: account["username"] for account in accounts}
-    return render_template("manager_signup.html", account_map=account_map, editing=bool(account_map))
+    return render_template(
+        "manager_signup.html", account_map=account_map, editing=editing,
+        hotel_name=current_hotel["name"] if current_hotel else "",
+        hotel_id=hotel_id,
+    )
 
 
 def create_reference_booking(form):
@@ -1484,27 +1904,30 @@ def create_reference_booking(form):
 
     if SUPABASE_ENABLED:
         client = get_request_supabase()
-        rooms = client.table("rooms").select("rate, status").eq("number", room_number).limit(1).execute().data
+        rooms = client.table("rooms").select("rate, status").eq(
+            "hotel_id", current_hotel_id()
+        ).eq("number", room_number).limit(1).execute().data
         room = rooms[0] if rooms else None
         if not room or room["status"] != "available":
             raise ValueError("That room is no longer available.")
         occupied_dates = client.table("reservations").select(
             "id, check_in, check_out, status, hold_expires_at"
-        ).eq("room_number", room_number).in_(
+        ).eq("hotel_id", current_hotel_id()).eq("room_number", room_number).in_(
             "status", ["booked", "checked_in", "pending_payment"]
         ).execute().data
     else:
         db = get_db()
         room = db.execute(
-            "SELECT rate, status FROM rooms WHERE number = ?", (room_number,)
+            "SELECT rate, status FROM rooms WHERE hotel_id = ? AND number = ?",
+            (current_hotel_id(), room_number),
         ).fetchone()
         if not room or room["status"] != "available":
             raise ValueError("That room is no longer available.")
         occupied_dates = db.execute(
             """SELECT id, check_in, check_out, status, hold_expires_at
-            FROM reservations WHERE room_number = ?
+            FROM reservations WHERE hotel_id = ? AND room_number = ?
             AND status IN ('booked', 'checked_in', 'pending_payment')""",
-            (room_number,),
+            (current_hotel_id(), room_number),
         ).fetchall()
     if any(
         (
@@ -1524,6 +1947,7 @@ def create_reference_booking(form):
             raise ValueError("Check the booking amount and amount paid.")
         payment_status = "paid" if amount_paid == amount else "partial" if amount_paid else "pending"
         results = client.table("reservations").insert({
+            "hotel_id": current_hotel_id(),
             "guest_name": guest_name,
             "email": form.get("email", "").strip(),
             "phone": phone,
@@ -1540,9 +1964,12 @@ def create_reference_booking(form):
         if not results:
             raise RuntimeError("Supabase did not return the created booking.")
         result = results[0]
-        client.table("rooms").update({"status": "occupied"}).eq("number", room_number).execute()
+        client.table("rooms").update({"status": "occupied"}).eq(
+            "hotel_id", current_hotel_id()
+        ).eq("number", room_number).execute()
         if amount_paid:
             client.table("payments").insert({
+                "hotel_id": current_hotel_id(),
                 "reservation_id": result["id"],
                 "room_number": room_number,
                 "amount": amount_paid,
@@ -1560,18 +1987,23 @@ def create_reference_booking(form):
     payment_status = "paid" if amount_paid == amount else "partial" if amount_paid else "pending"
     cursor = db.execute(
         """INSERT INTO reservations
-        (guest_name, email, phone, room_number, check_in, check_out, amount, amount_paid,
+        (hotel_id, guest_name, email, phone, room_number, check_in, check_out, amount, amount_paid,
          payment_method, payment_status, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'checked_in', ?)""",
-        (guest_name, form.get("email", "").strip(), phone, room_number, check_in.isoformat(),
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'checked_in', ?)""",
+        (current_hotel_id(), guest_name, form.get("email", "").strip(), phone, room_number, check_in.isoformat(),
          check_out.isoformat(), amount, amount_paid, payment_method, payment_status,
          datetime.now().isoformat(timespec="seconds")),
     )
-    db.execute("UPDATE rooms SET status = 'occupied' WHERE number = ?", (room_number,))
+    db.execute(
+        "UPDATE rooms SET status = 'occupied' WHERE hotel_id = ? AND number = ?",
+        (current_hotel_id(), room_number),
+    )
     if amount_paid:
         db.execute(
-            "INSERT INTO payments (reservation_id, room_number, amount, balance, method, received_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (cursor.lastrowid, room_number, amount_paid, amount - amount_paid, payment_method,
+            """INSERT INTO payments
+            (hotel_id, reservation_id, room_number, amount, balance, method, received_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (current_hotel_id(), cursor.lastrowid, room_number, amount_paid, amount - amount_paid, payment_method,
              session.get("username", "Reception"), datetime.now().isoformat(timespec="seconds")),
         )
     db.commit()
@@ -1581,11 +2013,14 @@ def create_reference_booking(form):
 def extend_reference_reservation(reservation_id, form):
     if SUPABASE_ENABLED:
         client = get_request_supabase()
-        results = client.table("reservations").select("*").eq("id", reservation_id).limit(1).execute().data
+        results = client.table("reservations").select("*").eq(
+            "hotel_id", current_hotel_id()
+        ).eq("id", reservation_id).limit(1).execute().data
         reservation = results[0] if results else None
     else:
         reservation = get_db().execute(
-            "SELECT * FROM reservations WHERE id = ?", (reservation_id,)
+            "SELECT * FROM reservations WHERE hotel_id = ? AND id = ?",
+            (current_hotel_id(), reservation_id),
         ).fetchone()
     if not reservation or reservation["status"] not in {"booked", "checked_in"}:
         raise ValueError("Only a current stay can be extended.")
@@ -1602,7 +2037,9 @@ def extend_reference_reservation(reservation_id, form):
         client = get_request_supabase()
         other_stays = client.table("reservations").select(
             "id, check_in, check_out, status, hold_expires_at"
-        ).eq("room_number", reservation["room_number"]).in_(
+        ).eq("hotel_id", current_hotel_id()).eq(
+            "room_number", reservation["room_number"]
+        ).in_(
             "status", ["booked", "checked_in", "pending_payment"]
         ).execute().data
         has_conflict = any(
@@ -1616,19 +2053,20 @@ def extend_reference_reservation(reservation_id, form):
             for stay in other_stays
         )
         room_results = client.table("rooms").select("rate").eq(
-            "number", reservation["room_number"]
+            "hotel_id", current_hotel_id()
+        ).eq("number", reservation["room_number"]
         ).limit(1).execute().data
         room = room_results[0] if room_results else None
     else:
         db = get_db()
         has_conflict = db.execute(
             """SELECT 1 FROM reservations
-            WHERE room_number = ? AND id != ?
+            WHERE hotel_id = ? AND room_number = ? AND id != ?
               AND status IN ('booked', 'checked_in', 'pending_payment')
               AND (status != 'pending_payment' OR hold_expires_at > ?)
               AND check_in < ? AND check_out > ? LIMIT 1""",
             (
-                reservation["room_number"],
+                current_hotel_id(), reservation["room_number"],
                 reservation_id,
                 now_iso(),
                 new_departure.isoformat(),
@@ -1636,7 +2074,8 @@ def extend_reference_reservation(reservation_id, form):
             ),
         ).fetchone() is not None
         room = db.execute(
-            "SELECT rate FROM rooms WHERE number = ?", (reservation["room_number"],)
+            "SELECT rate FROM rooms WHERE hotel_id = ? AND number = ?",
+            (current_hotel_id(), reservation["room_number"]),
         ).fetchone()
     if has_conflict:
         raise ValueError("The room has another stay scheduled before that departure date.")
@@ -1659,22 +2098,25 @@ def extend_reference_reservation(reservation_id, form):
         "status": "checked_in",
     }
     if SUPABASE_ENABLED:
-        client.table("reservations").update(updates).eq("id", reservation_id).execute()
+        client.table("reservations").update(updates).eq(
+            "hotel_id", current_hotel_id()
+        ).eq("id", reservation_id).execute()
         client.table("rooms").update({"status": "occupied"}).eq(
-            "number", reservation["room_number"]
+            "hotel_id", current_hotel_id()
+        ).eq("number", reservation["room_number"]
         ).execute()
     else:
         db.execute(
             """UPDATE reservations SET check_out = ?, amount = ?, payment_status = ?, status = ?
-            WHERE id = ?""",
+            WHERE hotel_id = ? AND id = ?""",
             (
                 updates["check_out"], updates["amount"], updates["payment_status"],
-                updates["status"], reservation_id,
+                updates["status"], current_hotel_id(), reservation_id,
             ),
         )
         db.execute(
-            "UPDATE rooms SET status = 'occupied' WHERE number = ?",
-            (reservation["room_number"],),
+            "UPDATE rooms SET status = 'occupied' WHERE hotel_id = ? AND number = ?",
+            (current_hotel_id(), reservation["room_number"]),
         )
         db.commit()
     return extra_nights, extension_charge, new_departure
@@ -1683,11 +2125,13 @@ def extend_reference_reservation(reservation_id, form):
 def get_manager_reservation(reservation_id):
     if SUPABASE_ENABLED:
         rows = get_request_supabase().table("reservations").select("*").eq(
-            "id", reservation_id
+            "hotel_id", current_hotel_id()
+        ).eq("id", reservation_id
         ).limit(1).execute().data
         return rows[0] if rows else None
     row = get_db().execute(
-        "SELECT * FROM reservations WHERE id = ?", (reservation_id,)
+        "SELECT * FROM reservations WHERE hotel_id = ? AND id = ?",
+        (current_hotel_id(), reservation_id),
     ).fetchone()
     return dict(row) if row else None
 
@@ -1696,20 +2140,24 @@ def update_room_status_from_reservations(room_number):
     if SUPABASE_ENABLED:
         client = get_request_supabase()
         rooms = client.table("rooms").select("status").eq(
-            "number", room_number
+            "hotel_id", current_hotel_id()
+        ).eq("number", room_number
         ).limit(1).execute().data
         room = rooms[0] if rooms else None
         stays = client.table("reservations").select("status").eq(
-            "room_number", room_number
+            "hotel_id", current_hotel_id()
+        ).eq("room_number", room_number
         ).in_("status", ["booked", "checked_in"]).execute().data
     else:
         db = get_db()
         room = db.execute(
-            "SELECT status FROM rooms WHERE number = ?", (room_number,)
+            "SELECT status FROM rooms WHERE hotel_id = ? AND number = ?",
+            (current_hotel_id(), room_number),
         ).fetchone()
         stays = db.execute(
-            "SELECT status FROM reservations WHERE room_number = ? AND status IN ('booked', 'checked_in')",
-            (room_number,),
+            """SELECT status FROM reservations WHERE hotel_id = ? AND room_number = ?
+            AND status IN ('booked', 'checked_in')""",
+            (current_hotel_id(), room_number),
         ).fetchall()
     if not room:
         raise ValueError("The assigned room could not be found.")
@@ -1723,11 +2171,13 @@ def update_room_status_from_reservations(room_number):
         return
     if SUPABASE_ENABLED:
         get_request_supabase().table("rooms").update({"status": status}).eq(
-            "number", room_number
+            "hotel_id", current_hotel_id()
+        ).eq("number", room_number
         ).execute()
     else:
         get_db().execute(
-            "UPDATE rooms SET status = ? WHERE number = ?", (status, room_number)
+            "UPDATE rooms SET status = ? WHERE hotel_id = ? AND number = ?",
+            (status, current_hotel_id(), room_number),
         )
 
 
@@ -1761,23 +2211,25 @@ def update_manager_reservation(reservation_id, form):
     if SUPABASE_ENABLED:
         client = get_request_supabase()
         rooms = client.table("rooms").select("number, status").eq(
-            "number", room_number
+            "hotel_id", current_hotel_id()
+        ).eq("number", room_number
         ).limit(1).execute().data
         other_stays = client.table("reservations").select(
             "id, check_in, check_out, status, hold_expires_at"
-        ).eq("room_number", room_number).in_(
+        ).eq("hotel_id", current_hotel_id()).eq("room_number", room_number).in_(
             "status", ["booked", "checked_in", "pending_payment"]
         ).execute().data
     else:
         db = get_db()
         rooms = db.execute(
-            "SELECT number, status FROM rooms WHERE number = ?", (room_number,)
+            "SELECT number, status FROM rooms WHERE hotel_id = ? AND number = ?",
+            (current_hotel_id(), room_number),
         ).fetchall()
         other_stays = db.execute(
             """SELECT id, check_in, check_out, status, hold_expires_at
-            FROM reservations WHERE room_number = ?
+            FROM reservations WHERE hotel_id = ? AND room_number = ?
             AND status IN ('booked', 'checked_in', 'pending_payment')""",
-            (room_number,),
+            (current_hotel_id(), room_number),
         ).fetchall()
     room = rooms[0] if rooms else None
     if not room:
@@ -1811,17 +2263,18 @@ def update_manager_reservation(reservation_id, form):
     }
     if SUPABASE_ENABLED:
         client.table("reservations").update(updates).eq(
-            "id", reservation_id
+            "hotel_id", current_hotel_id()
+        ).eq("id", reservation_id
         ).execute()
     else:
         db.execute(
             """UPDATE reservations SET guest_name = ?, email = ?, phone = ?,
             room_number = ?, check_in = ?, check_out = ?, amount = ?,
-            payment_method = ?, payment_status = ? WHERE id = ?""",
+            payment_method = ?, payment_status = ? WHERE hotel_id = ? AND id = ?""",
             (
                 guest_name, email, phone, room_number, check_in.isoformat(),
                 check_out.isoformat(), amount, payment_method, payment_status,
-                reservation_id,
+                current_hotel_id(), reservation_id,
             ),
         )
     if room_number != reservation["room_number"]:
@@ -1838,11 +2291,11 @@ def cancel_manager_reservation(reservation_id):
     if SUPABASE_ENABLED:
         get_request_supabase().table("reservations").update(
             {"status": "cancelled"}
-        ).eq("id", reservation_id).execute()
+        ).eq("hotel_id", current_hotel_id()).eq("id", reservation_id).execute()
     else:
         get_db().execute(
-            "UPDATE reservations SET status = 'cancelled' WHERE id = ?",
-            (reservation_id,),
+            "UPDATE reservations SET status = 'cancelled' WHERE hotel_id = ? AND id = ?",
+            (current_hotel_id(), reservation_id),
         )
     update_room_status_from_reservations(reservation["room_number"])
     if not SUPABASE_ENABLED:
@@ -1961,7 +2414,8 @@ def dashboard():
 def reservations():
     role = request.args.get("role", "reception")
     rows = get_db().execute(
-        "SELECT * FROM reservations ORDER BY check_in ASC, id DESC"
+        "SELECT * FROM reservations WHERE hotel_id = ? ORDER BY check_in ASC, id DESC",
+        (current_hotel_id(),),
     ).fetchall()
     return render_template("reservations.html", reservations=rows, role=role)
 
@@ -1970,7 +2424,10 @@ def reservations():
 def new_reservation():
     role = request.args.get("role", "reception")
     db = get_db()
-    rooms = db.execute("SELECT * FROM rooms WHERE status = 'available' ORDER BY number").fetchall()
+    rooms = db.execute(
+        "SELECT * FROM rooms WHERE hotel_id = ? AND status = 'available' ORDER BY number",
+        (current_hotel_id(),),
+    ).fetchall()
     if request.method == "POST":
         form = request.form
         try:
@@ -1980,22 +2437,25 @@ def new_reservation():
             if nights < 1:
                 raise ValueError("Check-out must be after check-in.")
             room = db.execute(
-                "SELECT rate FROM rooms WHERE number = ? AND status = 'available'",
-                (form["room_number"],),
+                "SELECT rate FROM rooms WHERE hotel_id = ? AND number = ? AND status = 'available'",
+                (current_hotel_id(), form["room_number"]),
             ).fetchone()
             if room is None:
                 raise ValueError("Choose an available room.")
             amount = nights * room["rate"]
             db.execute(
                 """INSERT INTO reservations
-                (guest_name, email, phone, room_number, check_in, check_out, amount,
+                (hotel_id, guest_name, email, phone, room_number, check_in, check_out, amount,
                  payment_method, payment_status, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'checked_in', ?)""",
-                (form["guest_name"], form["email"], form["phone"], form["room_number"],
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'checked_in', ?)""",
+                (current_hotel_id(), form["guest_name"], form["email"], form["phone"], form["room_number"],
                  form["check_in"], form["check_out"], amount, form["payment_method"],
                  datetime.now().isoformat(timespec="seconds")),
             )
-            db.execute("UPDATE rooms SET status = 'occupied' WHERE number = ?", (form["room_number"],))
+            db.execute(
+                "UPDATE rooms SET status = 'occupied' WHERE hotel_id = ? AND number = ?",
+                (current_hotel_id(), form["room_number"]),
+            )
             db.commit()
             flash(f"Reservation created for {form['guest_name']}.", "success")
             return redirect(url_for("reservations", role=role))
@@ -2038,12 +2498,18 @@ def update_reservation(reservation_id):
         return redirect(url_for("reference_workspace", role="reception", page="checkout"))
     if SUPABASE_ENABLED:
         client = get_request_supabase()
-        reservations = client.table("reservations").select("*").eq("id", reservation_id).limit(1).execute().data
+        reservations = client.table("reservations").select("*").eq(
+            "hotel_id", current_hotel_id()
+        ).eq("id", reservation_id).limit(1).execute().data
         reservation = reservations[0] if reservations else None
         if reservation:
             if action == "check_out" and reservation["status"] in {"booked", "checked_in"}:
-                client.table("reservations").update({"status": "checked_out"}).eq("id", reservation_id).execute()
-                client.table("rooms").update({"status": "cleaning"}).eq("number", reservation["room_number"]).execute()
+                client.table("reservations").update({"status": "checked_out"}).eq(
+                    "hotel_id", current_hotel_id()
+                ).eq("id", reservation_id).execute()
+                client.table("rooms").update({"status": "cleaning"}).eq(
+                    "hotel_id", current_hotel_id()
+                ).eq("number", reservation["room_number"]).execute()
             elif action == "mark_paid":
                 if reservation["status"] == "cancelled":
                     flash("Cancelled bookings cannot receive additional payments.", "error")
@@ -2057,8 +2523,9 @@ def update_reservation(reservation_id):
                 client.table("reservations").update({
                     "amount_paid": new_paid,
                     "payment_status": "paid" if new_paid == reservation["amount"] else "partial",
-                }).eq("id", reservation_id).execute()
+                }).eq("hotel_id", current_hotel_id()).eq("id", reservation_id).execute()
                 client.table("payments").insert({
+                    "hotel_id": current_hotel_id(),
                     "reservation_id": reservation_id,
                     "room_number": reservation["room_number"],
                     "amount": amount,
@@ -2071,11 +2538,20 @@ def update_reservation(reservation_id):
         return redirect(url_for("reservations", role=role))
 
     db = get_db()
-    reservation = db.execute("SELECT * FROM reservations WHERE id = ?", (reservation_id,)).fetchone()
+    reservation = db.execute(
+        "SELECT * FROM reservations WHERE hotel_id = ? AND id = ?",
+        (current_hotel_id(), reservation_id),
+    ).fetchone()
     if reservation:
         if action == "check_out" and reservation["status"] in {"booked", "checked_in"}:
-            db.execute("UPDATE reservations SET status = 'checked_out' WHERE id = ?", (reservation_id,))
-            db.execute("UPDATE rooms SET status = 'cleaning' WHERE number = ?", (reservation["room_number"],))
+            db.execute(
+                "UPDATE reservations SET status = 'checked_out' WHERE hotel_id = ? AND id = ?",
+                (current_hotel_id(), reservation_id),
+            )
+            db.execute(
+                "UPDATE rooms SET status = 'cleaning' WHERE hotel_id = ? AND number = ?",
+                (current_hotel_id(), reservation["room_number"]),
+            )
         elif action == "mark_paid":
             if reservation["status"] == "cancelled":
                 flash("Cancelled bookings cannot receive additional payments.", "error")
@@ -2087,12 +2563,16 @@ def update_reservation(reservation_id):
                 return redirect(url_for("reference_workspace", role="reception", page=request.form.get("return_page", "payments")))
             new_paid = reservation["amount_paid"] + amount
             db.execute(
-                "UPDATE reservations SET amount_paid = ?, payment_status = ? WHERE id = ?",
-                (new_paid, "paid" if new_paid == reservation["amount"] else "partial", reservation_id),
+                """UPDATE reservations SET amount_paid = ?, payment_status = ?
+                WHERE hotel_id = ? AND id = ?""",
+                (new_paid, "paid" if new_paid == reservation["amount"] else "partial",
+                 current_hotel_id(), reservation_id),
             )
             db.execute(
-                "INSERT INTO payments (reservation_id, room_number, amount, balance, method, received_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (reservation_id, reservation["room_number"], amount, reservation["amount"] - new_paid,
+                """INSERT INTO payments
+                (hotel_id, reservation_id, room_number, amount, balance, method, received_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (current_hotel_id(), reservation_id, reservation["room_number"], amount, reservation["amount"] - new_paid,
                  request.form.get("payment_method", reservation["payment_method"]), session.get("username", "Reception"),
                  datetime.now().isoformat(timespec="seconds")),
             )
@@ -2108,10 +2588,15 @@ def update_room(room_number):
     status = request.form["status"]
     if status in {"available", "booked", "occupied", "cleaning", "unavailable"}:
         if SUPABASE_ENABLED:
-            get_request_supabase().table("rooms").update({"status": status, "updated_at": datetime.now().isoformat()}).eq("number", room_number).execute()
+            get_request_supabase().table("rooms").update({
+                "status": status, "updated_at": datetime.now().isoformat()
+            }).eq("hotel_id", current_hotel_id()).eq("number", room_number).execute()
         else:
             db = get_db()
-            db.execute("UPDATE rooms SET status = ? WHERE number = ?", (status, room_number))
+            db.execute(
+                "UPDATE rooms SET status = ? WHERE hotel_id = ? AND number = ?",
+                (status, current_hotel_id(), room_number),
+            )
             db.commit()
         flash(f"Room {room_number} marked {status}.", "success")
     if request.form.get("reference") == "true":

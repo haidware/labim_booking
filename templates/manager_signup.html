@@ -3,24 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Team Accounts | HAIDWARE Hotel Booking System</title>
+  <title>{{ 'Hotel Team Accounts' if editing else 'Register Your Hotel' }} | HAIDWARE Hotel Booking System</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='reference.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='reference_match.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
 </head>
 <body class="reference-app">
   <header class="reference-header">
-    <div><strong><span class="brand-prefix">HAIDWARE</span> <span class="brand-title">HOTEL BOOKING SYSTEM</span></strong><span>LABIM HOTEL AND SUITE</span><small>Manager</small></div>
+    <div><strong><span class="brand-prefix">HAIDWARE</span> <span class="brand-title">HOTEL BOOKING PLATFORM</span></strong><span>{{ hotel_name or 'Register your hotel' }}</span><small>Manager</small></div>
     <nav class="header-nav"><a href="{{ url_for('reference_workspace', role='manager', page='dashboard') }}">🏨 Operational Overview</a><a href="{{ url_for('reference_workspace', role='manager', page='bookings') }}">📅 Bookings</a><a href="{{ url_for('reference_workspace', role='manager', page='finance') }}">📊 Finance</a><a href="{{ url_for('logout') }}">Log Out</a></nav>
   </header>
   <div class="reference-layout">
     <aside class="reference-sidebar"><a href="{{ url_for('reference_workspace', role='manager', page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role='manager', page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role='manager', page='bookings') }}">Bookings</a><a href="{{ url_for('reference_workspace', role='manager', page='finance') }}">Booking Finance</a><a class="active" href="{{ url_for('manager_signup') }}">Team Accounts</a></aside>
     <main class="reference-main account-main">
-      <div class="heading-row"><div><h1>{{ 'Team Accounts' if editing else 'Manager Sign Up' }}</h1><p>{{ 'Create or update the Director and Reception login details.' if editing else 'Create the Manager account and assign access for Director and Reception.' }}</p></div><span class="read-only-note">Manager access</span></div>
+      <div class="heading-row"><div><h1>{{ 'Hotel Team Accounts' if editing else 'Register Your Hotel' }}</h1><p>{{ 'Update your hotel identity and its Director and Reception logins.' if editing else 'Register a hotel and create separate Manager, Director, and Reception accounts for its team.' }}</p></div><span class="read-only-note">Hotel-scoped access</span></div>
       {% if error %}<div class="account-error">{{ error }}</div>{% endif %}
-      <section class="data-panel account-panel"><div class="panel-heading"><strong>Workspace Credentials</strong><small>Created and managed by Manager</small></div><p class="account-intro">Set the login details that Director and Reception will use to enter their workspaces.</p><form class="reference-account-form" method="post">
-        {% if not editing %}<fieldset><legend>Manager login</legend><label>Username / Staff ID<input name="manager_username" required></label><label>Password<input name="manager_password" type="password" placeholder="Enter password" required></label></fieldset>{% endif %}{% for role_name, label in [('director','Director'),('reception','Reception')] %}<fieldset><legend>{{ label }} login</legend><label>Username / Staff ID<input name="{{ role_name }}_username" value="{{ account_map.get(role_name, '') if account_map else '' }}" required></label><label>Password<input name="{{ role_name }}_password" type="password" placeholder="Enter password" required></label></fieldset>{% endfor %}
-        <div class="account-actions"><span>Passwords are protected by the authentication layer and are never displayed.</span><button class="primary-button" type="submit">{{ 'Save account changes' if editing else 'Create accounts' }}</button></div>
+      <section class="data-panel account-panel"><div class="panel-heading"><strong>Hotel and Workspace Credentials</strong><small>Each team can access only its own hotel records</small></div><p class="account-intro">Enter the hotel name guests should see when selecting a place to book online.</p><form class="reference-account-form" method="post">
+        <label>Hotel name<input name="hotel_name" value="{{ hotel_name or '' }}" maxlength="120" autocomplete="organization" required></label>
+        {% if not editing %}<fieldset><legend>Manager login</legend><label>Username / Staff ID<input name="manager_username" autocomplete="username" required></label><label>Password<input name="manager_password" type="password" autocomplete="new-password" required></label></fieldset>{% endif %}{% for role_name, label in [('director','Director'),('reception','Reception')] %}<fieldset><legend>{{ label }} login</legend><label>Username / Staff ID<input name="{{ role_name }}_username" value="{{ account_map.get(role_name, '') if account_map else '' }}" autocomplete="username" required></label><label>Password<input name="{{ role_name }}_password" type="password" autocomplete="new-password" required></label></fieldset>{% endfor %}
+        <div class="account-actions"><span>Passwords are protected by the authentication layer and are never displayed.</span><button class="primary-button" type="submit">{{ 'Save hotel and team changes' if editing else 'Register hotel and create accounts' }}</button></div>
       </form></section>
     </main>
   </div>

@@ -1,0 +1,299 @@
+import importlib.util
+import sqlite3
+import shutil
+import sys
+import tempfile
+import unittest
+from datetime import date, timedelta
+from pathlib import Path
+
+
+class MultiHotelFlowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp_directory = tempfile.TemporaryDirectory()
+        cls.app_directory = Path(cls.temp_directory.name)
+        source_directory = Path(__file__).resolve().parents[1]
+        shutil.copy2(source_directory / "app.py", cls.app_directory / "app.py")
+        shutil.copytree(source_directory / "templates", cls.app_directory / "templates")
+        shutil.copytree(source_directory / "static", cls.app_directory / "static")
+        sys.path.insert(0, str(cls.app_directory))
+        spec = importlib.util.spec_from_file_location(
+            "multi_hotel_test_app", cls.app_directory / "app.py"
+        )
+        cls.app_module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = cls.app_module
+        spec.loader.exec_module(cls.app_module)
+        cls.app_module.SUPABASE_ENABLED = False
+        cls.app_module.app.config.update(TESTING=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        sys.modules.pop("multi_hotel_test_app", None)
+        sys.path.remove(str(cls.app_directory))
+        cls.temp_directory.cleanup()
+
+    def register_hotel(self, client, name, username_suffix):
+        response = client.post("/signup/manager", data={
+            "hotel_name": name,
+            "manager_username": f"manager-{username_suffix}",
+            "manager_password": "ManagerPass123!",
+            "director_username": f"director-{username_suffix}",
+            "director_password": "DirectorPass123!",
+            "reception_username": f"reception-{username_suffix}",
+            "reception_password": "ReceptionPass123!",
+        })
+        self.assertEqual(response.status_code, 302)
+        response = client.post("/login/manager", data={
+            "username": f"manager-{username_suffix}",
+            "password": "ManagerPass123!",
+        })
+        self.assertEqual(response.status_code, 302)
+        with client.session_transaction() as current_session:
+            return current_session["hotel_id"]
+
+    def configure_online_booking(self, client, hotel_id, room_name, rate):
+        response = client.post("/workspace/manager/rooms", data={
+            "number": "101",
+            "name": room_name,
+            "beds": "1",
+            "rate": str(rate),
+        })
+        self.assertEqual(response.status_code, 302)
+        response = client.post("/workspace/manager/online-settings", data={
+            "action": "settings",
+            "bank_name": f"{room_name} Bank",
+            "account_name": f"{room_name} Hotel",
+            "account_number": "12345678",
+            "reception_whatsapp": "+2348012345678",
+        })
+        self.assertEqual(response.status_code, 302)
+        with self.app_module.app.app_context():
+            self.app_module.get_db().execute(
+                """INSERT INTO online_room_listings
+                (hotel_id, room_number, description, photo_path, enabled, updated_at)
+                VALUES (?, '101', ?, ?, 1, ?)""",
+                (
+                    hotel_id, f"{room_name} guest room",
+                    f"{hotel_id}/{'a' * 32}.jpg", self.app_module.now_iso(),
+                ),
+            )
+            self.app_module.get_db().commit()
+
+    def test_signup_guest_selection_booking_and_staff_isolation(self):
+        hotel_one_manager = self.app_module.app.test_client()
+        hotel_one_id = self.register_hotel(
+            hotel_one_manager, "Labim Test Hotel", "one"
+        )
+        self.configure_online_booking(
+            hotel_one_manager, hotel_one_id, "Standard", 50000
+        )
+
+        hotel_two_manager = self.app_module.app.test_client()
+        hotel_two_id = self.register_hotel(
+            hotel_two_manager, "Other Test Hotel", "two"
+        )
+        self.configure_online_booking(
+            hotel_two_manager, hotel_two_id, "Suite", 90000
+        )
+        self.assertNotEqual(hotel_one_id, hotel_two_id)
+
+        one_workspace = hotel_one_manager.get("/workspace/manager/rooms")
+        two_workspace = hotel_two_manager.get("/workspace/manager/rooms")
+        self.assertIn("Standard • ₦50,000".encode(), one_workspace.data)
+        self.assertNotIn("Suite • ₦90,000".encode(), one_workspace.data)
+        self.assertIn("Suite • ₦90,000".encode(), two_workspace.data)
+        self.assertNotIn("Standard • ₦50,000".encode(), two_workspace.data)
+
+        stay_start = (date.today() + timedelta(days=3)).isoformat()
+        stay_end = (date.today() + timedelta(days=4)).isoformat()
+        with self.app_module.app.app_context():
+            hotel_two = self.app_module.hotel_details(hotel_two_id)
+
+        guest = self.app_module.app.test_client()
+        search = guest.get("/book", query_string={
+            "hotel": hotel_two["slug"],
+            "check_in": stay_start,
+            "check_out": stay_end,
+        })
+        self.assertEqual(search.status_code, 200)
+        self.assertIn(b"Other Test Hotel", search.data)
+        self.assertIn(b"Suite", search.data)
+        with guest.session_transaction() as guest_session:
+            csrf_token = guest_session["public_booking_csrf"]
+
+        response = guest.post("/book", data={
+            "csrf_token": csrf_token,
+            "hotel_id": hotel_two_id,
+            "hotel_slug": hotel_two["slug"],
+            "room_number": "101",
+            "check_in": stay_start,
+            "check_out": stay_end,
+            "guest_name": "Guest Two",
+            "email": "guest@example.com",
+            "phone": "08000000000",
+        })
+        self.assertEqual(response.status_code, 302)
+        confirmation = guest.get("/booking/confirmation")
+        self.assertEqual(confirmation.status_code, 200)
+        self.assertIn(b"Other Test Hotel", confirmation.data)
+        self.assertIn(b"Suite Bank", confirmation.data)
+
+        with self.app_module.app.app_context():
+            booking = self.app_module.get_db().execute(
+                "SELECT * FROM reservations WHERE guest_name = 'Guest Two'"
+            ).fetchone()
+            self.assertEqual(booking["hotel_id"], hotel_two_id)
+            self.assertEqual(booking["room_number"], "101")
+
+        reception = self.app_module.app.test_client()
+        response = reception.post("/login/reception", data={
+            "username": "reception-two",
+            "password": "ReceptionPass123!",
+        })
+        self.assertEqual(response.status_code, 302)
+        response = reception.post(
+            f"/online-bookings/{booking['id']}/confirm"
+        )
+        self.assertEqual(response.status_code, 302)
+        with self.app_module.app.app_context():
+            confirmed = self.app_module.get_db().execute(
+                "SELECT status, amount_paid FROM reservations WHERE id = ?",
+                (booking["id"],),
+            ).fetchone()
+            payment = self.app_module.get_db().execute(
+                "SELECT hotel_id, amount FROM payments WHERE reservation_id = ?",
+                (booking["id"],),
+            ).fetchone()
+            self.assertEqual(confirmed["status"], "booked")
+            self.assertEqual(confirmed["amount_paid"], 90000)
+            self.assertEqual(payment["hotel_id"], hotel_two_id)
+            self.assertEqual(payment["amount"], 90000)
+
+        hotel_two_availability = guest.get("/book", query_string={
+            "hotel": hotel_two["slug"],
+            "check_in": stay_start,
+            "check_out": stay_end,
+        })
+        self.assertIn(b"No listed rooms available", hotel_two_availability.data)
+        with self.app_module.app.app_context():
+            hotel_one = self.app_module.hotel_details(hotel_one_id)
+        hotel_one_availability = guest.get("/book", query_string={
+            "hotel": hotel_one["slug"],
+            "check_in": stay_start,
+            "check_out": stay_end,
+        })
+        self.assertIn("Standard · Room 101".encode(), hotel_one_availability.data)
+        self.assertNotIn("Suite · Room 101".encode(), hotel_one_availability.data)
+
+    def test_legacy_sqlite_records_are_assigned_to_labim(self):
+        legacy_directory = Path(tempfile.mkdtemp())
+        try:
+            shutil.copy2(
+                Path(__file__).resolve().parents[1] / "app.py",
+                legacy_directory / "app.py",
+            )
+            shutil.copytree(
+                Path(__file__).resolve().parents[1] / "templates",
+                legacy_directory / "templates",
+            )
+            shutil.copytree(
+                Path(__file__).resolve().parents[1] / "static",
+                legacy_directory / "static",
+            )
+            (legacy_directory / "instance").mkdir()
+            connection = sqlite3.connect(
+                legacy_directory / "instance" / "booking_os.sqlite3"
+            )
+            connection.executescript(
+                """
+                CREATE TABLE rooms (
+                    number TEXT PRIMARY KEY, name TEXT NOT NULL,
+                    beds INTEGER NOT NULL, rate INTEGER NOT NULL, status TEXT NOT NULL
+                );
+                INSERT INTO rooms VALUES ('101', 'Standard', 1, 50000, 'available');
+                CREATE TABLE reservations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, guest_name TEXT NOT NULL,
+                    email TEXT NOT NULL, phone TEXT NOT NULL, room_number TEXT NOT NULL,
+                    check_in TEXT NOT NULL, check_out TEXT NOT NULL, amount INTEGER NOT NULL,
+                    payment_method TEXT NOT NULL, payment_status TEXT NOT NULL DEFAULT 'pending',
+                    status TEXT NOT NULL DEFAULT 'checked_in', created_at TEXT NOT NULL
+                );
+                INSERT INTO reservations VALUES
+                    (1, 'Legacy Guest', '', '0800000000', '101', '2030-01-01',
+                     '2030-01-02', 50000, 'Transfer', 'paid', 'booked', 'now');
+                CREATE TABLE users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL UNIQUE,
+                    username TEXT NOT NULL UNIQUE, password TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                INSERT INTO users VALUES (1, 'manager', 'legacy-manager', 'hash', 'now');
+                CREATE TABLE payments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, reservation_id INTEGER NOT NULL,
+                    room_number TEXT NOT NULL, amount INTEGER NOT NULL, balance INTEGER NOT NULL,
+                    method TEXT NOT NULL, received_by TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                INSERT INTO payments VALUES
+                    (1, 1, '101', 50000, 0, 'Transfer', 'Reception', 'now');
+                CREATE TABLE app_migrations (name TEXT PRIMARY KEY);
+                CREATE TABLE online_room_listings (
+                    room_number TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '',
+                    photo_path TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                );
+                INSERT INTO online_room_listings VALUES ('101', 'Legacy room', '', 0, 'now');
+                CREATE TABLE online_booking_settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1), bank_name TEXT NOT NULL DEFAULT '',
+                    account_name TEXT NOT NULL DEFAULT '', account_number TEXT NOT NULL DEFAULT '',
+                    reception_whatsapp TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+                );
+                INSERT INTO online_booking_settings
+                    VALUES (1, 'Legacy Bank', 'Labim Hotel', '12345678', '+2348012345678', 'now');
+                """
+            )
+            connection.commit()
+            connection.close()
+
+            spec = importlib.util.spec_from_file_location(
+                "legacy_sqlite_test_app", legacy_directory / "app.py"
+            )
+            legacy_app = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = legacy_app
+            spec.loader.exec_module(legacy_app)
+            legacy_app.SUPABASE_ENABLED = False
+            with legacy_app.app.app_context():
+                db = legacy_app.get_db()
+                hotel_id = legacy_app.DEFAULT_HOTEL_ID
+                self.assertEqual(
+                    db.execute("SELECT hotel_id FROM rooms WHERE number = '101'").fetchone()[0],
+                    hotel_id,
+                )
+                self.assertEqual(
+                    db.execute("SELECT hotel_id FROM reservations WHERE id = 1").fetchone()[0],
+                    hotel_id,
+                )
+                self.assertEqual(
+                    db.execute("SELECT hotel_id FROM users WHERE username = 'legacy-manager'").fetchone()[0],
+                    hotel_id,
+                )
+                self.assertEqual(
+                    db.execute("SELECT bank_name FROM online_booking_settings WHERE hotel_id = ?", (hotel_id,)).fetchone()[0],
+                    "Legacy Bank",
+                )
+                db.execute(
+                    "INSERT INTO hotels (id, name, slug, created_at) VALUES ('tenant-two', 'Second Hotel', 'second-hotel', 'now')"
+                )
+                db.execute(
+                    "INSERT INTO rooms (number, hotel_id, name, beds, rate, status) VALUES ('101', 'tenant-two', 'Suite', 2, 90000, 'available')"
+                )
+                self.assertEqual(
+                    db.execute("SELECT COUNT(*) FROM rooms WHERE number = '101'").fetchone()[0],
+                    2,
+                )
+            sys.modules.pop(spec.name, None)
+        finally:
+            shutil.rmtree(legacy_directory)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -15,7 +15,7 @@
     <a class="back-link" href="{{ url_for('home') }}">← Back</a>
     <h1>{{ role|capitalize }} Login</h1>
     {% if error %}<p class="login-error">{{ error }}</p>{% endif %}
-    {% if role == 'manager' and not account_exists %}<p class="signup-prompt">Manager access has not been configured yet. <a href="{{ url_for('manager_signup') }}">Sign up first</a>.</p>{% endif %}
+    {% if role == 'manager' %}<p class="signup-prompt">{% if not account_exists %}Manager access has not been configured yet.{% else %}Register another hotel's workspace.{% endif %} <a href="{{ url_for('manager_signup') }}">Hotel Manager sign up</a>.</p>{% endif %}
     <form class="login-form" method="post">
       <label>Username / Staff ID<input name="username" autocomplete="username" required></label>
       <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
