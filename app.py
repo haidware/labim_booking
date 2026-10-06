@@ -360,7 +360,7 @@ def create_reference_room(form):
 
     if SUPABASE_ENABLED:
         client = get_request_supabase()
-        existing = client.table("rooms").select("number").eq("number", number).maybe_single().execute().data
+        existing = client.table("rooms").select("number").eq("number", number).limit(1).execute().data
         if existing:
             raise ValueError("A room with that number is already registered.")
         client.table("rooms").insert({
@@ -502,7 +502,8 @@ def login(role):
                     {"email": auth_email(username), "password": submitted_password}
                 )
                 user = auth_response.user
-                profile = client.table("profiles").select("username, role").eq("id", user.id).maybe_single().execute().data
+                profiles = client.table("profiles").select("username, role").eq("id", user.id).limit(1).execute().data
+                profile = profiles[0] if profiles else None
                 if not profile or profile["role"] != role:
                     client.auth.sign_out()
                     raise ValueError("Role does not match this login.")
@@ -643,7 +644,8 @@ def create_reference_booking(form):
 
     if SUPABASE_ENABLED:
         client = get_request_supabase()
-        room = client.table("rooms").select("rate, status").eq("number", room_number).maybe_single().execute().data
+        rooms = client.table("rooms").select("rate, status").eq("number", room_number).limit(1).execute().data
+        room = rooms[0] if rooms else None
         if not room or room["status"] != "available":
             raise ValueError("That room is no longer available.")
         amount = int(form.get("total_amount") or nights * room["rate"])
@@ -812,7 +814,8 @@ def update_reservation(reservation_id):
     role = request.form.get("role", "reception")
     if SUPABASE_ENABLED:
         client = get_request_supabase()
-        reservation = client.table("reservations").select("*").eq("id", reservation_id).maybe_single().execute().data
+        reservations = client.table("reservations").select("*").eq("id", reservation_id).limit(1).execute().data
+        reservation = reservations[0] if reservations else None
         if reservation:
             if action == "check_in":
                 client.table("reservations").update({"status": "checked_in"}).eq("id", reservation_id).execute()
