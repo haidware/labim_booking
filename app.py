@@ -325,8 +325,9 @@ def reference_finance(reservations, payments):
     }
 
 
-def reference_calendar(rooms, reservations):
-    start = date.today()
+def reference_calendar(rooms, reservations, reference_date=None):
+    reference_date = reference_date or date.today()
+    start = reference_date - timedelta(days=reference_date.weekday())
     days = [start + timedelta(days=offset) for offset in range(7)]
     rows = []
     for room in rooms:
@@ -341,9 +342,13 @@ def reference_calendar(rooms, reservations):
             cells.append({
                 "status": "occupied" if booking and booking["status"] == "checked_in" else "booked" if booking else "",
                 "guest": booking["guest_name"] if booking else "",
+                "selected": current_day == reference_date,
             })
         rows.append({"room": room["number"], "cells": cells})
-    return [f"{day.strftime('%b')} {day.day}" for day in days], rows
+    return [
+        {"label": f"{day.strftime('%a %b')} {day.day}", "selected": day == reference_date}
+        for day in days
+    ], rows
 
 
 def create_reference_room(form):
@@ -816,11 +821,19 @@ def reference_workspace(role, page):
         return redirect(url_for("reference_workspace", role=role, page="checkout"))
     pages = {
         "director": {"dashboard", "rooms", "finance"},
-        "manager": {"dashboard", "rooms", "bookings", "finance"},
+        "manager": {"dashboard", "rooms", "bookings", "calendar", "finance"},
         "reception": {"dashboard", "calendar", "new", "checkout", "roomstatus", "payments"},
     }
     if role not in pages or page not in pages[role]:
         return redirect(url_for("home"))
+    reference_date = date.today()
+    if page == "calendar":
+        try:
+            reference_date = date.fromisoformat(
+                request.args.get("reference_date", reference_date.isoformat())
+            )
+        except ValueError:
+            flash("Choose a valid calendar date.", "error")
     if request.method == "POST":
         if role == "manager" and page == "rooms":
             try:
@@ -842,7 +855,8 @@ def reference_workspace(role, page):
     payments = reference_payments()
     rooms = reference_rooms()
     available_rooms = [room for room in rooms if room["status"].lower() == "available"]
-    calendar_days, calendar_rows = reference_calendar(rooms, reservations)
+    calendar_days, calendar_rows = reference_calendar(rooms, reservations, reference_date)
+    calendar_week_start = reference_date - timedelta(days=reference_date.weekday())
     return render_template(
         "reference_workspace.html",
         role=role,
@@ -856,6 +870,9 @@ def reference_workspace(role, page):
         finance=reference_finance(reservations, payments),
         calendar_days=calendar_days,
         calendar_rows=calendar_rows,
+        reference_date=reference_date,
+        previous_calendar_date=(calendar_week_start - timedelta(days=7)).isoformat(),
+        next_calendar_date=(calendar_week_start + timedelta(days=7)).isoformat(),
         room_rates={room["number"]: room["rate"] for room in rooms},
     )
 

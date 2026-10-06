@@ -12,13 +12,13 @@
   <header class="reference-header">
     <div><strong><span class="brand-prefix">HAIDWARE</span> <span class="brand-title">HOTEL BOOKING SYSTEM</span></strong><span>LABIM HOTEL AND SUITE</span><small>{{ 'Receptionist' if role == 'reception' else role|capitalize }}</small></div>
     <nav class="header-nav">
-      {% if role == 'director' %}<a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">🔵 Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">📊 Finance</a>{% elif role == 'manager' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">🏨 Operational Overview</a><a href="{{ url_for('reference_workspace', role=role, page='bookings') }}">📅 Bookings</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">📊 Finance</a>{% else %}<a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">📅 Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='roomstatus') }}">🔵 Room Status</a><a href="{{ url_for('reference_workspace', role=role, page='payments') }}">💳 Payments</a>{% endif %}<a href="{{ url_for('logout') }}">Log Out</a>
+      {% if role == 'director' %}<a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">🔵 Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">📊 Finance</a>{% elif role == 'manager' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">🏨 Operational Overview</a><a href="{{ url_for('reference_workspace', role=role, page='bookings') }}">📅 Bookings</a><a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">🗓️ Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">📊 Finance</a>{% else %}<a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">📅 Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='roomstatus') }}">🔵 Room Status</a><a href="{{ url_for('reference_workspace', role=role, page='payments') }}">💳 Payments</a>{% endif %}<a href="{{ url_for('logout') }}">Log Out</a>
     </nav>
   </header>
   <div class="reference-layout">
     <aside class="reference-sidebar">
       {% if role == 'manager' %}<a href="{{ url_for('manager_signup') }}">Team Accounts</a>{% endif %}
-      {% if role == 'director' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">Finance</a>{% elif role == 'manager' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='bookings') }}">Bookings</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">Booking Finance</a>{% else %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='new') }}">New Booking</a><a href="{{ url_for('reference_workspace', role=role, page='checkout') }}">Check Out</a><a href="{{ url_for('reference_workspace', role=role, page='roomstatus') }}">Room Status</a><a href="{{ url_for('reference_workspace', role=role, page='payments') }}">Payments</a>{% endif %}
+      {% if role == 'director' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">Finance</a>{% elif role == 'manager' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='bookings') }}">Bookings</a><a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">Booking Finance</a>{% else %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='new') }}">New Booking</a><a href="{{ url_for('reference_workspace', role=role, page='checkout') }}">Check Out</a><a href="{{ url_for('reference_workspace', role=role, page='roomstatus') }}">Room Status</a><a href="{{ url_for('reference_workspace', role=role, page='payments') }}">Payments</a>{% endif %}
     </aside>
     <main class="reference-main">
       {% with messages = get_flashed_messages(with_categories=true) %}
@@ -64,9 +64,21 @@
       {% include 'reference_metrics.html' %}
       <section class="data-panel"><div class="panel-heading"><strong>Room Status Management</strong><small>Reception controls room status</small></div><p class="workflow-note">Room workflow: Available → Booked → Occupied → Cleaning → Available. Reception can also mark a room Unavailable when necessary.</p>{% include 'reference_rooms.html' %}</section>
 
-      {% elif role == 'reception' and page == 'calendar' %}
-      <div class="heading-row"><div><h1>Booking Calendar</h1><p>Weekly room booking view.</p></div><a class="primary-button" href="{{ url_for('reference_workspace', role=role, page='new') }}">+ New Booking</a></div>
-      <section class="data-panel"><div class="panel-heading"><strong>Weekly Calendar</strong></div><div class="calendar"><b>Room</b>{% for day in calendar_days %}<b>{{ day }}</b>{% endfor %}{% for row in calendar_rows %}<span>{{ row.room }}</span>{% for cell in row.cells %}<i class="{{ cell.status }}" title="{{ cell.guest }}">{{ cell.status|capitalize }}</i>{% endfor %}{% endfor %}</div></section>
+      {% elif role in ['manager', 'reception'] and page == 'calendar' %}
+      <div class="heading-row"><div><h1>Booking Calendar</h1><p>Reservations are saved to the database. Select a date to review room bookings for that week.</p></div>{% if role == 'reception' %}<a class="primary-button" href="{{ url_for('reference_workspace', role=role, page='new') }}">+ New Booking</a>{% endif %}</div>
+      <section class="data-panel">
+        <div class="calendar-controls">
+          <a class="secondary-button" href="{{ url_for('reference_workspace', role=role, page='calendar', reference_date=previous_calendar_date) }}">← Previous week</a>
+          <form method="get" action="{{ url_for('reference_workspace', role=role, page='calendar') }}">
+            <label for="calendar-reference-date">Reference date</label>
+            <input id="calendar-reference-date" name="reference_date" type="date" value="{{ reference_date.isoformat() }}" required>
+            <button class="primary-button" type="submit">View date</button>
+          </form>
+          <a class="secondary-button" href="{{ url_for('reference_workspace', role=role, page='calendar', reference_date=next_calendar_date) }}">Next week →</a>
+        </div>
+        <div class="panel-heading"><strong>Week of {{ calendar_days[0].label if calendar_days else reference_date.isoformat() }}</strong><span>Selected date: {{ reference_date.isoformat() }}</span></div>
+        <div class="calendar"><b>Room</b>{% for day in calendar_days %}<b class="{{ 'selected-day' if day.selected else '' }}">{{ day.label }}</b>{% endfor %}{% for row in calendar_rows %}<span>{{ row.room }}</span>{% for cell in row.cells %}<i class="{{ cell.status }} {{ 'selected-day' if cell.selected else '' }}" title="{{ cell.guest }}">{{ cell.status|capitalize }}</i>{% endfor %}{% endfor %}</div>
+      </section>
 
       {% elif role == 'reception' and page == 'new' %}
       <h1>New Booking</h1><p>Create a reservation and block the selected room.</p>
