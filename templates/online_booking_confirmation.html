@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Payment Instructions · HAIDWARE Hotel</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
+</head>
+<body class="public-booking-page">
+  <header class="public-booking-header"><a href="{{ url_for('home') }}">HAIDWARE HOTEL AND SUITE</a><span>Booking request</span></header>
+  <main class="public-booking-main">
+    <section class="booking-confirmation-card">
+      <h1>Room held for 30 minutes</h1>
+      <p>Your request <strong>{{ confirmation.reference }}</strong> is pending payment verification. This is not yet a confirmed booking. Please transfer by {{ confirmation.hold_expires_at }}.</p>
+      <dl>
+        <dt>Room</dt><dd>{{ confirmation.room_type }} · {{ confirmation.room_number }}</dd>
+        <dt>Stay</dt><dd>{{ confirmation.check_in }} to {{ confirmation.check_out }}</dd>
+        <dt>Transfer amount</dt><dd>₦{{ '{:,.0f}'.format(confirmation.amount) }}</dd>
+      </dl>
+      <h2>Bank transfer details</h2>
+      <dl>
+        <dt>Bank</dt><dd>{{ confirmation.bank_name }}</dd>
+        <dt>Account name</dt><dd>{{ confirmation.account_name }}</dd>
+        <dt>Account number</dt><dd>{{ confirmation.account_number }}</dd>
+      </dl>
+      <p>After you transfer, message Reception on WhatsApp with the booking reference and payment information. Reception will verify the transfer before confirming your reservation.</p>
+      <a class="primary-button" href="{{ confirmation.whatsapp_url }}" target="_blank" rel="noopener noreferrer">Message Reception on WhatsApp</a>
+      <p><a href="{{ url_for('public_booking') }}">Return to room search</a></p>
+    </section>
+  </main>
+</body>
+</html>

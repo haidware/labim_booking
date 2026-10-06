@@ -1,11 +1,17 @@
 from datetime import date, datetime, timedelta
 from functools import lru_cache
+import hmac
 import os
 from pathlib import Path
+import re
+import secrets
 import sqlite3
+from urllib.parse import urlencode
+from uuid import uuid4
 
 from dotenv import load_dotenv
-from flask import Flask, flash, g, redirect, render_template, request, session, url_for
+from flask import Flask, flash, g, redirect, render_template, request, send_from_directory, session, url_for
+from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 
 try:
@@ -18,6 +24,11 @@ except ImportError:
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE = BASE_DIR / "instance" / "booking_os.sqlite3"
+ROOM_PHOTO_DIRECTORY = BASE_DIR / "instance" / "room_photos"
+ROOM_PHOTO_BUCKET = "room-photos"
+ONLINE_HOLD_MINUTES = 30
+MAX_ROOM_PHOTO_BYTES = 5 * 1024 * 1024
+ALLOWED_ROOM_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 load_dotenv(BASE_DIR / ".env")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://frmekmypefrwvocepjmg.supabase.co")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
@@ -36,6 +47,7 @@ app.config["SUPABASE_ENABLED"] = SUPABASE_ENABLED
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = bool(os.getenv("RAILWAY_ENVIRONMENT"))
+app.config["MAX_CONTENT_LENGTH"] = MAX_ROOM_PHOTO_BYTES + 1024 * 1024
 
 
 class SupabaseSessionExpired(Exception):
@@ -154,11 +166,38 @@ def init_db():
         CREATE TABLE IF NOT EXISTS app_migrations (
             name TEXT PRIMARY KEY
         );
+        CREATE TABLE IF NOT EXISTS online_room_listings (
+            room_number TEXT PRIMARY KEY,
+            description TEXT NOT NULL DEFAULT '',
+            photo_path TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS online_booking_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            bank_name TEXT NOT NULL DEFAULT '',
+            account_name TEXT NOT NULL DEFAULT '',
+            account_number TEXT NOT NULL DEFAULT '',
+            reception_whatsapp TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO online_booking_settings (id, updated_at)
+        VALUES (1, CURRENT_TIMESTAMP);
         """
     )
     reservation_columns = {column[1] for column in db.execute("PRAGMA table_info(reservations)")}
     if "amount_paid" not in reservation_columns:
         db.execute("ALTER TABLE reservations ADD COLUMN amount_paid INTEGER NOT NULL DEFAULT 0")
+    if "booking_source" not in reservation_columns:
+        db.execute(
+            "ALTER TABLE reservations ADD COLUMN booking_source TEXT NOT NULL DEFAULT 'reception'"
+        )
+    if "hold_expires_at" not in reservation_columns:
+        db.execute("ALTER TABLE reservations ADD COLUMN hold_expires_at TEXT")
+    db.execute(
+        """CREATE INDEX IF NOT EXISTS reservations_room_stay_idx
+        ON reservations (room_number, status, check_in, check_out)"""
+    )
     db.execute("UPDATE reservations SET amount_paid = amount WHERE payment_status = 'paid' AND amount_paid = 0")
     if not db.execute("SELECT 1 FROM app_migrations WHERE name = 'remove_seeded_demo_data'").fetchone():
         demo_reservations = db.execute(
@@ -307,6 +346,7 @@ def reference_bookings(reservations, rooms):
         "checked_in": "Occupied",
         "checked_out": "Checked out",
         "cancelled": "Cancelled",
+        "pending_payment": "Awaiting transfer",
     }
     return [
         {
@@ -322,7 +362,10 @@ def reference_bookings(reservations, rooms):
 
 
 def reference_finance(reservations, payments):
-    active = [row for row in reservations if row["status"] not in {"checked_out", "cancelled"}]
+    active = [
+        row for row in reservations
+        if row["status"] not in {"checked_out", "cancelled", "pending_payment"}
+    ]
     total = sum(row["amount"] for row in active)
     paid = sum(row.get("amount_paid", 0) for row in reservations)
     active_paid = sum(row.get("amount_paid", 0) for row in active)
@@ -332,6 +375,490 @@ def reference_finance(reservations, payments):
         "outstanding": total - active_paid,
         "stay_records": len(reservations),
     }
+
+
+def now_iso():
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def timestamp_is_future(value):
+    if not value:
+        return False
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return parsed > datetime.now().astimezone()
+
+
+def expire_online_booking_holds():
+    now = now_iso()
+    if SUPABASE_ENABLED:
+        get_supabase_admin().table("reservations").update({
+            "status": "cancelled",
+            "hold_expires_at": None,
+        }).eq("status", "pending_payment").lte("hold_expires_at", now).execute()
+        return
+    get_db().execute(
+        """UPDATE reservations SET status = 'cancelled', hold_expires_at = NULL
+        WHERE status = 'pending_payment' AND hold_expires_at <= ?""",
+        (now,),
+    )
+    get_db().commit()
+
+
+def online_booking_settings(public=False):
+    if SUPABASE_ENABLED:
+        client = get_supabase_admin() if public else get_request_supabase()
+        rows = client.table("online_booking_settings").select("*").eq(
+            "id", True
+        ).limit(1).execute().data
+        return rows[0] if rows else {}
+    row = get_db().execute(
+        "SELECT * FROM online_booking_settings WHERE id = 1"
+    ).fetchone()
+    return dict(row) if row else {}
+
+
+def online_room_listings(manager=False):
+    if SUPABASE_ENABLED:
+        client = get_request_supabase() if manager else get_supabase_admin()
+        room_rows = client.table("rooms").select("*").order("number").execute().data
+        query = client.table("online_room_listings").select("*")
+        if not manager:
+            query = query.eq("enabled", True)
+        listings = query.execute().data
+        rooms = [
+            {
+                "number": row["number"],
+                "type": row["name"],
+                "beds": row["beds"],
+                "rate": row["rate"],
+                "status": row["status"].capitalize(),
+                "guest": "",
+                "active_booking": False,
+            }
+            for row in room_rows
+        ]
+    else:
+        rooms = reference_rooms()
+        query = "SELECT * FROM online_room_listings"
+        if not manager:
+            query += " WHERE enabled = 1"
+        listings = [
+            dict(row) for row in get_db().execute(query).fetchall()
+        ]
+    listing_by_room = {item["room_number"]: item for item in listings}
+    result = []
+    for room in rooms:
+        listing = listing_by_room.get(room["number"])
+        if manager:
+            result.append({
+                **room,
+                "description": listing["description"] if listing else "",
+                "photo_path": listing["photo_path"] if listing else "",
+                "enabled": bool(listing and listing["enabled"]),
+                "photo_url": online_photo_url(
+                    listing["photo_path"] if listing else ""
+                ),
+            })
+        elif listing:
+            result.append({**room, **listing})
+    return result
+
+
+def online_photo_url(photo_path):
+    if not photo_path:
+        return ""
+    if SUPABASE_ENABLED:
+        return get_supabase_admin().storage.from_(ROOM_PHOTO_BUCKET).get_public_url(
+            photo_path
+        )
+    return url_for("online_room_photo", photo_path=photo_path)
+
+
+def available_online_rooms(check_in, check_out):
+    expire_online_booking_holds()
+    listings = online_room_listings()
+    available = []
+    for room in listings:
+        if room["status"].lower() in {"unavailable", "cleaning"}:
+            continue
+        if SUPABASE_ENABLED:
+            stays = get_supabase_admin().table("reservations").select(
+                "id, check_in, check_out, status, hold_expires_at"
+            ).eq("room_number", room["number"]).in_(
+                "status", ["booked", "checked_in", "pending_payment"]
+            ).execute().data
+        else:
+            stays = [
+                dict(row) for row in get_db().execute(
+                    """SELECT id, check_in, check_out, status, hold_expires_at
+                    FROM reservations WHERE room_number = ?
+                    AND status IN ('booked', 'checked_in', 'pending_payment')""",
+                    (room["number"],),
+                ).fetchall()
+            ]
+        collision = False
+        for stay in stays:
+            if stay["status"] == "pending_payment" and (
+                not timestamp_is_future(stay.get("hold_expires_at"))
+            ):
+                continue
+            if check_in < date.fromisoformat(stay["check_out"]) and (
+                check_out > date.fromisoformat(stay["check_in"])
+            ):
+                collision = True
+                break
+        if not collision:
+            room["photo_url"] = online_photo_url(room.get("photo_path", ""))
+            available.append(room)
+    return available
+
+
+def save_online_booking_settings(form):
+    bank_name = form.get("bank_name", "").strip()
+    account_name = form.get("account_name", "").strip()
+    account_number = re.sub(r"\s", "", form.get("account_number", ""))
+    whatsapp = form.get("reception_whatsapp", "").strip()
+    whatsapp_digits = re.sub(r"\D", "", whatsapp)
+    if not bank_name or not account_name:
+        raise ValueError("Enter the bank and account holder name.")
+    if not re.fullmatch(r"\d{6,20}", account_number):
+        raise ValueError("Enter a valid bank account number.")
+    if not 8 <= len(whatsapp_digits) <= 15 or whatsapp_digits.startswith("0"):
+        raise ValueError("Enter the Reception WhatsApp number with its country code.")
+    settings = {
+        "bank_name": bank_name[:100],
+        "account_name": account_name[:120],
+        "account_number": account_number,
+        "reception_whatsapp": "+" + whatsapp_digits,
+        "updated_at": now_iso(),
+    }
+    if SUPABASE_ENABLED:
+        get_request_supabase().table("online_booking_settings").upsert({
+            "id": True,
+            **settings,
+        }).execute()
+    else:
+        get_db().execute(
+            """UPDATE online_booking_settings SET bank_name = ?, account_name = ?,
+            account_number = ?, reception_whatsapp = ?, updated_at = ? WHERE id = 1""",
+            (
+                settings["bank_name"], settings["account_name"],
+                settings["account_number"], settings["reception_whatsapp"],
+                settings["updated_at"],
+            ),
+        )
+        get_db().commit()
+
+
+def save_online_room_listing(room_number, form):
+    if SUPABASE_ENABLED:
+        room = get_request_supabase().table("rooms").select("number").eq(
+            "number", room_number
+        ).limit(1).execute().data
+    else:
+        room = get_db().execute(
+            "SELECT number FROM rooms WHERE number = ?", (room_number,)
+        ).fetchone()
+    if not room:
+        raise ValueError("Room not found.")
+    description = form.get("description", "").strip()
+    if len(description) > 1200:
+        raise ValueError("Room description must be 1,200 characters or fewer.")
+    enabled = form.get("enabled") == "on"
+    if SUPABASE_ENABLED:
+        client = get_request_supabase()
+        old = client.table("online_room_listings").select("photo_path").eq(
+            "room_number", room_number
+        ).limit(1).execute().data
+        if enabled and (not old or not old[0].get("photo_path")):
+            raise ValueError("Upload a room photo before publishing this room.")
+        client.table("online_room_listings").upsert({
+            "room_number": room_number,
+            "description": description,
+            "enabled": enabled,
+            "updated_at": now_iso(),
+        }).execute()
+    else:
+        db = get_db()
+        old = db.execute(
+            "SELECT photo_path FROM online_room_listings WHERE room_number = ?",
+            (room_number,),
+        ).fetchone()
+        if enabled and (not old or not old["photo_path"]):
+            raise ValueError("Upload a room photo before publishing this room.")
+        db.execute(
+            """INSERT INTO online_room_listings
+            (room_number, description, enabled, updated_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(room_number) DO UPDATE SET description = excluded.description,
+            enabled = excluded.enabled, updated_at = excluded.updated_at""",
+            (room_number, description, int(enabled), now_iso()),
+        )
+        db.commit()
+
+
+def save_room_photo(room_number, uploaded_file):
+    if not uploaded_file or not uploaded_file.filename:
+        raise ValueError("Choose a room photo to upload.")
+    safe_name = secure_filename(uploaded_file.filename)
+    extension = Path(safe_name).suffix.lower()
+    if extension not in ALLOWED_ROOM_PHOTO_EXTENSIONS:
+        raise ValueError("Use a JPG, PNG, or WebP room photo.")
+    content = uploaded_file.stream.read(MAX_ROOM_PHOTO_BYTES + 1)
+    if not content or len(content) > MAX_ROOM_PHOTO_BYTES:
+        raise ValueError("Room photos must be between 1 byte and 5 MB.")
+    expected_types = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }
+    if uploaded_file.mimetype != expected_types[extension]:
+        raise ValueError("The selected photo's file type does not match its extension.")
+    valid_signature = (
+        extension in {".jpg", ".jpeg"} and content.startswith(b"\xff\xd8\xff")
+        or extension == ".png" and content.startswith(b"\x89PNG\r\n\x1a\n")
+        or extension == ".webp" and content.startswith(b"RIFF")
+        and content[8:12] == b"WEBP"
+    )
+    if not valid_signature:
+        raise ValueError("The selected file is not a valid JPG, PNG, or WebP image.")
+    if SUPABASE_ENABLED:
+        admin = get_supabase_admin()
+        room = admin.table("rooms").select("number").eq(
+            "number", room_number
+        ).limit(1).execute().data
+        if not room:
+            raise ValueError("Room not found.")
+        existing = admin.table("online_room_listings").select(
+            "photo_path, description, enabled"
+        ).eq(
+            "room_number", room_number
+        ).limit(1).execute().data
+        photo_path = f"{uuid4().hex}{extension}"
+        admin.storage.from_(ROOM_PHOTO_BUCKET).upload(
+            photo_path,
+            content,
+            {"content-type": expected_types[extension], "upsert": "true"},
+        )
+        admin.table("online_room_listings").upsert({
+            "room_number": room_number,
+            "photo_path": photo_path,
+            "description": existing[0]["description"] if existing else "",
+            "enabled": existing[0]["enabled"] if existing else False,
+            "updated_at": now_iso(),
+        }).execute()
+        if existing and existing[0].get("photo_path"):
+            admin.storage.from_(ROOM_PHOTO_BUCKET).remove(
+                [existing[0]["photo_path"]]
+            )
+        return
+
+    db = get_db()
+    room = db.execute(
+        "SELECT number FROM rooms WHERE number = ?", (room_number,)
+    ).fetchone()
+    if not room:
+        raise ValueError("Room not found.")
+    ROOM_PHOTO_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    photo_path = f"{uuid4().hex}{extension}"
+    destination = ROOM_PHOTO_DIRECTORY / photo_path
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(content)
+    existing = db.execute(
+        "SELECT description, enabled, photo_path FROM online_room_listings WHERE room_number = ?",
+        (room_number,),
+    ).fetchone()
+    db.execute(
+        """INSERT INTO online_room_listings
+        (room_number, description, photo_path, enabled, updated_at)
+        VALUES (?, ?, ?, ?, ?) ON CONFLICT(room_number) DO UPDATE SET
+        photo_path = excluded.photo_path, updated_at = excluded.updated_at""",
+        (
+            room_number,
+            existing["description"] if existing else "",
+            photo_path,
+            existing["enabled"] if existing else 0,
+            now_iso(),
+        ),
+    )
+    db.commit()
+    if existing and existing["photo_path"]:
+        previous = ROOM_PHOTO_DIRECTORY / existing["photo_path"]
+        if previous.is_file():
+            previous.unlink()
+
+
+def create_online_booking(form):
+    try:
+        check_in = date.fromisoformat(form.get("check_in", ""))
+        check_out = date.fromisoformat(form.get("check_out", ""))
+    except ValueError as error:
+        raise ValueError("Choose valid arrival and departure dates.") from error
+    today = date.today()
+    if check_in < today:
+        raise ValueError("Arrival date cannot be in the past.")
+    if check_out <= check_in:
+        raise ValueError("Departure must be after arrival.")
+    guest_name = form.get("guest_name", "").strip()
+    phone = form.get("phone", "").strip()
+    email = form.get("email", "").strip()
+    room_number = form.get("room_number", "").strip()
+    if not guest_name or len(guest_name) > 160 or not phone or len(phone) > 40:
+        raise ValueError("Enter a guest name and valid phone number.")
+    if len(email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise ValueError("Enter a valid email address.")
+    if form.get("website", "").strip():
+        raise ValueError("Booking could not be submitted.")
+
+    settings = online_booking_settings(public=True)
+    if not all(settings.get(key) for key in (
+        "bank_name", "account_name", "account_number", "reception_whatsapp"
+    )):
+        raise ValueError("Online booking is not available yet. Please contact the hotel.")
+    available = available_online_rooms(check_in, check_out)
+    room = next((item for item in available if item["number"] == room_number), None)
+    if not room:
+        raise ValueError("That room is no longer available for the selected dates.")
+
+    hold_expires_at = (
+        datetime.now().astimezone() + timedelta(minutes=ONLINE_HOLD_MINUTES)
+    ).isoformat(timespec="seconds")
+    if SUPABASE_ENABLED:
+        from postgrest.exceptions import APIError
+
+        try:
+            result = get_supabase_admin().rpc("create_online_booking", {
+                "p_guest_name": guest_name,
+                "p_email": email,
+                "p_phone": phone,
+                "p_room_number": room_number,
+                "p_check_in": check_in.isoformat(),
+                "p_check_out": check_out.isoformat(),
+            }).execute().data
+        except APIError as error:
+            if error.code == "P0001" and (
+                error.message
+                and "already has a booking" in error.message
+            ):
+                raise ValueError(
+                    "That room was just booked for the selected dates."
+                ) from error
+            raise
+        reservation_id = result[0] if isinstance(result, list) else result
+    else:
+        db = get_db()
+        db.execute("BEGIN IMMEDIATE")
+        overlap = db.execute(
+            """SELECT 1 FROM reservations WHERE room_number = ?
+            AND status IN ('booked', 'checked_in', 'pending_payment')
+            AND check_in < ? AND check_out > ?
+            AND (status != 'pending_payment' OR hold_expires_at > ?)
+            LIMIT 1""",
+            (room_number, check_out.isoformat(), check_in.isoformat(), now_iso()),
+        ).fetchone()
+        if overlap:
+            db.rollback()
+            raise ValueError("That room was just booked for the selected dates.")
+        cursor = db.execute(
+            """INSERT INTO reservations
+            (guest_name, email, phone, room_number, check_in, check_out, amount,
+             amount_paid, payment_method, payment_status, status, created_at,
+             booking_source, hold_expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'Transfer', 'pending',
+                    'pending_payment', ?, 'online', ?)""",
+            (
+                guest_name, email, phone, room_number, check_in.isoformat(),
+                check_out.isoformat(), (check_out - check_in).days * room["rate"],
+                now_iso(), hold_expires_at,
+            ),
+        )
+        reservation_id = cursor.lastrowid
+        db.commit()
+    message = (
+        f"Hello, I submitted online booking request {reservation_id} for "
+        f"{guest_name}, room {room_number}, {check_in.isoformat()} to "
+        f"{check_out.isoformat()}. I am sending the bank transfer for "
+        f"NGN {(check_out - check_in).days * room['rate']:,.0f}. "
+        "Please confirm once received."
+    )
+    wa_number = re.sub(r"\D", "", settings["reception_whatsapp"])
+    session["online_booking_confirmation"] = {
+        "reference": str(reservation_id),
+        "room_number": room_number,
+        "room_type": room["type"],
+        "check_in": check_in.isoformat(),
+        "check_out": check_out.isoformat(),
+        "amount": (check_out - check_in).days * room["rate"],
+        "bank_name": settings["bank_name"],
+        "account_name": settings["account_name"],
+        "account_number": settings["account_number"],
+        "hold_expires_at": hold_expires_at,
+        "whatsapp_url": f"https://wa.me/{wa_number}?{urlencode({'text': message})}",
+    }
+    return reservation_id
+
+
+def confirm_online_booking(reservation_id, received_by):
+    if SUPABASE_ENABLED:
+        confirmed = get_request_supabase().rpc("confirm_online_booking", {
+            "p_reservation_id": reservation_id,
+            "p_received_by": received_by[:120],
+        }).execute().data
+        if not confirmed:
+            raise ValueError("This online request expired or is no longer awaiting confirmation.")
+        return
+    db = get_db()
+    db.execute("BEGIN IMMEDIATE")
+    reservation = db.execute(
+        "SELECT * FROM reservations WHERE id = ? AND status = 'pending_payment'",
+        (reservation_id,),
+    ).fetchone()
+    if not reservation:
+        db.rollback()
+        raise ValueError("This online request is no longer awaiting confirmation.")
+    if not reservation["hold_expires_at"] or reservation["hold_expires_at"] <= now_iso():
+        db.execute(
+            "UPDATE reservations SET status = 'cancelled', hold_expires_at = NULL WHERE id = ?",
+            (reservation_id,),
+        )
+        db.commit()
+        raise ValueError("The 30-minute room hold expired. Ask the guest to submit a new request.")
+    db.execute(
+        """UPDATE reservations SET status = 'booked', amount_paid = amount,
+        payment_status = 'paid', hold_expires_at = NULL WHERE id = ?""",
+        (reservation_id,),
+    )
+    if reservation["amount"] > 0:
+        db.execute(
+            """INSERT INTO payments
+            (reservation_id, room_number, amount, balance, method, received_by, created_at)
+            VALUES (?, ?, ?, 0, 'Transfer', ?, ?)""",
+            (
+                reservation_id, reservation["room_number"], reservation["amount"],
+                received_by[:120], now_iso(),
+            ),
+        )
+    db.commit()
+
+
+def pending_online_bookings():
+    now = now_iso()
+    if SUPABASE_ENABLED:
+        return get_request_supabase().table("reservations").select("*").eq(
+            "booking_source", "online"
+        ).eq("status", "pending_payment").gt(
+            "hold_expires_at", now
+        ).order("created_at").execute().data
+    return [
+        dict(row) for row in get_db().execute(
+            """SELECT * FROM reservations WHERE booking_source = 'online'
+            AND status = 'pending_payment' AND hold_expires_at > ?
+            ORDER BY created_at""",
+            (now,),
+        ).fetchall()
+    ]
 
 
 def reference_calendar(rooms, reservations, reference_date=None):
@@ -345,11 +872,20 @@ def reference_calendar(rooms, reservations, reference_date=None):
             booking = next((
                 reservation for reservation in reservations
                 if reservation["room_number"] == room["number"]
-                and reservation["status"] in {"booked", "checked_in"}
+                and reservation["status"] in {"booked", "checked_in", "pending_payment"}
+                and (
+                    reservation["status"] != "pending_payment"
+                    or reservation.get("hold_expires_at")
+                    and reservation["hold_expires_at"] > now_iso()
+                )
                 and reservation["check_in"] <= current_day.isoformat() < reservation["check_out"]
             ), None)
             cells.append({
-                "status": "occupied" if booking and booking["status"] == "checked_in" else "booked" if booking else "",
+                "status": (
+                    "pending-payment" if booking and booking["status"] == "pending_payment"
+                    else "occupied" if booking and booking["status"] == "checked_in"
+                    else "booked" if booking else ""
+                ),
                 "guest": booking["guest_name"] if booking else "",
                 "selected": current_day == reference_date,
             })
@@ -458,16 +994,25 @@ def room_has_history(room_number):
 
 def room_has_active_booking(room_number):
     if SUPABASE_ENABLED:
-        bookings = get_request_supabase().table("reservations").select("id").eq(
+        bookings = get_request_supabase().table("reservations").select(
+            "status, hold_expires_at"
+        ).eq(
             "room_number", room_number
-        ).in_("status", ["booked", "checked_in"]).limit(1).execute().data
+        ).in_("status", ["booked", "checked_in", "pending_payment"]).execute().data
     else:
-        bookings = get_db().execute(
-            "SELECT 1 FROM reservations WHERE room_number = ? "
-            "AND status IN ('booked', 'checked_in') LIMIT 1",
-            (room_number,),
-        ).fetchone()
-    return bool(bookings)
+        bookings = [
+            dict(row) for row in get_db().execute(
+                "SELECT status, hold_expires_at FROM reservations WHERE room_number = ? "
+                "AND status IN ('booked', 'checked_in', 'pending_payment')",
+                (room_number,),
+            ).fetchall()
+        ]
+    return any(
+        booking.get("status") in {"booked", "checked_in"}
+        or booking.get("status") == "pending_payment"
+        and timestamp_is_future(booking.get("hold_expires_at"))
+        for booking in bookings
+    )
 
 
 def remove_reference_room(room_number):
@@ -504,10 +1049,38 @@ def remove_reference_room(room_number):
         return False
 
     if SUPABASE_ENABLED:
+        listings = get_request_supabase().table("online_room_listings").select(
+            "photo_path"
+        ).eq("room_number", room_number).limit(1).execute().data
+        if listings:
+            photo_path = listings[0].get("photo_path")
+            if photo_path:
+                get_supabase_admin().storage.from_(ROOM_PHOTO_BUCKET).remove(
+                    [photo_path]
+                )
+            get_request_supabase().table("online_room_listings").delete().eq(
+                "room_number", room_number
+            ).execute()
         get_request_supabase().table("rooms").delete().eq(
             "number", room_number
         ).execute()
     else:
+        listing = db.execute(
+            "SELECT photo_path FROM online_room_listings WHERE room_number = ?",
+            (room_number,),
+        ).fetchone()
+        if listing:
+            photo_path = listing["photo_path"]
+            if photo_path and re.fullmatch(
+                r"[a-f0-9]{32}\.(?:jpg|jpeg|png|webp)", photo_path
+            ):
+                photo = ROOM_PHOTO_DIRECTORY / photo_path
+                if photo.is_file():
+                    photo.unlink()
+            db.execute(
+                "DELETE FROM online_room_listings WHERE room_number = ?",
+                (room_number,),
+            )
         db.execute("DELETE FROM rooms WHERE number = ?", (room_number,))
         db.commit()
     return True
@@ -605,8 +1178,12 @@ def require_workspace_login():
         required_role = (request.view_args or {}).get("role")
     elif endpoint == "update_room":
         required_role = "reception"
-    elif endpoint == "manage_room":
+    elif endpoint in {"manage_room", "manage_online_room"}:
         required_role = "manager"
+    elif endpoint in {
+        "confirm_online_booking_route", "cancel_online_booking_route"
+    }:
+        required_role = "reception"
     elif endpoint in {"dashboard", "reservations", "new_reservation"}:
         required_role = request.args.get("role", "reception")
     elif endpoint == "update_reservation":
@@ -616,6 +1193,118 @@ def require_workspace_login():
     if required_role and session.get("user_role") != required_role:
         return redirect(url_for("login", role=required_role))
     return None
+
+
+@app.route("/book", methods=["GET", "POST"])
+def public_booking():
+    today = date.today()
+    default_check_in = today + timedelta(days=1)
+    default_check_out = default_check_in + timedelta(days=1)
+    try:
+        submitted_dates = request.form if request.method == "POST" else request.args
+        check_in = date.fromisoformat(submitted_dates.get(
+            "check_in", default_check_in.isoformat()
+        ))
+        check_out = date.fromisoformat(submitted_dates.get(
+            "check_out", default_check_out.isoformat()
+        ))
+    except ValueError:
+        flash("Choose valid arrival and departure dates.", "error")
+        check_in, check_out = default_check_in, default_check_out
+
+    if request.method == "POST":
+        csrf_token = session.get("public_booking_csrf", "")
+        if not csrf_token or not hmac.compare_digest(
+            csrf_token, request.form.get("csrf_token", "")
+        ):
+            flash("This booking form expired. Refresh the page and try again.", "error")
+        else:
+            session["public_booking_csrf"] = secrets.token_urlsafe(32)
+            try:
+                create_online_booking(request.form)
+                return redirect(url_for("online_booking_confirmation"))
+            except ValueError as error:
+                flash(str(error), "error")
+    session.setdefault("public_booking_csrf", secrets.token_urlsafe(32))
+
+    rooms = []
+    if check_in >= today and check_out > check_in:
+        rooms = available_online_rooms(check_in, check_out)
+    return render_template(
+        "public_booking.html",
+        rooms=rooms,
+        check_in=check_in.isoformat(),
+        check_out=check_out.isoformat(),
+        today=today.isoformat(),
+        csrf_token=session["public_booking_csrf"],
+    )
+
+
+@app.get("/booking/confirmation")
+def online_booking_confirmation():
+    confirmation = session.get("online_booking_confirmation")
+    if not confirmation:
+        return redirect(url_for("public_booking"))
+    return render_template("online_booking_confirmation.html", confirmation=confirmation)
+
+
+@app.get("/room-photos/<path:photo_path>")
+def online_room_photo(photo_path):
+    if SUPABASE_ENABLED or not re.fullmatch(r"[a-f0-9]{32}\.(?:jpg|jpeg|png|webp)", photo_path):
+        return "", 404
+    return send_from_directory(ROOM_PHOTO_DIRECTORY, photo_path)
+
+
+@app.post("/rooms/<room_number>/online")
+def manage_online_room(room_number):
+    try:
+        save_room_photo(room_number, request.files.get("photo"))
+        flash(f"Room photo for {room_number} uploaded.", "success")
+    except ValueError as error:
+        flash(str(error), "error")
+    return redirect(url_for(
+        "reference_workspace", role="manager", page="online-settings"
+    ))
+
+
+@app.post("/online-bookings/<reservation_id>/confirm")
+def confirm_online_booking_route(reservation_id):
+    try:
+        confirm_online_booking(reservation_id, session.get("username", "Reception"))
+        flash(f"Online booking {reservation_id} confirmed and payment recorded.", "success")
+    except ValueError as error:
+        flash(str(error), "error")
+    return redirect(url_for("reference_workspace", role="reception", page="online"))
+
+
+@app.post("/online-bookings/<reservation_id>/cancel")
+def cancel_online_booking_route(reservation_id):
+    if SUPABASE_ENABLED:
+        result = get_request_supabase().table("reservations").update({
+            "status": "cancelled",
+            "hold_expires_at": None,
+        }).eq("id", reservation_id).eq(
+            "status", "pending_payment"
+        ).select("id").execute().data
+        if not result:
+            flash("This request has expired or is no longer awaiting payment.", "error")
+            return redirect(url_for(
+                "reference_workspace", role="reception", page="online"
+            ))
+    else:
+        result = get_db().execute(
+            """UPDATE reservations SET status = 'cancelled', hold_expires_at = NULL
+            WHERE id = ? AND status = 'pending_payment'""",
+            (reservation_id,),
+        )
+        if not result.rowcount:
+            flash("This request has expired or is no longer awaiting payment.", "error")
+            return redirect(url_for(
+                "reference_workspace", role="reception", page="online"
+            ))
+        get_db().commit()
+    flash(f"Online booking request {reservation_id} was released.", "success")
+    return redirect(url_for("reference_workspace", role="reception", page="online"))
 
 
 @app.route("/")
@@ -799,6 +1488,36 @@ def create_reference_booking(form):
         room = rooms[0] if rooms else None
         if not room or room["status"] != "available":
             raise ValueError("That room is no longer available.")
+        occupied_dates = client.table("reservations").select(
+            "id, check_in, check_out, status, hold_expires_at"
+        ).eq("room_number", room_number).in_(
+            "status", ["booked", "checked_in", "pending_payment"]
+        ).execute().data
+    else:
+        db = get_db()
+        room = db.execute(
+            "SELECT rate, status FROM rooms WHERE number = ?", (room_number,)
+        ).fetchone()
+        if not room or room["status"] != "available":
+            raise ValueError("That room is no longer available.")
+        occupied_dates = db.execute(
+            """SELECT id, check_in, check_out, status, hold_expires_at
+            FROM reservations WHERE room_number = ?
+            AND status IN ('booked', 'checked_in', 'pending_payment')""",
+            (room_number,),
+        ).fetchall()
+    if any(
+        (
+            stay["status"] != "pending_payment"
+            or timestamp_is_future(stay["hold_expires_at"])
+        )
+        and check_in.isoformat() < stay["check_out"]
+        and check_out.isoformat() > stay["check_in"]
+        for stay in occupied_dates
+    ):
+        raise ValueError("That room already has a booking during the selected dates.")
+
+    if SUPABASE_ENABLED:
         amount = int(form.get("total_amount") or nights * room["rate"])
         amount_paid = int(form.get("amount_paid") or 0)
         if amount < 0 or amount_paid < 0 or amount_paid > amount:
@@ -834,9 +1553,6 @@ def create_reference_booking(form):
         return result
 
     db = get_db()
-    room = db.execute("SELECT rate, status FROM rooms WHERE number = ?", (room_number,)).fetchone()
-    if not room or room["status"] != "available":
-        raise ValueError("That room is no longer available.")
     amount = int(form.get("total_amount") or nights * room["rate"])
     amount_paid = int(form.get("amount_paid") or 0)
     if amount < 0 or amount_paid < 0 or amount_paid > amount:
@@ -885,12 +1601,16 @@ def extend_reference_reservation(reservation_id, form):
     if SUPABASE_ENABLED:
         client = get_request_supabase()
         other_stays = client.table("reservations").select(
-            "id, check_in, check_out"
+            "id, check_in, check_out, status, hold_expires_at"
         ).eq("room_number", reservation["room_number"]).in_(
-            "status", ["booked", "checked_in"]
+            "status", ["booked", "checked_in", "pending_payment"]
         ).execute().data
         has_conflict = any(
             stay["id"] != reservation_id
+            and (
+                stay["status"] != "pending_payment"
+                or timestamp_is_future(stay["hold_expires_at"])
+            )
             and date.fromisoformat(stay["check_in"]) < new_departure
             and date.fromisoformat(stay["check_out"]) > current_departure
             for stay in other_stays
@@ -903,11 +1623,14 @@ def extend_reference_reservation(reservation_id, form):
         db = get_db()
         has_conflict = db.execute(
             """SELECT 1 FROM reservations
-            WHERE room_number = ? AND id != ? AND status IN ('booked', 'checked_in')
+            WHERE room_number = ? AND id != ?
+              AND status IN ('booked', 'checked_in', 'pending_payment')
+              AND (status != 'pending_payment' OR hold_expires_at > ?)
               AND check_in < ? AND check_out > ? LIMIT 1""",
             (
                 reservation["room_number"],
                 reservation_id,
+                now_iso(),
                 new_departure.isoformat(),
                 current_departure.isoformat(),
             ),
@@ -1041,9 +1764,9 @@ def update_manager_reservation(reservation_id, form):
             "number", room_number
         ).limit(1).execute().data
         other_stays = client.table("reservations").select(
-            "id, check_in, check_out"
+            "id, check_in, check_out, status, hold_expires_at"
         ).eq("room_number", room_number).in_(
-            "status", ["booked", "checked_in"]
+            "status", ["booked", "checked_in", "pending_payment"]
         ).execute().data
     else:
         db = get_db()
@@ -1051,8 +1774,9 @@ def update_manager_reservation(reservation_id, form):
             "SELECT number, status FROM rooms WHERE number = ?", (room_number,)
         ).fetchall()
         other_stays = db.execute(
-            """SELECT id, check_in, check_out FROM reservations
-            WHERE room_number = ? AND status IN ('booked', 'checked_in')""",
+            """SELECT id, check_in, check_out, status, hold_expires_at
+            FROM reservations WHERE room_number = ?
+            AND status IN ('booked', 'checked_in', 'pending_payment')""",
             (room_number,),
         ).fetchall()
     room = rooms[0] if rooms else None
@@ -1062,6 +1786,11 @@ def update_manager_reservation(reservation_id, form):
         raise ValueError("Choose a room that is not unavailable or being cleaned.")
     for stay in other_stays:
         if str(stay["id"]) == str(reservation_id):
+            continue
+        if (
+            stay["status"] == "pending_payment"
+            and not timestamp_is_future(stay["hold_expires_at"])
+        ):
             continue
         other_start = date.fromisoformat(stay["check_in"])
         other_end = date.fromisoformat(stay["check_out"])
@@ -1126,11 +1855,12 @@ def reference_workspace(role, page):
         return redirect(url_for("reference_workspace", role=role, page="checkout"))
     pages = {
         "director": {"dashboard", "rooms", "finance"},
-        "manager": {"dashboard", "rooms", "bookings", "calendar", "finance"},
-        "reception": {"dashboard", "calendar", "new", "checkout", "roomstatus", "payments"},
+        "manager": {"dashboard", "rooms", "bookings", "calendar", "finance", "online-settings"},
+        "reception": {"dashboard", "calendar", "new", "checkout", "roomstatus", "payments", "online"},
     }
     if role not in pages or page not in pages[role]:
         return redirect(url_for("home"))
+    expire_online_booking_holds()
     reference_date = date.today()
     if page == "calendar":
         try:
@@ -1147,6 +1877,23 @@ def reference_workspace(role, page):
                 return redirect(url_for("reference_workspace", role=role, page=page))
             except (KeyError, ValueError) as error:
                 flash(str(error) or "Complete all room details.", "error")
+        elif role == "manager" and page == "online-settings":
+            try:
+                action = request.form.get("action")
+                if action == "settings":
+                    save_online_booking_settings(request.form)
+                    flash("Online payment and WhatsApp details saved.", "success")
+                elif action == "listing":
+                    room_number = request.form.get("room_number", "").strip()
+                    save_online_room_listing(room_number, request.form)
+                    flash(f"Online room listing for {room_number} saved.", "success")
+                else:
+                    raise ValueError("Choose a valid online booking setting.")
+                return redirect(url_for(
+                    "reference_workspace", role=role, page=page
+                ))
+            except ValueError as error:
+                flash(str(error), "error")
         elif role != "reception" or page != "new":
             return redirect(url_for("reference_workspace", role=role, page=page))
         else:
@@ -1161,6 +1908,14 @@ def reference_workspace(role, page):
     rooms = reference_rooms()
     room_history_numbers = (
         rooms_with_history(rooms) if role == "manager" and page == "rooms" else set()
+    )
+    online_listings = (
+        online_room_listings(manager=True)
+        if role == "manager" and page == "online-settings" else []
+    )
+    booking_settings = (
+        online_booking_settings()
+        if role == "manager" and page == "online-settings" else {}
     )
     available_rooms = [room for room in rooms if room["status"].lower() == "available"]
     calendar_days, calendar_rows = reference_calendar(rooms, reservations, reference_date)
@@ -1184,6 +1939,12 @@ def reference_workspace(role, page):
         next_calendar_date=(calendar_week_start + timedelta(days=7)).isoformat(),
         room_rates={room["number"]: room["rate"] for room in rooms},
         rooms_with_history=room_history_numbers,
+        online_listings=online_listings,
+        booking_settings=booking_settings,
+        pending_online_bookings=(
+            pending_online_bookings()
+            if role == "reception" and page == "online" else []
+        ),
     )
 
 

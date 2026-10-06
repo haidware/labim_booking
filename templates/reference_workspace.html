@@ -12,13 +12,13 @@
   <header class="reference-header">
     <div><strong><span class="brand-prefix">HAIDWARE</span> <span class="brand-title">HOTEL BOOKING SYSTEM</span></strong><span>LABIM HOTEL AND SUITE</span><small>{{ 'Receptionist' if role == 'reception' else role|capitalize }}</small></div>
     <nav class="header-nav">
-      {% if role == 'director' %}<a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">🔵 Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">📊 Finance</a>{% elif role == 'manager' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">🏨 Operational Overview</a><a href="{{ url_for('reference_workspace', role=role, page='bookings') }}">📅 Bookings</a><a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">🗓️ Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">📊 Finance</a>{% else %}<a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">📅 Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='roomstatus') }}">🔵 Room Status</a><a href="{{ url_for('reference_workspace', role=role, page='payments') }}">💳 Payments</a>{% endif %}<a href="{{ url_for('logout') }}">Log Out</a>
+      {% if role == 'director' %}<a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">🔵 Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">📊 Finance</a>{% elif role == 'manager' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">🏨 Operational Overview</a><a href="{{ url_for('reference_workspace', role=role, page='bookings') }}">📅 Bookings</a><a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">🗓️ Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">📊 Finance</a><a href="{{ url_for('reference_workspace', role=role, page='online-settings') }}">🛒 Online Booking Setup</a>{% else %}<a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">📅 Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='roomstatus') }}">🔵 Room Status</a><a href="{{ url_for('reference_workspace', role=role, page='payments') }}">💳 Payments</a><a href="{{ url_for('reference_workspace', role=role, page='online') }}">🌐 Online Requests</a>{% endif %}<a href="{{ url_for('logout') }}">Log Out</a>
     </nav>
   </header>
   <div class="reference-layout">
     <aside class="reference-sidebar">
       {% if role == 'manager' %}<a href="{{ url_for('manager_signup') }}">Team Accounts</a>{% endif %}
-      {% if role == 'director' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">Finance</a>{% elif role == 'manager' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='bookings') }}">Bookings</a><a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">Booking Finance</a>{% else %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='new') }}">New Booking</a><a href="{{ url_for('reference_workspace', role=role, page='checkout') }}">Check Out</a><a href="{{ url_for('reference_workspace', role=role, page='roomstatus') }}">Room Status</a><a href="{{ url_for('reference_workspace', role=role, page='payments') }}">Payments</a>{% endif %}
+      {% if role == 'director' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">Finance</a>{% elif role == 'manager' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='bookings') }}">Bookings</a><a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">Booking Finance</a><a href="{{ url_for('reference_workspace', role=role, page='online-settings') }}">Online Booking Setup</a>{% else %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='new') }}">New Booking</a><a href="{{ url_for('reference_workspace', role=role, page='checkout') }}">Check Out</a><a href="{{ url_for('reference_workspace', role=role, page='roomstatus') }}">Room Status</a><a href="{{ url_for('reference_workspace', role=role, page='payments') }}">Payments</a><a href="{{ url_for('reference_workspace', role=role, page='online') }}">Online Requests</a>{% endif %}
     </aside>
     <main class="reference-main">
       {% with messages = get_flashed_messages(with_categories=true) %}
@@ -58,6 +58,65 @@
       {% elif role == 'manager' and page == 'bookings' %}
       <h1>Bookings</h1><p>Monitor all reservations and current stays.</p>
       <section class="data-panel"><div class="panel-heading"><strong>Booking Records</strong></div>{% include 'reference_bookings.html' %}</section>
+
+      {% elif role == 'manager' and page == 'online-settings' %}
+      <h1>Online Booking Setup</h1><p>Choose which rooms guests can book online, and configure transfer and Reception contact details.</p>
+      <section class="data-panel">
+        <div class="panel-heading"><strong>Bank transfer and Reception WhatsApp</strong><small>Guests see these details after requesting a room</small></div>
+        <form class="online-settings-form" method="post">
+          <input type="hidden" name="action" value="settings">
+          <label>Bank name<input name="bank_name" value="{{ booking_settings.get('bank_name', '') }}" maxlength="100" required></label>
+          <label>Account name<input name="account_name" value="{{ booking_settings.get('account_name', '') }}" maxlength="120" required></label>
+          <label>Account number<input name="account_number" value="{{ booking_settings.get('account_number', '') }}" inputmode="numeric" maxlength="20" required></label>
+          <label>Reception WhatsApp number (include country code)<input name="reception_whatsapp" type="tel" value="{{ booking_settings.get('reception_whatsapp', '') }}" placeholder="+2348012345678" maxlength="24" required></label>
+          <button class="primary-button" type="submit">Save payment and contact details</button>
+        </form>
+      </section>
+      <section class="data-panel">
+        <div class="panel-heading"><strong>Publish rooms online</strong><small>A photo is required before publishing</small></div>
+        <div class="online-room-listings">
+          {% for room in online_listings %}
+          <article class="online-room-manager-card">
+            <div><strong>Room {{ room.number }} · {{ room.type }}</strong><small>{{ room.beds }} bed{{ '' if room.beds == 1 else 's' }} · ₦{{ '{:,.0f}'.format(room.rate) }} per night</small>
+              {% if room.photo_url %}<img src="{{ room.photo_url }}" alt="Room {{ room.number }} photo">{% else %}<p>No room photo uploaded.</p>{% endif %}
+            </div>
+            <form class="online-settings-form" method="post">
+              <input type="hidden" name="action" value="listing">
+              <input type="hidden" name="room_number" value="{{ room.number }}">
+              <label>Guest-facing description<textarea name="description" rows="4" maxlength="1200">{{ room.description }}</textarea></label>
+              <label class="online-publish-toggle"><input type="checkbox" name="enabled" {% if room.enabled %}checked{% endif %}> Show this room in public search</label>
+              <button class="secondary-button" type="submit">Save room listing</button>
+            </form>
+            <form class="online-photo-upload" method="post" enctype="multipart/form-data" action="{{ url_for('manage_online_room', room_number=room.number) }}">
+              <label>Room photo (JPG, PNG, or WebP; max 5 MB)<input type="file" name="photo" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required></label>
+              <button class="secondary-button" type="submit">Upload photo</button>
+            </form>
+          </article>
+          {% else %}<p class="empty-state">Register rooms before publishing them online.</p>{% endfor %}
+        </div>
+      </section>
+
+      {% elif role == 'reception' and page == 'online' %}
+      <h1>Online Booking Requests</h1><p>Pending bank transfers hold the selected dates for 30 minutes. Verify each transfer before confirming it as paid.</p>
+      <section class="data-panel">
+        <div class="panel-heading"><strong>Awaiting transfer verification</strong><a href="{{ url_for('public_booking') }}" target="_blank" rel="noopener">Open guest booking page ↗</a></div>
+        {% if pending_online_bookings %}
+        <div class="table-wrap"><table class="manager-bookings">
+          <thead><tr><th>Reference / Room</th><th>Guest</th><th>Stay</th><th>Amount</th><th>Hold expires</th><th>Action</th></tr></thead>
+          <tbody>{% for booking in pending_online_bookings %}
+            <tr><td><strong>{{ booking.id }}</strong><small>Room {{ booking.room_number }}</small></td>
+              <td><strong>{{ booking.guest_name }}</strong><small>{{ booking.phone }} · {{ booking.email }}</small></td>
+              <td><strong>{{ booking.check_in }}</strong><small>to {{ booking.check_out }}</small></td>
+              <td>₦{{ '{:,.0f}'.format(booking.amount) }}</td><td>{{ booking.hold_expires_at }}</td>
+              <td><div class="manager-booking-actions">
+                <form method="post" action="{{ url_for('confirm_online_booking_route', reservation_id=booking.id) }}" onsubmit="return confirm('Confirm that this bank transfer has been received?');"><button class="primary-button" type="submit">Confirm transfer</button></form>
+                <form method="post" action="{{ url_for('cancel_online_booking_route', reservation_id=booking.id) }}" onsubmit="return confirm('Release this room hold?');"><button class="cancel-button" type="submit">Release</button></form>
+              </div></td>
+            </tr>
+          {% endfor %}</tbody>
+        </table></div>
+        {% else %}<p class="empty-state">There are no online requests awaiting payment verification.</p>{% endif %}
+      </section>
 
       {% elif role == 'reception' and page == 'dashboard' %}
       <div class="heading-row"><div><h1>Reception Dashboard</h1><p>Daily booking operations.</p></div><a class="primary-button" href="{{ url_for('reference_workspace', role=role, page='new') }}">+ New Booking</a></div>
@@ -124,7 +183,7 @@
 
       {% elif role == 'reception' and page == 'payments' %}
       <h1>Payments</h1><p>Record and review guest payments.</p>
-      <section class="data-panel"><div class="panel-heading"><strong>Outstanding Balances</strong></div><div class="action-list">{% for reservation in reservations if reservation.status != 'cancelled' and reservation.amount > reservation.amount_paid %}<div><span>Room {{ reservation.room_number }} — {{ reservation.guest_name }}<small>Balance ₦{{ '{:,.0f}'.format(reservation.amount - reservation.amount_paid) }}</small></span><form class="payment-action" method="post" action="{{ url_for('update_reservation', reservation_id=reservation.id) }}"><input type="hidden" name="action" value="mark_paid"><input type="hidden" name="role" value="reception"><input type="hidden" name="reference" value="true"><input type="hidden" name="return_page" value="payments"><input name="amount" type="number" min="1" max="{{ reservation.amount - reservation.amount_paid }}" placeholder="Amount" required><select name="payment_method"><option>{{ reservation.payment_method }}</option><option>Cash</option><option>POS</option><option>Transfer</option></select><button class="primary-button" type="submit">Record Payment</button></form></div>{% else %}<p>No outstanding balances.</p>{% endfor %}</div></section>
+      <section class="data-panel"><div class="panel-heading"><strong>Outstanding Balances</strong></div><div class="action-list">{% for reservation in reservations if reservation.status not in ['cancelled', 'pending_payment'] and reservation.amount > reservation.amount_paid %}<div><span>Room {{ reservation.room_number }} — {{ reservation.guest_name }}<small>Balance ₦{{ '{:,.0f}'.format(reservation.amount - reservation.amount_paid) }}</small></span><form class="payment-action" method="post" action="{{ url_for('update_reservation', reservation_id=reservation.id) }}"><input type="hidden" name="action" value="mark_paid"><input type="hidden" name="role" value="reception"><input type="hidden" name="reference" value="true"><input type="hidden" name="return_page" value="payments"><input name="amount" type="number" min="1" max="{{ reservation.amount - reservation.amount_paid }}" placeholder="Amount" required><select name="payment_method"><option>{{ reservation.payment_method }}</option><option>Cash</option><option>POS</option><option>Transfer</option></select><button class="primary-button" type="submit">Record Payment</button></form></div>{% else %}<p>No outstanding balances.</p>{% endfor %}</div></section>
       <section class="data-panel"><div class="panel-heading"><strong>Payment Records</strong></div>{% include 'reference_payments.html' %}</section>
       {% endif %}
     </main>

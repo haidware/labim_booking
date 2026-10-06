@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Book a Room · HAIDWARE Hotel</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
+</head>
+<body class="public-booking-page">
+  <header class="public-booking-header">
+    <a href="{{ url_for('home') }}">HAIDWARE HOTEL AND SUITE</a>
+    <span>Guest online booking</span>
+  </header>
+  <main class="public-booking-main">
+    <h1>Find your room</h1>
+    <p>Choose your stay dates to see rooms currently listed and available for those dates.</p>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}<div class="account-error">{{ message }}</div>{% endfor %}
+    {% endwith %}
+    <form class="public-date-search" method="get" action="{{ url_for('public_booking') }}">
+      <label>Arrival<input name="check_in" type="date" min="{{ today }}" value="{{ check_in }}" required></label>
+      <label>Departure<input name="check_out" type="date" min="{{ today }}" value="{{ check_out }}" required></label>
+      <button class="primary-button" type="submit">Search available rooms</button>
+    </form>
+    {% if rooms %}
+    <h2>Available rooms</h2>
+    <form class="public-room-booking-form" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="check_in" value="{{ check_in }}">
+      <input type="hidden" name="check_out" value="{{ check_out }}">
+      <label class="booking-honeypot" aria-hidden="true">Website<input name="website" tabindex="-1" autocomplete="off"></label>
+      <div class="public-room-grid">
+        {% for room in rooms %}
+        <label class="public-room-card">
+          {% if room.photo_url %}<img src="{{ room.photo_url }}" alt="Photo of Room {{ room.number }}">{% else %}<div class="public-room-no-photo">Photo unavailable</div>{% endif %}
+          <span class="public-room-info">
+            <strong>{{ room.type }} · Room {{ room.number }}</strong>
+            <small>{{ room.beds }} bed{{ '' if room.beds == 1 else 's' }} · ₦{{ '{:,.0f}'.format(room.rate) }} per night</small>
+            {% if room.description %}<span>{{ room.description }}</span>{% endif %}
+            <span class="public-room-select"><input type="radio" name="room_number" value="{{ room.number }}" required> Select this room</span>
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+      <section class="public-guest-details">
+        <h2>Guest details</h2>
+        <label>Full name<input name="guest_name" maxlength="160" autocomplete="name" required></label>
+        <label>Email address<input name="email" type="email" maxlength="254" autocomplete="email" required></label>
+        <label>Phone number<input name="phone" type="tel" maxlength="40" autocomplete="tel" required></label>
+        <p>Your dates will be held for 30 minutes while you transfer payment. Reception confirms your booking after verifying the transfer.</p>
+        <button class="primary-button" type="submit">Request booking and get payment details</button>
+      </section>
+    </form>
+    {% else %}
+    <section class="public-no-rooms"><h2>No listed rooms available for those dates</h2><p>Try different dates, or contact the hotel for assistance.</p></section>
+    {% endif %}
+    <footer><a href="{{ url_for('home') }}">Back to hotel home</a></footer>
+  </main>
+</body>
+</html>
