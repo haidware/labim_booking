@@ -715,6 +715,101 @@ def create_reference_booking(form):
     return {"id": cursor.lastrowid}
 
 
+def extend_reference_reservation(reservation_id, form):
+    if SUPABASE_ENABLED:
+        client = get_request_supabase()
+        results = client.table("reservations").select("*").eq("id", reservation_id).limit(1).execute().data
+        reservation = results[0] if results else None
+    else:
+        reservation = get_db().execute(
+            "SELECT * FROM reservations WHERE id = ?", (reservation_id,)
+        ).fetchone()
+    if not reservation or reservation["status"] not in {"booked", "checked_in"}:
+        raise ValueError("Only a current stay can be extended.")
+
+    try:
+        current_departure = date.fromisoformat(reservation["check_out"])
+        new_departure = date.fromisoformat(form["check_out"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("Choose a valid new departure date.") from error
+    if new_departure <= current_departure:
+        raise ValueError("The new departure date must be after the current departure.")
+
+    if SUPABASE_ENABLED:
+        client = get_request_supabase()
+        other_stays = client.table("reservations").select(
+            "id, check_in, check_out"
+        ).eq("room_number", reservation["room_number"]).in_(
+            "status", ["booked", "checked_in"]
+        ).execute().data
+        has_conflict = any(
+            stay["id"] != reservation_id
+            and date.fromisoformat(stay["check_in"]) < new_departure
+            and date.fromisoformat(stay["check_out"]) > current_departure
+            for stay in other_stays
+        )
+        room_results = client.table("rooms").select("rate").eq(
+            "number", reservation["room_number"]
+        ).limit(1).execute().data
+        room = room_results[0] if room_results else None
+    else:
+        db = get_db()
+        has_conflict = db.execute(
+            """SELECT 1 FROM reservations
+            WHERE room_number = ? AND id != ? AND status IN ('booked', 'checked_in')
+              AND check_in < ? AND check_out > ? LIMIT 1""",
+            (
+                reservation["room_number"],
+                reservation_id,
+                new_departure.isoformat(),
+                current_departure.isoformat(),
+            ),
+        ).fetchone() is not None
+        room = db.execute(
+            "SELECT rate FROM rooms WHERE number = ?", (reservation["room_number"],)
+        ).fetchone()
+    if has_conflict:
+        raise ValueError("The room has another stay scheduled before that departure date.")
+    if not room:
+        raise ValueError("The room rate could not be found.")
+
+    extra_nights = (new_departure - current_departure).days
+    extension_charge = extra_nights * int(room["rate"])
+    updated_amount = int(reservation["amount"]) + extension_charge
+    amount_paid = int(reservation["amount_paid"] or 0)
+    payment_status = (
+        "paid" if amount_paid >= updated_amount
+        else "partial" if amount_paid
+        else "pending"
+    )
+    updates = {
+        "check_out": new_departure.isoformat(),
+        "amount": updated_amount,
+        "payment_status": payment_status,
+        "status": "checked_in",
+    }
+    if SUPABASE_ENABLED:
+        client.table("reservations").update(updates).eq("id", reservation_id).execute()
+        client.table("rooms").update({"status": "occupied"}).eq(
+            "number", reservation["room_number"]
+        ).execute()
+    else:
+        db.execute(
+            """UPDATE reservations SET check_out = ?, amount = ?, payment_status = ?, status = ?
+            WHERE id = ?""",
+            (
+                updates["check_out"], updates["amount"], updates["payment_status"],
+                updates["status"], reservation_id,
+            ),
+        )
+        db.execute(
+            "UPDATE rooms SET status = 'occupied' WHERE number = ?",
+            (reservation["room_number"],),
+        )
+        db.commit()
+    return extra_nights, extension_charge, new_departure
+
+
 @app.route("/workspace/<role>/<page>", methods=["GET", "POST"])
 def reference_workspace(role, page):
     if role == "reception" and page == "checkin":
@@ -761,6 +856,7 @@ def reference_workspace(role, page):
         finance=reference_finance(reservations, payments),
         calendar_days=calendar_days,
         calendar_rows=calendar_rows,
+        room_rates={room["number"]: room["rate"] for room in rooms},
     )
 
 
@@ -824,6 +920,19 @@ def new_reservation():
 def update_reservation(reservation_id):
     action = request.form["action"]
     role = request.form.get("role", "reception")
+    if action == "extend":
+        try:
+            extra_nights, extension_charge, new_departure = extend_reference_reservation(
+                reservation_id, request.form
+            )
+            flash(
+                f"Stay extended by {extra_nights} night(s) through {new_departure.isoformat()}. "
+                f"Additional charge: ₦{extension_charge:,.0f}.",
+                "success",
+            )
+        except (KeyError, ValueError) as error:
+            flash(str(error) or "Enter a valid new departure date.", "error")
+        return redirect(url_for("reference_workspace", role="reception", page="checkout"))
     if SUPABASE_ENABLED:
         client = get_request_supabase()
         reservations = client.table("reservations").select("*").eq("id", reservation_id).limit(1).execute().data

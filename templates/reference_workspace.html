@@ -81,7 +81,30 @@
 
       {% elif role == 'reception' and page == 'checkout' %}
       <h1>Check Out</h1><p>Complete a guest’s stay and send the room for cleaning.</p><section class="data-panel"><div class="panel-heading"><strong>Current Stays</strong></div><div class="action-list">
-        {% for reservation in reservations if reservation.status in ['booked', 'checked_in'] %}<div><span>Room {{ reservation.room_number }} — {{ reservation.guest_name }}<small>{% if reservation.amount > reservation.amount_paid %}Balance ₦{{ '{:,.0f}'.format(reservation.amount - reservation.amount_paid) }}{% else %}Payment complete{% endif %}</small></span><form method="post" action="{{ url_for('update_reservation', reservation_id=reservation.id) }}"><input type="hidden" name="action" value="check_out"><input type="hidden" name="role" value="reception"><input type="hidden" name="reference" value="true"><input type="hidden" name="return_page" value="checkout"><button class="primary-button" type="submit">Check Out</button></form></div>{% else %}<p>No current stays are ready for check-out.</p>{% endfor %}
+        {% for reservation in reservations if reservation.status in ['booked', 'checked_in'] %}
+        <div class="current-stay">
+          <span>Room {{ reservation.room_number }} — {{ reservation.guest_name }}<small>Departs {{ reservation.check_out }} · {% if reservation.amount > reservation.amount_paid %}Balance ₦{{ '{:,.0f}'.format(reservation.amount - reservation.amount_paid) }}{% else %}Payment complete{% endif %}</small></span>
+          <div class="stay-actions">
+            <button class="secondary-button" type="button" data-open-dialog="extend-{{ reservation.id }}">Extend Stay</button>
+            <form method="post" action="{{ url_for('update_reservation', reservation_id=reservation.id) }}"><input type="hidden" name="action" value="check_out"><input type="hidden" name="role" value="reception"><input type="hidden" name="reference" value="true"><input type="hidden" name="return_page" value="checkout"><button class="primary-button" type="submit">Check Out</button></form>
+          </div>
+        </div>
+        <dialog class="extend-dialog" id="extend-{{ reservation.id }}" data-current-departure="{{ reservation.check_out }}" data-nightly-rate="{{ room_rates.get(reservation.room_number, 0) }}">
+          <form method="post" action="{{ url_for('update_reservation', reservation_id=reservation.id) }}">
+            <input type="hidden" name="action" value="extend">
+            <input type="hidden" name="role" value="reception">
+            <h2>Extend stay</h2>
+            <p>Room {{ reservation.room_number }} · {{ reservation.guest_name }}</p>
+            <label>Current departure<input type="text" value="{{ reservation.check_out }}" readonly></label>
+            <label>New departure date<input name="check_out" type="date" min="{{ reservation.check_out }}" required></label>
+            <p class="extension-quote" aria-live="polite">Added nights are charged at ₦{{ '{:,.0f}'.format(room_rates.get(reservation.room_number, 0)) }} per night.</p>
+            <div class="dialog-actions">
+              <button class="secondary-button" type="button" data-close-dialog>Cancel</button>
+              <button class="primary-button" type="submit">Confirm Extension</button>
+            </div>
+          </form>
+        </dialog>
+        {% else %}<p>No current stays are ready for check-out.</p>{% endfor %}
       </div></section>
 
       {% elif role == 'reception' and page == 'roomstatus' %}
@@ -94,5 +117,6 @@
       {% endif %}
     </main>
   </div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
