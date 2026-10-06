@@ -31,7 +31,7 @@ create table if not exists public.reservations (
   amount_paid bigint not null default 0 check (amount_paid >= 0),
   payment_method text not null check (payment_method in ('Cash', 'POS', 'Transfer')),
   payment_status text not null default 'pending' check (payment_status in ('pending', 'partial', 'paid')),
-  status text not null default 'booked' check (status in ('booked', 'checked_in', 'checked_out')),
+  status text not null default 'checked_in' check (status in ('booked', 'checked_in', 'checked_out')),
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now(),
   check (check_out > check_in),
@@ -52,6 +52,8 @@ create table if not exists public.payments (
 create index if not exists reservations_room_number_idx on public.reservations(room_number);
 create index if not exists reservations_dates_idx on public.reservations(check_in, check_out);
 create index if not exists payments_reservation_id_idx on public.payments(reservation_id);
+
+alter table public.reservations alter column status set default 'checked_in';
 
 alter table public.profiles enable row level security;
 alter table public.rooms enable row level security;

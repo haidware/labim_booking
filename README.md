@@ -1,6 +1,6 @@
 # Labim Booking OS
 
-A Python Flask operations dashboard for hotel reservations, room status, check-in/check-out, and payment tracking. Business records are read from the configured database; no sample rooms, bookings, or payments are preloaded.
+A Python Flask operations dashboard for hotel reservations, room status, guest arrivals and check-outs, and payment tracking. Creating a booking starts the guest's stay and occupies the room; reception checks the guest out at departure. Business records are read from the configured database; no sample rooms, bookings, or payments are preloaded.
 
 ## Run locally
 

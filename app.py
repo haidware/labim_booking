@@ -131,7 +131,7 @@ def init_db():
             amount_paid INTEGER NOT NULL DEFAULT 0,
             payment_method TEXT NOT NULL,
             payment_status TEXT NOT NULL DEFAULT 'pending',
-            status TEXT NOT NULL DEFAULT 'booked',
+            status TEXT NOT NULL DEFAULT 'checked_in',
             created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS users (
@@ -298,11 +298,12 @@ def reference_payments():
 
 
 def reference_bookings(reservations):
+    status_labels = {"checked_in": "Occupied", "checked_out": "Checked out"}
     return [
         (
             row["room_number"],
             row["guest_name"],
-            row["status"].replace("_", " ").capitalize(),
+            status_labels.get(row["status"], row["status"].replace("_", " ").capitalize()),
             row["amount"],
             row.get("amount_paid", 0),
             row["amount"] - row.get("amount_paid", 0),
@@ -396,14 +397,17 @@ def dashboard_stats():
         pending = sum(row["payment_status"] == "pending" for row in reservations)
         occupied = sum(room["status"] == "occupied" for room in rooms)
         occupancy = round(occupied * 100 / len(rooms)) if rooms else 0
-        check_ins = sum(row["status"] == "booked" and row["check_in"] == today for row in reservations)
-        check_outs = sum(row["status"] == "checked_in" and row["check_out"] == today for row in reservations)
+        arrivals_today = sum(row["check_in"] == today for row in reservations)
+        check_outs = sum(
+            row["status"] in {"booked", "checked_in"} and row["check_out"] == today
+            for row in reservations
+        )
         return rooms, {
             "reservations": reservation_count,
             "revenue": revenue,
             "pending": pending,
             "occupancy": occupancy,
-            "check_ins": check_ins,
+            "arrivals_today": arrivals_today,
             "check_outs": check_outs,
         }
     db = get_db()
@@ -420,18 +424,18 @@ def dashboard_stats():
     occupied = sum(room["status"] == "occupied" for room in rooms)
     occupancy = round(occupied * 100 / len(rooms)) if rooms else 0
     today = date.today().isoformat()
-    check_ins = db.execute(
-        "SELECT COUNT(*) FROM reservations WHERE status = 'booked' AND check_in = ?", (today,)
+    arrivals_today = db.execute(
+        "SELECT COUNT(*) FROM reservations WHERE check_in = ?", (today,)
     ).fetchone()[0]
     check_outs = db.execute(
-        "SELECT COUNT(*) FROM reservations WHERE status = 'checked_in' AND check_out = ?", (today,)
+        "SELECT COUNT(*) FROM reservations WHERE status IN ('booked', 'checked_in') AND check_out = ?", (today,)
     ).fetchone()[0]
     return rooms, {
         "reservations": reservation_count,
         "revenue": revenue,
         "pending": pending,
         "occupancy": occupancy,
-        "check_ins": check_ins,
+        "arrivals_today": arrivals_today,
         "check_outs": check_outs,
     }
 
@@ -653,7 +657,7 @@ def create_reference_booking(form):
         if amount < 0 or amount_paid < 0 or amount_paid > amount:
             raise ValueError("Check the booking amount and amount paid.")
         payment_status = "paid" if amount_paid == amount else "partial" if amount_paid else "pending"
-        result = client.table("reservations").insert({
+        results = client.table("reservations").insert({
             "guest_name": guest_name,
             "email": form.get("email", "").strip(),
             "phone": phone,
@@ -664,10 +668,13 @@ def create_reference_booking(form):
             "amount_paid": amount_paid,
             "payment_method": payment_method,
             "payment_status": payment_status,
-            "status": "booked",
+            "status": "checked_in",
             "created_by": session.get("supabase_user_id"),
-        }).select("*").single().execute().data
-        client.table("rooms").update({"status": "booked"}).eq("number", room_number).execute()
+        }).select("*").execute().data
+        if not results:
+            raise RuntimeError("Supabase did not return the created booking.")
+        result = results[0]
+        client.table("rooms").update({"status": "occupied"}).eq("number", room_number).execute()
         if amount_paid:
             client.table("payments").insert({
                 "reservation_id": result["id"],
@@ -692,12 +699,12 @@ def create_reference_booking(form):
         """INSERT INTO reservations
         (guest_name, email, phone, room_number, check_in, check_out, amount, amount_paid,
          payment_method, payment_status, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?)""",
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'checked_in', ?)""",
         (guest_name, form.get("email", "").strip(), phone, room_number, check_in.isoformat(),
          check_out.isoformat(), amount, amount_paid, payment_method, payment_status,
          datetime.now().isoformat(timespec="seconds")),
     )
-    db.execute("UPDATE rooms SET status = 'booked' WHERE number = ?", (room_number,))
+    db.execute("UPDATE rooms SET status = 'occupied' WHERE number = ?", (room_number,))
     if amount_paid:
         db.execute(
             "INSERT INTO payments (reservation_id, room_number, amount, balance, method, received_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -710,10 +717,12 @@ def create_reference_booking(form):
 
 @app.route("/workspace/<role>/<page>", methods=["GET", "POST"])
 def reference_workspace(role, page):
+    if role == "reception" and page == "checkin":
+        return redirect(url_for("reference_workspace", role=role, page="checkout"))
     pages = {
         "director": {"dashboard", "rooms", "finance"},
         "manager": {"dashboard", "rooms", "bookings", "finance"},
-        "reception": {"dashboard", "calendar", "new", "checkin", "checkout", "roomstatus", "payments"},
+        "reception": {"dashboard", "calendar", "new", "checkout", "roomstatus", "payments"},
     }
     if role not in pages or page not in pages[role]:
         return redirect(url_for("home"))
@@ -777,7 +786,7 @@ def reservations():
 def new_reservation():
     role = request.args.get("role", "reception")
     db = get_db()
-    rooms = db.execute("SELECT * FROM rooms WHERE status != 'cleaning' ORDER BY number").fetchall()
+    rooms = db.execute("SELECT * FROM rooms WHERE status = 'available' ORDER BY number").fetchall()
     if request.method == "POST":
         form = request.form
         try:
@@ -786,20 +795,23 @@ def new_reservation():
             nights = (check_out - check_in).days
             if nights < 1:
                 raise ValueError("Check-out must be after check-in.")
-            room = db.execute("SELECT rate FROM rooms WHERE number = ?", (form["room_number"],)).fetchone()
+            room = db.execute(
+                "SELECT rate FROM rooms WHERE number = ? AND status = 'available'",
+                (form["room_number"],),
+            ).fetchone()
             if room is None:
-                raise ValueError("Choose a valid room.")
+                raise ValueError("Choose an available room.")
             amount = nights * room["rate"]
             db.execute(
                 """INSERT INTO reservations
                 (guest_name, email, phone, room_number, check_in, check_out, amount,
                  payment_method, payment_status, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'booked', ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'checked_in', ?)""",
                 (form["guest_name"], form["email"], form["phone"], form["room_number"],
                  form["check_in"], form["check_out"], amount, form["payment_method"],
                  datetime.now().isoformat(timespec="seconds")),
             )
-            db.execute("UPDATE rooms SET status = 'booked' WHERE number = ?", (form["room_number"],))
+            db.execute("UPDATE rooms SET status = 'occupied' WHERE number = ?", (form["room_number"],))
             db.commit()
             flash(f"Reservation created for {form['guest_name']}.", "success")
             return redirect(url_for("reservations", role=role))
@@ -817,10 +829,7 @@ def update_reservation(reservation_id):
         reservations = client.table("reservations").select("*").eq("id", reservation_id).limit(1).execute().data
         reservation = reservations[0] if reservations else None
         if reservation:
-            if action == "check_in":
-                client.table("reservations").update({"status": "checked_in"}).eq("id", reservation_id).execute()
-                client.table("rooms").update({"status": "occupied"}).eq("number", reservation["room_number"]).execute()
-            elif action == "check_out":
+            if action == "check_out" and reservation["status"] in {"booked", "checked_in"}:
                 client.table("reservations").update({"status": "checked_out"}).eq("id", reservation_id).execute()
                 client.table("rooms").update({"status": "cleaning"}).eq("number", reservation["room_number"]).execute()
             elif action == "mark_paid":
@@ -849,10 +858,7 @@ def update_reservation(reservation_id):
     db = get_db()
     reservation = db.execute("SELECT * FROM reservations WHERE id = ?", (reservation_id,)).fetchone()
     if reservation:
-        if action == "check_in":
-            db.execute("UPDATE reservations SET status = 'checked_in' WHERE id = ?", (reservation_id,))
-            db.execute("UPDATE rooms SET status = 'occupied' WHERE number = ?", (reservation["room_number"],))
-        elif action == "check_out":
+        if action == "check_out" and reservation["status"] in {"booked", "checked_in"}:
             db.execute("UPDATE reservations SET status = 'checked_out' WHERE id = ?", (reservation_id,))
             db.execute("UPDATE rooms SET status = 'cleaning' WHERE number = ?", (reservation["room_number"],))
         elif action == "mark_paid":
