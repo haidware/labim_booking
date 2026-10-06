@@ -61,7 +61,7 @@ alter table public.payments enable row level security;
 revoke all on public.profiles, public.rooms, public.reservations, public.payments from anon;
 revoke all on public.profiles, public.rooms, public.reservations, public.payments from authenticated;
 grant select on public.profiles, public.rooms, public.reservations, public.payments to authenticated;
-grant update on public.rooms to authenticated;
+grant insert, update on public.rooms to authenticated;
 grant insert, update on public.reservations to authenticated;
 grant insert on public.payments to authenticated;
 
@@ -76,6 +76,11 @@ for select to authenticated using ((select auth.jwt() -> 'app_metadata' ->> 'rol
 drop policy if exists "Hotel roles read rooms" on public.rooms;
 create policy "Hotel roles read rooms" on public.rooms
 for select to authenticated using ((select auth.jwt() -> 'app_metadata' ->> 'role') in ('manager', 'director', 'reception'));
+
+drop policy if exists "Managers register rooms" on public.rooms;
+create policy "Managers register rooms" on public.rooms
+for insert to authenticated
+with check ((select auth.jwt() -> 'app_metadata' ->> 'role') = 'manager');
 
 drop policy if exists "Reception updates rooms" on public.rooms;
 create policy "Reception updates rooms" on public.rooms
@@ -104,18 +109,3 @@ for select to authenticated using ((select auth.jwt() -> 'app_metadata' ->> 'rol
 drop policy if exists "Reception records payments" on public.payments;
 create policy "Reception records payments" on public.payments
 for insert to authenticated with check ((select auth.jwt() -> 'app_metadata' ->> 'role') = 'reception');
-
-insert into public.rooms (number, name, beds, rate, status) values
-  ('101', 'Standard', 1, 45000, 'available'),
-  ('102', 'Standard', 1, 45000, 'occupied'),
-  ('103', 'Deluxe', 2, 60000, 'booked'),
-  ('104', 'Deluxe', 2, 60000, 'cleaning'),
-  ('105', 'Suite', 3, 85000, 'available'),
-  ('106', 'Standard', 1, 45000, 'unavailable'),
-  ('201', 'Standard', 1, 45000, 'occupied'),
-  ('202', 'Deluxe', 2, 60000, 'available'),
-  ('203', 'Suite', 3, 85000, 'booked'),
-  ('204', 'Standard', 1, 45000, 'cleaning'),
-  ('205', 'Standard', 1, 45000, 'available'),
-  ('206', 'Deluxe', 2, 60000, 'occupied')
-on conflict (number) do nothing;

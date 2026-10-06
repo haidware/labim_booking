@@ -38,8 +38,17 @@
       <div class="split-panels"><section><h2>Booking Finance</h2><div class="finance-lines"><span>Total Booking Value <b>₦{{ '{:,.0f}'.format(finance.booking_value) }}</b></span><span>Collected <b>₦{{ '{:,.0f}'.format(finance.collected) }}</b></span><span>Outstanding <b>₦{{ '{:,.0f}'.format(finance.outstanding) }}</b></span></div></section><section><h2>Today’s Booking Summary</h2><div class="finance-lines"><span>Booked Rooms <b>{{ room_metrics[2][1] }}</b></span><span>Occupied Rooms <b>{{ room_metrics[3][1] }}</b></span><span>Rooms Cleaning <b>{{ room_metrics[4][1] }}</b></span><span>Available Now <b>{{ room_metrics[1][1] }}</b></span></div></section></div>
 
       {% elif page == 'rooms' %}
-      <h1>Rooms</h1><p>{{ 'Executive room status view.' if role == 'director' else 'Booked, occupied, cleaning, available and unavailable rooms.' }}</p>
-      <section class="data-panel"><div class="panel-heading"><strong>{{ 'Room Overview' if role == 'director' else 'All Rooms' }}</strong><small>{{ 'Read-only • Updated by Reception' if role != 'reception' else 'Reception controls room status' }}</small></div>{% include 'reference_rooms.html' %}</section>
+      <h1>Rooms</h1><p>{{ 'Executive room status view.' if role == 'director' else 'Register rooms and monitor their availability.' if role == 'manager' else 'Booked, occupied, cleaning, available and unavailable rooms.' }}</p>
+      {% if role == 'manager' %}
+      <section class="data-panel room-registration"><div class="panel-heading"><strong>Register a Room</strong><small>New rooms start as available</small></div><form class="room-register-form" method="post">
+        <label>Room number<input name="number" required maxlength="30" placeholder="e.g. 101"></label>
+        <label>Room type<input name="name" required maxlength="80" placeholder="e.g. Standard"></label>
+        <label>Beds<input name="beds" type="number" min="1" step="1" required></label>
+        <label>Nightly rate (₦)<input name="rate" type="number" min="0" step="1" required></label>
+        <button class="primary-button" type="submit">Register Room</button>
+      </form></section>
+      {% endif %}
+      <section class="data-panel"><div class="panel-heading"><strong>{{ 'Room Overview' if role == 'director' else 'All Rooms' }}</strong><small>{{ 'Manager can register rooms' if role == 'manager' else 'Read-only • Updated by Reception' if role == 'director' else 'Reception controls room status' }}</small></div>{% include 'reference_rooms.html' %}</section>
 
       {% elif page == 'finance' %}
       <h1>Finance</h1><p>Monitor hotel booking finances and outstanding guest balances.</p>

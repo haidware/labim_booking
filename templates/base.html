@@ -21,14 +21,14 @@
         <a class="nav-item" href="{{ url_for('dashboard', role=active_role) }}#payments"><span>◌</span> Payments</a>
       </nav>
       <div class="sidebar-bottom">
-        <div class="live-indicator"><i></i> Local workspace</div>
-        <div class="user-chip"><span class="avatar">AO</span><span><strong>Admin operator</strong><small>{{ active_role|capitalize }} access</small></span><span class="dots">•••</span></div>
+        <div class="live-indicator"><i></i> {{ 'Supabase' if config.get('SUPABASE_ENABLED') else 'Local database' }} workspace</div>
+        <div class="user-chip"><span class="avatar">{{ session.get('username', active_role)|first|upper }}</span><span><strong>{{ session.get('username', active_role|capitalize) }}</strong><small>{{ active_role|capitalize }} access</small></span><span class="dots">•••</span></div>
       </div>
     </aside>
     <main class="main-content">
       <header class="topbar">
         <div class="mobile-brand">labim<span>/</span>booking</div>
-        <div class="topbar-actions"><span class="date-label">{{ today }}</span><button class="icon-button" aria-label="Notifications">♧<b></b></button><button class="avatar avatar-small">AO</button></div>
+        <div class="topbar-actions"><span class="date-label">{{ today }}</span><button class="icon-button" aria-label="Notifications">♧</button><button class="avatar avatar-small">{{ session.get('username', active_role)|first|upper }}</button></div>
       </header>
       <div class="page-content">
         {% with messages = get_flashed_messages(with_categories=true) %}

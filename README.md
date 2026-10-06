@@ -1,6 +1,6 @@
 # Labim Booking OS
 
-A Python Flask operations dashboard for hotel reservations, room status, check-in/check-out, and payment tracking. It mirrors the role flow of the reference site while keeping persistence local until Supabase is connected.
+A Python Flask operations dashboard for hotel reservations, room status, check-in/check-out, and payment tracking. Business records are read from the configured database; no sample rooms, bookings, or payments are preloaded.
 
 ## Run locally
 
@@ -16,16 +16,19 @@ Open http://127.0.0.1:5000.
 ## Roles
 
 - Reception: create and manage reservations, check guests in/out, and update payments.
-- Manager: monitor room operations and reservation activity.
+- Manager: register rooms and monitor room operations and reservation activity.
 - Director: review the same operational data with revenue and payment visibility.
 
 Supabase is the production data backend when `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and server-only `SUPABASE_SECRET_KEY` are configured. The secret key is used only by Flask for Manager-managed Auth users; passwords are stored by Supabase Auth, never in public tables. Without those variables, local development falls back to SQLite at `instance/booking_os.sqlite3`.
 
+Existing SQLite databases are cleaned once at startup: the known sample booking and unbooked sample-room records are removed, while rooms with reservation or payment history are retained.
+
 ## Supabase Setup
 
-1. Run `supabase_schema.sql` in the Supabase SQL Editor for the project.
-2. In Railway service variables, set `SUPABASE_URL`, `SUPABASE_ANON_KEY` (the publishable key), and `SUPABASE_SECRET_KEY` (the Supabase secret/server key). Do not put the secret key in `.env.example`, source control, or browser code.
-3. Deploy the service. Open Manager Login and use the initial Manager Sign Up flow to create Manager, Director, and Reception Auth accounts.
+1. Run `supabase_schema.sql` in the Supabase SQL Editor for the project. It creates an empty room inventory; the Manager registers the property's rooms from the Rooms workspace.
+2. If this project was previously initialized with the sample-room seed, run `supabase_remove_demo_data.sql` once. It removes only matching sample rooms with no reservation or payment history.
+3. In Railway service variables, set `SUPABASE_URL`, `SUPABASE_ANON_KEY` (the publishable key), and `SUPABASE_SECRET_KEY` (the Supabase secret/server key). Do not put the secret key in `.env.example`, source control, or browser code.
+4. Deploy the service. Open Manager Login and use the initial Manager Sign Up flow to create Manager, Director, and Reception Auth accounts.
 
 The public Data API must expose the `profiles`, `rooms`, `reservations`, and `payments` tables. The schema grants authenticated users role-scoped access through RLS. All role values used by policies are assigned in Supabase Auth `app_metadata` by the server-side Manager account workflow.
 
@@ -33,7 +36,7 @@ The public Data API must expose the `profiles`, `rooms`, `reservations`, and `pa
 
 1. Create a Railway project and deploy this GitHub repository.
 2. Set `FLASK_SECRET_KEY` to a long random value in the Railway service variables.
-3. Set Supabase variables as described above, then run `supabase_schema.sql` in the Supabase SQL Editor.
+3. Set Supabase variables as described above, then run `supabase_schema.sql` in the Supabase SQL Editor. For an existing installation with sample rooms, also run `supabase_remove_demo_data.sql` once.
 4. Deploy with the included Railway config and Procfile; Gunicorn serves the Flask app and `/health` is the health endpoint.
 
 SQLite remains a local fallback. The current Railway volume is mounted at `/app/instance` for that fallback only.

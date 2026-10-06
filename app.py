@@ -29,6 +29,7 @@ if os.getenv("RAILWAY_ENVIRONMENT") and SUPABASE_ANON_KEY and not SUPABASE_SECRE
 app = Flask(__name__)
 app.config["SECRET_KEY"] = FLASK_SECRET_KEY or "local-development-key-change-before-deploy"
 app.config["DATABASE"] = DATABASE
+app.config["SUPABASE_ENABLED"] = SUPABASE_ENABLED
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = bool(os.getenv("RAILWAY_ENVIRONMENT"))
@@ -70,54 +71,6 @@ def auth_email(username):
 
     username = username.strip().lower()
     return f"{hashlib.sha256(username.encode()).hexdigest()}@login.labim.invalid"
-
-ROOMS = [
-    ("101", "Standard", 1, 45000, "available"),
-    ("102", "Standard", 1, 45000, "occupied"),
-    ("103", "Deluxe", 2, 60000, "booked"),
-    ("104", "Deluxe", 2, 60000, "cleaning"),
-    ("105", "Suite", 3, 85000, "available"),
-    ("106", "Standard", 1, 45000, "unavailable"),
-    ("201", "Standard", 1, 45000, "occupied"),
-    ("202", "Deluxe", 2, 60000, "available"),
-    ("203", "Suite", 3, 85000, "booked"),
-    ("204", "Standard", 1, 45000, "cleaning"),
-    ("205", "Standard", 1, 45000, "available"),
-    ("206", "Deluxe", 2, 60000, "occupied"),
-]
-
-REFERENCE_ROOMS = [
-    {"number": "101", "type": "Standard", "rate": 45000, "status": "Available", "guest": ""},
-    {"number": "102", "type": "Standard", "rate": 45000, "status": "Occupied", "guest": "Mr Ade"},
-    {"number": "103", "type": "Deluxe", "rate": 60000, "status": "Booked", "guest": "Mrs Bello"},
-    {"number": "104", "type": "Deluxe", "rate": 60000, "status": "Cleaning", "guest": ""},
-    {"number": "105", "type": "Suite", "rate": 85000, "status": "Available", "guest": ""},
-    {"number": "106", "type": "Standard", "rate": 45000, "status": "Unavailable", "guest": ""},
-    {"number": "201", "type": "Standard", "rate": 45000, "status": "Occupied", "guest": "Mr James"},
-    {"number": "202", "type": "Deluxe", "rate": 60000, "status": "Available", "guest": ""},
-    {"number": "203", "type": "Suite", "rate": 85000, "status": "Booked", "guest": "Ms Grace"},
-    {"number": "204", "type": "Standard", "rate": 45000, "status": "Cleaning", "guest": ""},
-    {"number": "205", "type": "Standard", "rate": 45000, "status": "Available", "guest": ""},
-    {"number": "206", "type": "Deluxe", "rate": 60000, "status": "Occupied", "guest": "Mr Tunde"},
-]
-
-PAYMENT_RECORDS = [
-    ("102", "Transfer", 90000, 0, "Mary", "2026-09-02"),
-    ("103", "POS", 120000, 18000, "James", "2026-09-03"),
-    ("201", "Cash", 45000, 0, "Mary", "2026-09-05"),
-    ("204", "Transfer", 170000, 0, "Mary", "2026-09-10"),
-    ("206", "POS", 120000, 20000, "James", "2026-09-12"),
-    ("302", "Transfer", 180000, 0, "Mary", "2026-09-18"),
-    ("305", "Transfer", 120000, 18500, "James", "2026-09-21"),
-]
-
-REFERENCE_BOOKINGS = [
-    ("102", "Mr Ade", "Occupied", 90000, 90000, 0, "Transfer"),
-    ("103", "Mrs Bello", "Booked", 120000, 50000, 70000, "POS"),
-    ("203", "Ms Grace", "Booked", 170000, 170000, 0, "Transfer"),
-    ("206", "Mr Tunde", "Occupied", 60000, 30000, 30000, "POS"),
-]
-
 
 def get_db():
     if "db" not in g:
@@ -183,30 +136,55 @@ def init_db():
             received_by TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS app_migrations (
+            name TEXT PRIMARY KEY
+        );
         """
     )
     reservation_columns = {column[1] for column in db.execute("PRAGMA table_info(reservations)")}
     if "amount_paid" not in reservation_columns:
         db.execute("ALTER TABLE reservations ADD COLUMN amount_paid INTEGER NOT NULL DEFAULT 0")
     db.execute("UPDATE reservations SET amount_paid = amount WHERE payment_status = 'paid' AND amount_paid = 0")
-    if db.execute("SELECT COUNT(*) FROM rooms").fetchone()[0] == 0:
-        db.executemany("INSERT INTO rooms VALUES (?, ?, ?, ?, ?)", ROOMS)
-    if db.execute("SELECT COUNT(*) FROM reservations").fetchone()[0] == 0:
-        db.execute(
-            """INSERT INTO reservations
-            (guest_name, email, phone, room_number, check_in, check_out, amount,
-             payment_method, payment_status, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("Amara Okafor", "amara@example.com", "+234 803 555 0121", "301",
-             "2026-10-02", "2026-10-05", 555, "Card", "paid", "booked",
-             datetime.now().isoformat(timespec="seconds")),
-        )
-    for number, name, beds, rate, status in ROOMS:
-        db.execute(
-            "INSERT OR IGNORE INTO rooms (number, name, beds, rate, status) VALUES (?, ?, ?, ?, ?)",
-            (number, name, beds, rate, status),
-        )
-        db.execute("UPDATE rooms SET name = ?, beds = ?, rate = ? WHERE number = ?", (name, beds, rate, number))
+    if not db.execute("SELECT 1 FROM app_migrations WHERE name = 'remove_seeded_demo_data'").fetchone():
+        demo_reservations = db.execute(
+            """SELECT id FROM reservations
+            WHERE guest_name = 'Amara Okafor' AND email = 'amara@example.com'
+              AND phone = '+234 803 555 0121' AND room_number = '301'
+              AND check_in = '2026-10-02' AND check_out = '2026-10-05'
+              AND amount = 555 AND payment_method = 'Card'"""
+        ).fetchall()
+        if demo_reservations:
+            reservation_ids = [reservation["id"] for reservation in demo_reservations]
+            placeholders = ",".join("?" for _ in reservation_ids)
+            db.execute(
+                f"DELETE FROM payments WHERE reservation_id IN ({placeholders})",
+                reservation_ids,
+            )
+            db.execute(
+                f"DELETE FROM reservations WHERE id IN ({placeholders})",
+                reservation_ids,
+            )
+        for number, name, beds, rate in [
+            ("101", "Standard", 1, 45000),
+            ("102", "Standard", 1, 45000),
+            ("103", "Deluxe", 2, 60000),
+            ("104", "Deluxe", 2, 60000),
+            ("105", "Suite", 3, 85000),
+            ("106", "Standard", 1, 45000),
+            ("201", "Standard", 1, 45000),
+            ("202", "Deluxe", 2, 60000),
+            ("203", "Suite", 3, 85000),
+            ("204", "Standard", 1, 45000),
+            ("205", "Standard", 1, 45000),
+            ("206", "Deluxe", 2, 60000),
+        ]:
+            db.execute(
+                """DELETE FROM rooms WHERE number = ? AND name = ? AND beds = ? AND rate = ?
+                AND NOT EXISTS (SELECT 1 FROM reservations WHERE room_number = ?)
+                AND NOT EXISTS (SELECT 1 FROM payments WHERE room_number = ?)""",
+                (number, name, beds, rate, number, number),
+            )
+        db.execute("INSERT INTO app_migrations (name) VALUES ('remove_seeded_demo_data')")
     db.commit()
 
 
@@ -226,7 +204,7 @@ def reference_rooms():
             }
             for row in rows
         ]
-    guest_by_room = {room["number"]: room["guest"] for room in REFERENCE_ROOMS}
+    guest_by_room = {}
     booking_guests = get_db().execute(
         "SELECT room_number, guest_name FROM reservations WHERE status IN ('booked', 'checked_in') ORDER BY created_at"
     ).fetchall()
@@ -298,12 +276,13 @@ def reference_payments():
             (row["room_number"], row["method"], row["amount"], row["balance"], row["received_by"], row["created_at"][:10])
             for row in rows
         ]
-    return PAYMENT_RECORDS
+    return [
+        (row["room_number"], row["method"], row["amount"], row["balance"], row["received_by"], row["created_at"][:10])
+        for row in rows
+    ]
 
 
 def reference_bookings(reservations):
-    if not SUPABASE_ENABLED and not reservations:
-        return REFERENCE_BOOKINGS
     return [
         (
             row["room_number"],
@@ -351,27 +330,95 @@ def reference_calendar(rooms, reservations):
     return [f"{day.strftime('%b')} {day.day}" for day in days], rows
 
 
+def create_reference_room(form):
+    number = form.get("number", "").strip()
+    name = form.get("name", "").strip()
+    try:
+        beds = int(form.get("beds", ""))
+        rate = int(form.get("rate", ""))
+    except ValueError as error:
+        raise ValueError("Enter a valid number of beds and nightly rate.") from error
+    if not number or not name:
+        raise ValueError("Room number and room type are required.")
+    if beds < 1 or rate < 0:
+        raise ValueError("Beds must be at least one and the nightly rate cannot be negative.")
+
+    if SUPABASE_ENABLED:
+        client = get_request_supabase()
+        existing = client.table("rooms").select("number").eq("number", number).maybe_single().execute().data
+        if existing:
+            raise ValueError("A room with that number is already registered.")
+        client.table("rooms").insert({
+            "number": number,
+            "name": name,
+            "beds": beds,
+            "rate": rate,
+            "status": "available",
+        }).execute()
+        return
+
+    db = get_db()
+    existing = db.execute("SELECT 1 FROM rooms WHERE number = ?", (number,)).fetchone()
+    if existing:
+        raise ValueError("A room with that number is already registered.")
+    db.execute(
+        "INSERT INTO rooms (number, name, beds, rate, status) VALUES (?, ?, ?, ?, 'available')",
+        (number, name, beds, rate),
+    )
+    db.commit()
+
+
 def dashboard_stats():
     if SUPABASE_ENABLED:
         client = get_request_supabase()
         rooms = client.table("rooms").select("*").order("number").execute().data
-        reservations = client.table("reservations").select("amount, payment_status, status").execute().data
+        reservations = client.table("reservations").select(
+            "amount_paid, payment_status, status, check_in, check_out"
+        ).execute().data
+        today = date.today().isoformat()
         reservation_count = sum(row["status"] != "checked_out" for row in reservations)
-        revenue = sum(row["amount"] for row in reservations if row["payment_status"] == "paid")
+        revenue = sum(row["amount_paid"] for row in reservations)
         pending = sum(row["payment_status"] == "pending" for row in reservations)
-        return rooms, {"reservations": reservation_count, "revenue": revenue, "pending": pending}
+        occupied = sum(room["status"] == "occupied" for room in rooms)
+        occupancy = round(occupied * 100 / len(rooms)) if rooms else 0
+        check_ins = sum(row["status"] == "booked" and row["check_in"] == today for row in reservations)
+        check_outs = sum(row["status"] == "checked_in" and row["check_out"] == today for row in reservations)
+        return rooms, {
+            "reservations": reservation_count,
+            "revenue": revenue,
+            "pending": pending,
+            "occupancy": occupancy,
+            "check_ins": check_ins,
+            "check_outs": check_outs,
+        }
     db = get_db()
     rooms = db.execute("SELECT * FROM rooms ORDER BY number").fetchall()
     reservation_count = db.execute(
         "SELECT COUNT(*) FROM reservations WHERE status != 'checked_out'"
     ).fetchone()[0]
     revenue = db.execute(
-        "SELECT COALESCE(SUM(amount), 0) FROM reservations WHERE payment_status = 'paid'"
+        "SELECT COALESCE(SUM(amount_paid), 0) FROM reservations"
     ).fetchone()[0]
     pending = db.execute(
         "SELECT COUNT(*) FROM reservations WHERE payment_status = 'pending'"
     ).fetchone()[0]
-    return rooms, {"reservations": reservation_count, "revenue": revenue, "pending": pending}
+    occupied = sum(room["status"] == "occupied" for room in rooms)
+    occupancy = round(occupied * 100 / len(rooms)) if rooms else 0
+    today = date.today().isoformat()
+    check_ins = db.execute(
+        "SELECT COUNT(*) FROM reservations WHERE status = 'booked' AND check_in = ?", (today,)
+    ).fetchone()[0]
+    check_outs = db.execute(
+        "SELECT COUNT(*) FROM reservations WHERE status = 'checked_in' AND check_out = ?", (today,)
+    ).fetchone()[0]
+    return rooms, {
+        "reservations": reservation_count,
+        "revenue": revenue,
+        "pending": pending,
+        "occupancy": occupancy,
+        "check_ins": check_ins,
+        "check_outs": check_outs,
+    }
 
 
 @app.context_processor
@@ -648,14 +695,22 @@ def reference_workspace(role, page):
     if role not in pages or page not in pages[role]:
         return redirect(url_for("home"))
     if request.method == "POST":
-        if role != "reception" or page != "new":
+        if role == "manager" and page == "rooms":
+            try:
+                create_reference_room(request.form)
+                flash(f"Room {request.form['number'].strip()} registered.", "success")
+                return redirect(url_for("reference_workspace", role=role, page=page))
+            except (KeyError, ValueError) as error:
+                flash(str(error) or "Complete all room details.", "error")
+        elif role != "reception" or page != "new":
             return redirect(url_for("reference_workspace", role=role, page=page))
-        try:
-            booking = create_reference_booking(request.form)
-            flash(f"Booking created for {request.form['guest_name']}.", "success")
-            return redirect(url_for("reference_workspace", role=role, page="calendar"))
-        except (KeyError, ValueError) as error:
-            flash(str(error) or "Complete all booking details.", "error")
+        else:
+            try:
+                create_reference_booking(request.form)
+                flash(f"Booking created for {request.form['guest_name']}.", "success")
+                return redirect(url_for("reference_workspace", role=role, page="calendar"))
+            except (KeyError, ValueError) as error:
+                flash(str(error) or "Complete all booking details.", "error")
     reservations = reference_reservations()
     payments = reference_payments()
     rooms = reference_rooms()
