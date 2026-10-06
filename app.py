@@ -209,13 +209,16 @@ def reference_rooms():
         rows = client.table("rooms").select("*").order("number").execute().data
         bookings = client.table("reservations").select("room_number, guest_name, status").in_("status", ["booked", "checked_in"]).execute().data
         guest_by_room = {booking["room_number"]: booking["guest_name"] for booking in bookings}
+        active_room_numbers = {booking["room_number"] for booking in bookings}
         return [
             {
                 "number": row["number"],
                 "type": row["name"],
+                "beds": row["beds"],
                 "rate": row["rate"],
                 "status": row["status"].capitalize(),
                 "guest": guest_by_room.get(row["number"], ""),
+                "active_booking": row["number"] in active_room_numbers,
             }
             for row in rows
         ]
@@ -224,14 +227,19 @@ def reference_rooms():
         "SELECT room_number, guest_name FROM reservations WHERE status IN ('booked', 'checked_in') ORDER BY created_at"
     ).fetchall()
     guest_by_room.update({row["room_number"]: row["guest_name"] for row in booking_guests})
-    rows = get_db().execute("SELECT number, name, rate, status FROM rooms ORDER BY number").fetchall()
+    active_room_numbers = {row["room_number"] for row in booking_guests}
+    rows = get_db().execute(
+        "SELECT number, name, beds, rate, status FROM rooms ORDER BY number"
+    ).fetchall()
     return [
         {
             "number": row["number"],
             "type": row["name"],
+            "beds": row["beds"],
             "rate": row["rate"],
             "status": row["status"].capitalize(),
             "guest": guest_by_room.get(row["number"], ""),
+            "active_booking": row["number"] in active_room_numbers,
         }
         for row in rows
     ]
@@ -390,6 +398,129 @@ def create_reference_room(form):
     db.commit()
 
 
+def update_reference_room(room_number, form):
+    name = form.get("name", "").strip()
+    try:
+        beds = int(form.get("beds", ""))
+        rate = int(form.get("rate", ""))
+    except ValueError as error:
+        raise ValueError("Enter a valid number of beds and nightly rate.") from error
+    if not name:
+        raise ValueError("Room category is required.")
+    if beds < 1 or rate < 0:
+        raise ValueError("Beds must be at least one and the nightly rate cannot be negative.")
+
+    if SUPABASE_ENABLED:
+        client = get_request_supabase()
+        existing = client.table("rooms").select("number").eq(
+            "number", room_number
+        ).limit(1).execute().data
+        if not existing:
+            raise ValueError("Room not found.")
+        client.table("rooms").update({
+            "name": name,
+            "beds": beds,
+            "rate": rate,
+            "updated_at": datetime.now().isoformat(),
+        }).eq("number", room_number).execute()
+        return
+
+    db = get_db()
+    existing = db.execute("SELECT 1 FROM rooms WHERE number = ?", (room_number,)).fetchone()
+    if not existing:
+        raise ValueError("Room not found.")
+    db.execute(
+        "UPDATE rooms SET name = ?, beds = ?, rate = ? WHERE number = ?",
+        (name, beds, rate, room_number),
+    )
+    db.commit()
+
+
+def room_has_history(room_number):
+    if SUPABASE_ENABLED:
+        client = get_request_supabase()
+        reservations = client.table("reservations").select("id").eq(
+            "room_number", room_number
+        ).limit(1).execute().data
+        payments = client.table("payments").select("id").eq(
+            "room_number", room_number
+        ).limit(1).execute().data
+        return bool(reservations or payments)
+    db = get_db()
+    reservation = db.execute(
+        "SELECT 1 FROM reservations WHERE room_number = ? LIMIT 1", (room_number,)
+    ).fetchone()
+    payment = db.execute(
+        "SELECT 1 FROM payments WHERE room_number = ? LIMIT 1", (room_number,)
+    ).fetchone()
+    return bool(reservation or payment)
+
+
+def room_has_active_booking(room_number):
+    if SUPABASE_ENABLED:
+        bookings = get_request_supabase().table("reservations").select("id").eq(
+            "room_number", room_number
+        ).in_("status", ["booked", "checked_in"]).limit(1).execute().data
+    else:
+        bookings = get_db().execute(
+            "SELECT 1 FROM reservations WHERE room_number = ? "
+            "AND status IN ('booked', 'checked_in') LIMIT 1",
+            (room_number,),
+        ).fetchone()
+    return bool(bookings)
+
+
+def remove_reference_room(room_number):
+    if SUPABASE_ENABLED:
+        client = get_request_supabase()
+        existing = client.table("rooms").select("number").eq(
+            "number", room_number
+        ).limit(1).execute().data
+        if not existing:
+            raise ValueError("Room not found.")
+    else:
+        db = get_db()
+        existing = db.execute(
+            "SELECT 1 FROM rooms WHERE number = ?", (room_number,)
+        ).fetchone()
+        if not existing:
+            raise ValueError("Room not found.")
+
+    if room_has_active_booking(room_number):
+        raise ValueError("A room with a current booking cannot be removed or marked unavailable.")
+
+    if room_has_history(room_number):
+        if SUPABASE_ENABLED:
+            get_request_supabase().table("rooms").update({
+                "status": "unavailable",
+                "updated_at": datetime.now().isoformat(),
+            }).eq("number", room_number).execute()
+        else:
+            db.execute(
+                "UPDATE rooms SET status = 'unavailable' WHERE number = ?",
+                (room_number,),
+            )
+            db.commit()
+        return False
+
+    if SUPABASE_ENABLED:
+        get_request_supabase().table("rooms").delete().eq(
+            "number", room_number
+        ).execute()
+    else:
+        db.execute("DELETE FROM rooms WHERE number = ?", (room_number,))
+        db.commit()
+    return True
+
+
+def rooms_with_history(rooms):
+    return {
+        room["number"]
+        for room in rooms
+        if room_has_history(room["number"])
+    }
+
+
 def dashboard_stats():
     if SUPABASE_ENABLED:
         client = get_request_supabase()
@@ -474,6 +605,8 @@ def require_workspace_login():
         required_role = (request.view_args or {}).get("role")
     elif endpoint == "update_room":
         required_role = "reception"
+    elif endpoint == "manage_room":
+        required_role = "manager"
     elif endpoint in {"dashboard", "reservations", "new_reservation"}:
         required_role = request.args.get("role", "reception")
     elif endpoint == "update_reservation":
@@ -1026,6 +1159,9 @@ def reference_workspace(role, page):
     reservations = reference_reservations()
     payments = reference_payments()
     rooms = reference_rooms()
+    room_history_numbers = (
+        rooms_with_history(rooms) if role == "manager" and page == "rooms" else set()
+    )
     available_rooms = [room for room in rooms if room["status"].lower() == "available"]
     calendar_days, calendar_rows = reference_calendar(rooms, reservations, reference_date)
     calendar_week_start = reference_date - timedelta(days=reference_date.weekday())
@@ -1047,6 +1183,7 @@ def reference_workspace(role, page):
         previous_calendar_date=(calendar_week_start - timedelta(days=7)).isoformat(),
         next_calendar_date=(calendar_week_start + timedelta(days=7)).isoformat(),
         room_rates={room["number"]: room["rate"] for room in rooms},
+        rooms_with_history=room_history_numbers,
     )
 
 
@@ -1219,6 +1356,29 @@ def update_room(room_number):
     if request.form.get("reference") == "true":
         return redirect(url_for("reference_workspace", role="reception", page="roomstatus"))
     return redirect(url_for("dashboard", role=request.form.get("role", "reception")))
+
+
+@app.post("/rooms/<room_number>/manage")
+def manage_room(room_number):
+    action = request.form.get("action")
+    try:
+        if action == "edit":
+            update_reference_room(room_number, request.form)
+            flash(f"Room {room_number} details updated.", "success")
+        elif action == "remove":
+            removed = remove_reference_room(room_number)
+            if removed:
+                flash(f"Room {room_number} removed.", "success")
+            else:
+                flash(
+                    f"Room {room_number} has booking or payment history, so it was marked unavailable instead of deleted.",
+                    "error",
+                )
+        else:
+            raise ValueError("Choose a valid room action.")
+    except (KeyError, ValueError) as error:
+        flash(str(error) or "Check the room details and try again.", "error")
+    return redirect(url_for("reference_workspace", role="manager", page="rooms"))
 
 
 with app.app_context():

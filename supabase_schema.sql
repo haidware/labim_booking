@@ -67,6 +67,7 @@ revoke all on public.profiles, public.rooms, public.reservations, public.payment
 revoke all on public.profiles, public.rooms, public.reservations, public.payments from authenticated;
 grant select on public.profiles, public.rooms, public.reservations, public.payments to authenticated;
 grant insert, update on public.rooms to authenticated;
+grant delete on public.rooms to authenticated;
 grant insert, update on public.reservations to authenticated;
 grant insert on public.payments to authenticated;
 
@@ -118,6 +119,21 @@ create policy "Managers update room status" on public.rooms
 for update to authenticated
 using ((select auth.jwt() -> 'app_metadata' ->> 'role') = 'manager')
 with check ((select auth.jwt() -> 'app_metadata' ->> 'role') = 'manager');
+
+drop policy if exists "Managers delete unused rooms" on public.rooms;
+create policy "Managers delete unused rooms" on public.rooms
+for delete to authenticated
+using (
+  (select auth.jwt() -> 'app_metadata' ->> 'role') = 'manager'
+  and not exists (
+    select 1 from public.reservations
+    where reservations.room_number = rooms.number
+  )
+  and not exists (
+    select 1 from public.payments
+    where payments.room_number = rooms.number
+  )
+);
 
 drop policy if exists "Hotel roles read payments" on public.payments;
 create policy "Hotel roles read payments" on public.payments
