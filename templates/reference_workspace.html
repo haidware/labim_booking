@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='reference_match.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='icons.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='calendar_sync.css') }}">
 </head>
 <body class="reference-app">
   {% include '_icons.html' %}
@@ -139,7 +140,7 @@
           <a class="secondary-button" href="{{ url_for('reference_workspace', role=role, page='calendar', reference_date=next_calendar_date) }}">Next week →</a>
         </div>
         <div class="panel-heading"><strong>Week of {{ calendar_days[0].label if calendar_days else reference_date.isoformat() }}</strong><span>Selected date: {{ reference_date.isoformat() }}</span></div>
-        <div class="calendar"><b>Room</b>{% for day in calendar_days %}<b class="{{ 'selected-day' if day.selected else '' }}">{{ day.label }}</b>{% endfor %}{% for row in calendar_rows %}<span>{{ row.room }}</span>{% for cell in row.cells %}<i class="{{ cell.status }} {{ 'selected-day' if cell.selected else '' }}" title="{{ cell.guest }}">{{ cell.status|capitalize }}</i>{% endfor %}{% endfor %}</div>
+        <div class="calendar"><b>Room</b>{% for day in calendar_days %}<b class="{{ 'selected-day' if day.selected else '' }}">{{ day.label }}</b>{% endfor %}{% for row in calendar_rows %}<span>{{ row.room }}</span>{% for cell in row.cells %}<i class="{{ cell.status }} {{ 'selected-day' if cell.selected else '' }} {{ 'has-booking' if cell.guest else '' }}" title="{{ cell.status|replace('-', ' ')|capitalize }}{% if cell.guest %}: {{ cell.guest }}{% endif %}{% if cell.source %} · {{ cell.source }}{% endif %}">{% if cell.guest %}<strong>{{ cell.status|replace('-', ' ')|capitalize }}</strong><small>{{ cell.guest }}{% if cell.source %} · {{ cell.source }}{% endif %}</small>{% endif %}</i>{% endfor %}{% endfor %}</div>
       </section>
 
       {% elif role == 'reception' and page == 'new' %}

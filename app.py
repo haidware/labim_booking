@@ -1308,28 +1308,56 @@ def reference_calendar(rooms, reservations, reference_date=None):
     reference_date = reference_date or date.today()
     start = reference_date - timedelta(days=reference_date.weekday())
     days = [start + timedelta(days=offset) for offset in range(7)]
+    active_reservations = []
+    for reservation in reservations:
+        status = str(reservation.get("status", "")).lower()
+        if status not in {"booked", "checked_in", "pending_payment"}:
+            continue
+        if status == "pending_payment" and not timestamp_is_future(
+            reservation.get("hold_expires_at")
+        ):
+            continue
+        try:
+            check_in = date.fromisoformat(str(reservation["check_in"])[:10])
+            check_out = date.fromisoformat(str(reservation["check_out"])[:10])
+        except (KeyError, TypeError, ValueError):
+            app.logger.warning(
+                "Skipping reservation %s with invalid calendar dates",
+                reservation.get("id", "unknown"),
+            )
+            continue
+        active_reservations.append({
+            **reservation,
+            "status": status,
+            "_room_number": str(reservation.get("room_number", "")).strip(),
+            "_check_in": check_in,
+            "_check_out": check_out,
+        })
+
+    status_priority = {"checked_in": 0, "booked": 1, "pending_payment": 2}
     rows = []
     for room in rooms:
         cells = []
         for current_day in days:
-            booking = next((
-                reservation for reservation in reservations
-                if reservation["room_number"] == room["number"]
-                and reservation["status"] in {"booked", "checked_in", "pending_payment"}
-                and (
-                    reservation["status"] != "pending_payment"
-                    or reservation.get("hold_expires_at")
-                    and reservation["hold_expires_at"] > now_iso()
-                )
-                and reservation["check_in"] <= current_day.isoformat() < reservation["check_out"]
-            ), None)
+            matching_reservations = [
+                reservation for reservation in active_reservations
+                if reservation["_room_number"] == str(room["number"]).strip()
+                and reservation["_check_in"] <= current_day < reservation["_check_out"]
+            ]
+            booking = min(
+                matching_reservations,
+                key=lambda reservation: status_priority[reservation["status"]],
+                default=None,
+            )
+            status = booking["status"] if booking else ""
             cells.append({
-                "status": (
-                    "pending-payment" if booking and booking["status"] == "pending_payment"
-                    else "occupied" if booking and booking["status"] == "checked_in"
-                    else "booked" if booking else ""
-                ),
+                "status": "pending-payment" if status == "pending_payment"
+                else "occupied" if status == "checked_in" else "booked" if booking else "",
                 "guest": booking["guest_name"] if booking else "",
+                "source": (
+                    "Online" if booking.get("booking_source") == "online" else ""
+                ) if booking else "",
+                "reservation_id": booking.get("id") if booking else None,
                 "selected": current_day == reference_date,
             })
         rows.append({"room": room["number"], "cells": cells})

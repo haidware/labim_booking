@@ -88,6 +88,52 @@ class MultiHotelFlowTests(unittest.TestCase):
             )
             self.app_module.get_db().commit()
 
+    def test_calendar_shows_booked_and_approved_online_stays(self):
+        week_start = date.today() - timedelta(days=date.today().weekday())
+        calendar_days, calendar_rows = self.app_module.reference_calendar(
+            [{"number": "101"}],
+            [
+                {
+                    "id": "manual-booking",
+                    "room_number": 101,
+                    "guest_name": "Manual Guest",
+                    "status": "BOOKED",
+                    "check_in": week_start,
+                    "check_out": week_start + timedelta(days=2),
+                    "booking_source": "reception",
+                },
+                {
+                    "id": "approved-online-booking",
+                    "room_number": "101",
+                    "guest_name": "Online Guest",
+                    "status": "booked",
+                    "check_in": week_start + timedelta(days=2),
+                    "check_out": week_start + timedelta(days=4),
+                    "booking_source": "online",
+                },
+                {
+                    "id": "cancelled-booking",
+                    "room_number": "101",
+                    "guest_name": "Cancelled Guest",
+                    "status": "cancelled",
+                    "check_in": week_start,
+                    "check_out": week_start + timedelta(days=4),
+                    "booking_source": "reception",
+                },
+            ],
+            week_start,
+        )
+
+        self.assertEqual(len(calendar_days), 7)
+        cells = calendar_rows[0]["cells"]
+        self.assertEqual(cells[0]["guest"], "Manual Guest")
+        self.assertEqual(cells[0]["status"], "booked")
+        self.assertEqual(cells[1]["guest"], "Manual Guest")
+        self.assertEqual(cells[2]["guest"], "Online Guest")
+        self.assertEqual(cells[2]["source"], "Online")
+        self.assertEqual(cells[3]["guest"], "Online Guest")
+        self.assertEqual(cells[4]["status"], "")
+
     def test_signup_guest_selection_booking_and_staff_isolation(self):
         hotel_one_manager = self.app_module.app.test_client()
         hotel_one_id = self.register_hotel(
@@ -258,7 +304,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         approved_calendar = reception.get(response.headers["Location"])
         self.assertEqual(approved_calendar.status_code, 200)
         self.assertIn(b"Booked", approved_calendar.data)
-        self.assertIn(b"Guest Two", approved_calendar.data)
+        self.assertIn(b"Guest Two \xc2\xb7 Online", approved_calendar.data)
         checkout_page = reception.get("/workspace/reception/checkout")
         self.assertEqual(checkout_page.status_code, 200)
         self.assertIn(b"Guest Two", checkout_page.data)
