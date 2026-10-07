@@ -111,6 +111,15 @@ class MultiHotelFlowTests(unittest.TestCase):
             hotel_two = self.app_module.hotel_details(hotel_two_id)
 
         guest = self.app_module.app.test_client()
+        hotel_directory = guest.get("/book")
+        self.assertEqual(hotel_directory.status_code, 200)
+        self.assertIn(b"Labim Test Hotel", hotel_directory.data)
+        self.assertIn(b"Other Test Hotel", hotel_directory.data)
+        self.assertIn(
+            f"/book?hotel={hotel_two['slug']}".encode(),
+            hotel_directory.data,
+        )
+        self.assertNotIn(b'<select name="hotel"', hotel_directory.data)
         search = guest.get("/book", query_string={
             "hotel": hotel_two["slug"],
             "check_in": stay_start,

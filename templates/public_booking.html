@@ -13,21 +13,32 @@
     <span>Guest online booking</span>
   </header>
   <main class="public-booking-main">
-    <h1>Find your room</h1>
-    <p>Select a hotel and your stay dates to see rooms listed and available there.</p>
+    <h1>{% if selected_hotel %}Find your room at {{ selected_hotel.name }}{% else %}Choose a hotel{% endif %}</h1>
+    <p>{% if selected_hotel %}Select your stay dates to see rooms listed and available there.{% else %}Choose from our hotels to begin your booking.{% endif %}</p>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}<div class="account-error">{{ message }}</div>{% endfor %}
     {% endwith %}
+    {% if not selected_hotel %}
+    {% if hotels %}
+    <section class="public-hotel-grid" aria-label="Available hotels">
+      {% for hotel in hotels %}
+      <a class="public-hotel-card" href="{{ url_for('public_booking', hotel=hotel.slug) }}">
+        <span class="public-hotel-card-name">{{ hotel.name }}</span>
+        <span class="public-hotel-card-action">View rooms and availability</span>
+      </a>
+      {% endfor %}
+    </section>
+    {% else %}
+    <section class="public-no-rooms"><h2>No hotels are currently listed</h2><p>Please check back later.</p></section>
+    {% endif %}
+    {% else %}
+    <p class="selected-hotel-name">Booking at <strong>{{ selected_hotel.name }}</strong> · <a href="{{ url_for('public_booking') }}">Choose a different hotel</a></p>
     <form class="public-date-search" method="get" action="{{ url_for('public_booking') }}">
-      <label>Hotel<select name="hotel" required>
-        <option value="">Choose a hotel</option>
-        {% for hotel in hotels %}<option value="{{ hotel.slug }}" {% if selected_hotel and selected_hotel.id == hotel.id %}selected{% endif %}>{{ hotel.name }}</option>{% endfor %}
-      </select></label>
+      <input type="hidden" name="hotel" value="{{ selected_hotel.slug }}">
       <label>Arrival<input name="check_in" type="date" min="{{ today }}" value="{{ check_in }}" required></label>
       <label>Departure<input name="check_out" type="date" min="{{ today }}" value="{{ check_out }}" required></label>
       <button class="primary-button" type="submit">Search available rooms</button>
     </form>
-    {% if selected_hotel %}<p class="selected-hotel-name">Booking at <strong>{{ selected_hotel.name }}</strong></p>{% endif %}
     {% if rooms %}
     <h2>Available rooms</h2>
     <form class="public-room-booking-form" method="post">
@@ -59,10 +70,9 @@
         <button class="primary-button" type="submit">Request booking and get payment details</button>
       </section>
     </form>
-    {% elif selected_hotel %}
-    <section class="public-no-rooms"><h2>No listed rooms available for those dates</h2><p>Try different dates, or contact the hotel for assistance.</p></section>
     {% else %}
-    <section class="public-no-rooms"><h2>Choose a hotel to begin</h2><p>After selecting a hotel and dates, available rooms and its payment details will be shown in the booking flow.</p></section>
+    <section class="public-no-rooms"><h2>No listed rooms available for those dates</h2><p>Try different dates, or contact the hotel for assistance.</p></section>
+    {% endif %}
     {% endif %}
     <footer><a href="{{ url_for('home') }}">Back to hotel home</a></footer>
   </main>
