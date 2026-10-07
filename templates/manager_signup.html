@@ -9,15 +9,15 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='icons.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='hotel-location.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='workspace_nav.css') }}">
 </head>
 <body class="reference-app">
   {% include '_icons.html' %}
   <header class="reference-header">
     <div><strong><span class="brand-prefix">HAIDWARE</span> <span class="brand-title">HOTEL BOOKING PLATFORM</span></strong><span>{{ hotel_name or 'Register your hotel' }}</span><small>Manager</small></div>
-    <nav class="header-nav"><a href="{{ url_for('reference_workspace', role='manager', page='dashboard') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-hotel"></use></svg>Operational Overview</a><a href="{{ url_for('reference_workspace', role='manager', page='bookings') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg>Bookings</a><a href="{{ url_for('reference_workspace', role='manager', page='finance') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-finance"></use></svg>Finance</a><a href="{{ url_for('logout') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-logout"></use></svg>Log Out</a></nav>
+    {% with role='manager', page='team', show_logout=editing %}{% include '_workspace_nav.html' %}{% endwith %}
   </header>
   <div class="reference-layout">
-    <aside class="reference-sidebar"><a href="{{ url_for('reference_workspace', role='manager', page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role='manager', page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role='manager', page='bookings') }}">Bookings</a><a href="{{ url_for('reference_workspace', role='manager', page='finance') }}">Booking Finance</a><a class="active" href="{{ url_for('manager_signup') }}">Team Accounts</a></aside>
     <main class="reference-main account-main">
       <div class="heading-row"><div><h1>{{ 'Hotel Team Accounts' if editing else 'Register Your Hotel' }}</h1><p>{{ 'Update your hotel identity and its Director and Reception logins.' if editing else 'Register a hotel and create separate Manager, Director, and Reception accounts for its team.' }}</p></div><span class="read-only-note">Hotel-scoped access</span></div>
       {% if error %}<div class="account-error">{{ error }}</div>{% endif %}

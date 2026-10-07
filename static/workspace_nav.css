@@ -1,0 +1,10 @@
+.header-nav a[aria-current="page"] {
+  background: #deedfa;
+  border-color: #6e9ec4;
+  color: #103f6c;
+}
+
+.header-nav a:focus-visible {
+  outline: 3px solid #f0b949;
+  outline-offset: 2px;
+}

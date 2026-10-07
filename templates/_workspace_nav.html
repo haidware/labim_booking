@@ -1,0 +1,24 @@
+<nav class="header-nav">
+  {% if role == 'director' %}
+    <a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}" {% if page == 'dashboard' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-hotel"></use></svg>Dashboard</a>
+    <a href="{{ url_for('reference_workspace', role=role, page='rooms') }}" {% if page == 'rooms' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-rooms"></use></svg>Rooms</a>
+    <a href="{{ url_for('reference_workspace', role=role, page='finance') }}" {% if page == 'finance' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-finance"></use></svg>Finance</a>
+  {% elif role == 'manager' %}
+    <a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}" {% if page == 'dashboard' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-hotel"></use></svg>Operational Overview</a>
+    <a href="{{ url_for('reference_workspace', role=role, page='rooms') }}" {% if page == 'rooms' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-rooms"></use></svg>Rooms</a>
+    <a href="{{ url_for('reference_workspace', role=role, page='bookings') }}" {% if page == 'bookings' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg>Bookings</a>
+    <a href="{{ url_for('reference_workspace', role=role, page='calendar') }}" {% if page == 'calendar' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg>Booking Calendar</a>
+    <a href="{{ url_for('reference_workspace', role=role, page='finance') }}" {% if page == 'finance' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-finance"></use></svg>Finance</a>
+    <a href="{{ url_for('reference_workspace', role=role, page='online-settings') }}" {% if page == 'online-settings' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-online"></use></svg>Online Booking Setup</a>
+    <a href="{{ url_for('manager_signup') }}" {% if page == 'team' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-team"></use></svg>Hotel and Team</a>
+  {% else %}
+    <a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}" {% if page == 'dashboard' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-hotel"></use></svg>Dashboard</a>
+    <a href="{{ url_for('reference_workspace', role=role, page='calendar') }}" {% if page == 'calendar' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg>Booking Calendar</a>
+    <a href="{{ url_for('reference_workspace', role=role, page='new') }}" {% if page == 'new' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg>New Booking</a>
+    <a href="{{ url_for('reference_workspace', role=role, page='checkout') }}" {% if page == 'checkout' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-rooms"></use></svg>Check Out</a>
+    <a href="{{ url_for('reference_workspace', role=role, page='roomstatus') }}" {% if page == 'roomstatus' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-rooms"></use></svg>Room Status</a>
+    <a href="{{ url_for('reference_workspace', role=role, page='payments') }}" {% if page == 'payments' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-finance"></use></svg>Payments</a>
+    <a href="{{ url_for('reference_workspace', role=role, page='online') }}" {% if page == 'online' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-online"></use></svg>Online Requests</a>
+  {% endif %}
+  {% if show_logout|default(true) %}<a href="{{ url_for('logout') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-logout"></use></svg>Log Out</a>{% endif %}
+</nav>

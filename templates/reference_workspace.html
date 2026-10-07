@@ -9,26 +9,19 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='icons.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='calendar_sync.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='workspace_nav.css') }}">
 </head>
 <body class="reference-app">
   {% include '_icons.html' %}
   <header class="reference-header">
     <div><strong><span class="brand-prefix">HAIDWARE</span> <span class="brand-title">HOTEL BOOKING PLATFORM</span></strong><span>{{ hotel_name }}</span><small>{{ 'Receptionist' if role == 'reception' else role|capitalize }}</small></div>
-    <nav class="header-nav">
-      {% if role == 'director' %}<a href="{{ url_for('reference_workspace', role=role, page='rooms') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-rooms"></use></svg>Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-finance"></use></svg>Finance</a>{% elif role == 'manager' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-hotel"></use></svg>Operational Overview</a><a href="{{ url_for('reference_workspace', role=role, page='bookings') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg>Bookings</a><a href="{{ url_for('reference_workspace', role=role, page='calendar') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg>Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-finance"></use></svg>Finance</a><a href="{{ url_for('reference_workspace', role=role, page='online-settings') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-online"></use></svg>Online Booking Setup</a><a href="{{ url_for('manager_signup') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-team"></use></svg>Hotel and Team</a>{% else %}<a href="{{ url_for('reference_workspace', role=role, page='calendar') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg>Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='roomstatus') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-rooms"></use></svg>Room Status</a><a href="{{ url_for('reference_workspace', role=role, page='payments') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-finance"></use></svg>Payments</a><a href="{{ url_for('reference_workspace', role=role, page='online') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-online"></use></svg>Online Requests</a>{% endif %}<a href="{{ url_for('logout') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-logout"></use></svg>Log Out</a>
-    </nav>
+    {% include '_workspace_nav.html' %}
   </header>
   <div class="reference-layout">
-    <aside class="reference-sidebar">
-      {% if role == 'manager' %}<a href="{{ url_for('manager_signup') }}">Team Accounts</a>{% endif %}
-      {% if role == 'director' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">Finance</a>{% elif role == 'manager' %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role=role, page='bookings') }}">Bookings</a><a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='finance') }}">Booking Finance</a><a href="{{ url_for('reference_workspace', role=role, page='online-settings') }}">Online Booking Setup</a><a href="{{ url_for('manager_signup') }}">Hotel and Team Accounts</a>{% else %}<a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role=role, page='calendar') }}">Booking Calendar</a><a href="{{ url_for('reference_workspace', role=role, page='new') }}">New Booking</a><a href="{{ url_for('reference_workspace', role=role, page='checkout') }}">Check Out</a><a href="{{ url_for('reference_workspace', role=role, page='roomstatus') }}">Room Status</a><a href="{{ url_for('reference_workspace', role=role, page='payments') }}">Payments</a><a href="{{ url_for('reference_workspace', role=role, page='online') }}">Online Requests</a>{% endif %}
-    </aside>
     <main class="reference-main">
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% for category, message in messages %}<div class="account-error">{{ message }}</div>{% endfor %}
       {% endwith %}
-      {% if role == 'manager' %}<p class="account-link"><a class="primary-button" href="{{ url_for('manager_signup') }}">Team Accounts</a></p>{% endif %}
-
       {% if role == 'director' and page == 'dashboard' %}
       <h1>Director Dashboard</h1><p>Executive room and booking-finance overview.</p>
       {% include 'reference_metrics.html' %}

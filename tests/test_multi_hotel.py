@@ -258,6 +258,49 @@ class MultiHotelFlowTests(unittest.TestCase):
             ).fetchone()["check_out"]
             self.assertEqual(tobi_checkout, departure.isoformat())
 
+    def test_manager_and_director_use_one_top_navigation_across_pages(self):
+        manager = self.app_module.app.test_client()
+        self.register_hotel(
+            manager, "Navigation Test Hotel", "navigation",
+            "1 Main Road", "Lagos", "Lagos",
+        )
+
+        for page, expected_link in (
+            ("dashboard", b"Operational Overview"),
+            ("rooms", b">Rooms</a>"),
+            ("bookings", b">Bookings</a>"),
+            ("calendar", b"Booking Calendar"),
+            ("finance", b">Finance</a>"),
+            ("online-settings", b"Online Booking Setup"),
+        ):
+            response = manager.get(f"/workspace/manager/{page}")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(expected_link, response.data)
+            self.assertEqual(response.data.count(b'class="header-nav"'), 1)
+            self.assertNotIn(b'class="reference-sidebar"', response.data)
+
+        team_page = manager.get("/signup/manager")
+        self.assertEqual(team_page.status_code, 200)
+        self.assertEqual(team_page.data.count(b'class="header-nav"'), 1)
+        self.assertNotIn(b'class="reference-sidebar"', team_page.data)
+
+        director = self.app_module.app.test_client()
+        response = director.post("/login/director", data={
+            "username": "director-navigation",
+            "password": "DirectorPass123!",
+        })
+        self.assertEqual(response.status_code, 302)
+        for page, expected_link in (
+            ("dashboard", b">Dashboard</a>"),
+            ("rooms", b">Rooms</a>"),
+            ("finance", b">Finance</a>"),
+        ):
+            response = director.get(f"/workspace/director/{page}")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(expected_link, response.data)
+            self.assertEqual(response.data.count(b'class="header-nav"'), 1)
+            self.assertNotIn(b'class="reference-sidebar"', response.data)
+
     def test_signup_guest_selection_booking_and_staff_isolation(self):
         hotel_one_manager = self.app_module.app.test_client()
         hotel_one_id = self.register_hotel(
