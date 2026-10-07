@@ -457,12 +457,23 @@ def reference_rooms(hotel_id=None):
             "hotel_id", hotel_id
         ).order("number").execute().data
         bookings = client.table("reservations").select(
-            "room_number, guest_name, status"
+            "room_number, guest_name, status, check_in, check_out"
         ).eq("hotel_id", hotel_id).in_(
             "status", ["booked", "checked_in"]
         ).execute().data
-        guest_by_room = {booking["room_number"]: booking["guest_name"] for booking in bookings}
-        active_room_numbers = {booking["room_number"] for booking in bookings}
+        today = date.today()
+        current_bookings = [
+            booking for booking in bookings
+            if date.fromisoformat(str(booking["check_in"])[:10]) <= today
+            < date.fromisoformat(str(booking["check_out"])[:10])
+        ]
+        guest_by_room = {
+            booking["room_number"]: booking["guest_name"]
+            for booking in current_bookings
+        }
+        active_room_numbers = {
+            booking["room_number"] for booking in current_bookings
+        }
         return [
             {
                 "number": row["number"],
@@ -478,8 +489,9 @@ def reference_rooms(hotel_id=None):
     guest_by_room = {}
     booking_guests = get_db().execute(
         """SELECT room_number, guest_name FROM reservations
-        WHERE hotel_id = ? AND status IN ('booked', 'checked_in') ORDER BY created_at""",
-        (hotel_id,),
+        WHERE hotel_id = ? AND status IN ('booked', 'checked_in')
+        AND check_in <= ? AND check_out > ? ORDER BY created_at""",
+        (hotel_id, date.today().isoformat(), date.today().isoformat()),
     ).fetchall()
     guest_by_room.update({row["room_number"]: row["guest_name"] for row in booking_guests})
     active_room_numbers = {row["room_number"] for row in booking_guests}
@@ -1244,10 +1256,15 @@ def create_online_booking(form):
 
 def confirm_online_booking(reservation_id, received_by):
     if SUPABASE_ENABLED:
-        confirmed = get_request_supabase().rpc("confirm_online_booking", {
-            "p_reservation_id": reservation_id,
-            "p_received_by": received_by[:120],
-        }).execute().data
+        from postgrest.exceptions import APIError
+
+        try:
+            confirmed = get_request_supabase().rpc("confirm_online_booking", {
+                "p_reservation_id": reservation_id,
+                "p_received_by": received_by[:120],
+            }).execute().data
+        except APIError as error:
+            raise_supabase_reservation_conflict(error)
         if not confirmed:
             raise ValueError("This online request expired or is no longer awaiting confirmation.")
         return
@@ -1267,6 +1284,25 @@ def confirm_online_booking(reservation_id, received_by):
         )
         db.commit()
         raise ValueError("The 30-minute room hold expired. Ask the guest to submit a new request.")
+    conflict = db.execute(
+        """SELECT 1 FROM reservations
+        WHERE hotel_id = ? AND room_number = ? AND id != ?
+          AND status IN ('booked', 'checked_in', 'pending_payment')
+          AND (status != 'pending_payment' OR hold_expires_at > ?)
+          AND check_in < ? AND check_out > ? LIMIT 1""",
+        (
+            reservation["hotel_id"], reservation["room_number"], reservation_id,
+            now_iso(), reservation["check_out"], reservation["check_in"],
+        ),
+    ).fetchone()
+    if conflict:
+        db.execute(
+            """UPDATE reservations SET status = 'cancelled', hold_expires_at = NULL
+            WHERE id = ? AND hotel_id = ?""",
+            (reservation_id, reservation["hotel_id"]),
+        )
+        db.commit()
+        raise ValueError("That room already has a booking during the selected dates.")
     db.execute(
         """UPDATE reservations SET status = 'booked', amount_paid = amount,
         payment_status = 'paid', hold_expires_at = NULL WHERE id = ? AND hotel_id = ?""",
@@ -1328,13 +1364,15 @@ def reference_calendar(rooms, reservations, reference_date=None):
             continue
         active_reservations.append({
             **reservation,
-            "status": status,
+            "status": (
+                "booked" if status == "checked_in" and check_in > date.today()
+                else status
+            ),
             "_room_number": str(reservation.get("room_number", "")).strip(),
             "_check_in": check_in,
             "_check_out": check_out,
         })
 
-    status_priority = {"checked_in": 0, "booked": 1, "pending_payment": 2}
     rows = []
     for room in rooms:
         cells = []
@@ -1344,19 +1382,27 @@ def reference_calendar(rooms, reservations, reference_date=None):
                 if reservation["_room_number"] == str(room["number"]).strip()
                 and reservation["_check_in"] <= current_day < reservation["_check_out"]
             ]
-            booking = min(
-                matching_reservations,
-                key=lambda reservation: status_priority[reservation["status"]],
-                default=None,
-            )
+            booking = matching_reservations[0] if matching_reservations else None
+            conflict = len(matching_reservations) > 1
             status = booking["status"] if booking else ""
+            guest_names = list(dict.fromkeys(
+                reservation.get("guest_name", "")
+                for reservation in matching_reservations
+                if reservation.get("guest_name")
+            ))
+            sources = {
+                reservation.get("booking_source")
+                for reservation in matching_reservations
+            }
             cells.append({
-                "status": "pending-payment" if status == "pending_payment"
+                "status": "conflict" if conflict
+                else "pending-payment" if status == "pending_payment"
                 else "occupied" if status == "checked_in" else "booked" if booking else "",
-                "guest": booking["guest_name"] if booking else "",
+                "guest": " / ".join(guest_names),
                 "source": (
-                    "Online" if booking.get("booking_source") == "online" else ""
-                ) if booking else "",
+                    "Conflict" if conflict
+                    else "Online" if sources == {"online"} else ""
+                ),
                 "reservation_id": booking.get("id") if booking else None,
                 "selected": current_day == reference_date,
             })
@@ -2198,12 +2244,26 @@ def manager_signup():
     return render_signup_page()
 
 
+def raise_supabase_reservation_conflict(error):
+    if error.code == "P0001" and error.message and (
+        "already has a booking" in error.message
+    ):
+        raise ValueError(
+            "That room already has a booking during the selected dates."
+        ) from error
+    raise error
+
+
 def create_reference_booking(form):
     check_in = datetime.strptime(form["check_in"], "%Y-%m-%d").date()
     check_out = datetime.strptime(form["check_out"], "%Y-%m-%d").date()
     nights = (check_out - check_in).days
     if nights < 1:
         raise ValueError("Check-out must be after check-in.")
+    if check_in < date.today():
+        raise ValueError("Arrival date cannot be in the past.")
+    if check_out <= date.today():
+        raise ValueError("Departure date must be in the future.")
     room_number = form["room_number"]
     payment_method = form.get("payment_method", "Cash")
     if payment_method not in {"Cash", "POS", "Transfer"}:
@@ -2219,7 +2279,7 @@ def create_reference_booking(form):
             "hotel_id", current_hotel_id()
         ).eq("number", room_number).limit(1).execute().data
         room = rooms[0] if rooms else None
-        if not room or room["status"] != "available":
+        if not room or str(room["status"]).lower() in {"unavailable", "cleaning"}:
             raise ValueError("That room is no longer available.")
         occupied_dates = client.table("reservations").select(
             "id, check_in, check_out, status, hold_expires_at"
@@ -2228,11 +2288,13 @@ def create_reference_booking(form):
         ).execute().data
     else:
         db = get_db()
+        db.execute("BEGIN IMMEDIATE")
         room = db.execute(
             "SELECT rate, status FROM rooms WHERE hotel_id = ? AND number = ?",
             (current_hotel_id(), room_number),
         ).fetchone()
-        if not room or room["status"] != "available":
+        if not room or str(room["status"]).lower() in {"unavailable", "cleaning"}:
+            db.rollback()
             raise ValueError("That room is no longer available.")
         occupied_dates = db.execute(
             """SELECT id, check_in, check_out, status, hold_expires_at
@@ -2249,6 +2311,8 @@ def create_reference_booking(form):
         and check_out.isoformat() > stay["check_in"]
         for stay in occupied_dates
     ):
+        if not SUPABASE_ENABLED:
+            get_db().rollback()
         raise ValueError("That room already has a booking during the selected dates.")
 
     if SUPABASE_ENABLED:
@@ -2257,27 +2321,33 @@ def create_reference_booking(form):
         if amount < 0 or amount_paid < 0 or amount_paid > amount:
             raise ValueError("Check the booking amount and amount paid.")
         payment_status = "paid" if amount_paid == amount else "partial" if amount_paid else "pending"
-        results = client.table("reservations").insert({
-            "hotel_id": current_hotel_id(),
-            "guest_name": guest_name,
-            "email": form.get("email", "").strip(),
-            "phone": phone,
-            "room_number": room_number,
-            "check_in": check_in.isoformat(),
-            "check_out": check_out.isoformat(),
-            "amount": amount,
-            "amount_paid": amount_paid,
-            "payment_method": payment_method,
-            "payment_status": payment_status,
-            "status": "checked_in",
-            "created_by": session.get("supabase_user_id"),
-        }).select("*").execute().data
+        from postgrest.exceptions import APIError
+
+        try:
+            results = client.table("reservations").insert({
+                "hotel_id": current_hotel_id(),
+                "guest_name": guest_name,
+                "email": form.get("email", "").strip(),
+                "phone": phone,
+                "room_number": room_number,
+                "check_in": check_in.isoformat(),
+                "check_out": check_out.isoformat(),
+                "amount": amount,
+                "amount_paid": amount_paid,
+                "payment_method": payment_method,
+                "payment_status": payment_status,
+                "status": "checked_in" if check_in == date.today() else "booked",
+                "created_by": session.get("supabase_user_id"),
+            }).select("*").execute().data
+        except APIError as error:
+            raise_supabase_reservation_conflict(error)
         if not results:
             raise RuntimeError("Supabase did not return the created booking.")
         result = results[0]
-        client.table("rooms").update({"status": "occupied"}).eq(
-            "hotel_id", current_hotel_id()
-        ).eq("number", room_number).execute()
+        if check_in == date.today():
+            client.table("rooms").update({"status": "occupied"}).eq(
+                "hotel_id", current_hotel_id()
+            ).eq("number", room_number).execute()
         if amount_paid:
             client.table("payments").insert({
                 "hotel_id": current_hotel_id(),
@@ -2294,21 +2364,24 @@ def create_reference_booking(form):
     amount = int(form.get("total_amount") or nights * room["rate"])
     amount_paid = int(form.get("amount_paid") or 0)
     if amount < 0 or amount_paid < 0 or amount_paid > amount:
+        db.rollback()
         raise ValueError("Check the booking amount and amount paid.")
     payment_status = "paid" if amount_paid == amount else "partial" if amount_paid else "pending"
     cursor = db.execute(
         """INSERT INTO reservations
         (hotel_id, guest_name, email, phone, room_number, check_in, check_out, amount, amount_paid,
          payment_method, payment_status, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'checked_in', ?)""",
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (current_hotel_id(), guest_name, form.get("email", "").strip(), phone, room_number, check_in.isoformat(),
          check_out.isoformat(), amount, amount_paid, payment_method, payment_status,
+         "checked_in" if check_in == date.today() else "booked",
          datetime.now().isoformat(timespec="seconds")),
     )
-    db.execute(
-        "UPDATE rooms SET status = 'occupied' WHERE hotel_id = ? AND number = ?",
-        (current_hotel_id(), room_number),
-    )
+    if check_in == date.today():
+        db.execute(
+            "UPDATE rooms SET status = 'occupied' WHERE hotel_id = ? AND number = ?",
+            (current_hotel_id(), room_number),
+        )
     if amount_paid:
         db.execute(
             """INSERT INTO payments
@@ -2329,23 +2402,31 @@ def extend_reference_reservation(reservation_id, form):
         ).eq("id", reservation_id).limit(1).execute().data
         reservation = results[0] if results else None
     else:
-        reservation = get_db().execute(
+        db = get_db()
+        db.execute("BEGIN IMMEDIATE")
+        reservation = db.execute(
             "SELECT * FROM reservations WHERE hotel_id = ? AND id = ?",
             (current_hotel_id(), reservation_id),
         ).fetchone()
+        reservation = dict(reservation) if reservation else None
     if not reservation or reservation["status"] not in {"booked", "checked_in"}:
+        if not SUPABASE_ENABLED:
+            get_db().rollback()
         raise ValueError("Only a current stay can be extended.")
 
     try:
-        current_departure = date.fromisoformat(reservation["check_out"])
-        new_departure = date.fromisoformat(form["check_out"])
+        current_departure = date.fromisoformat(str(reservation["check_out"])[:10])
+        new_departure = date.fromisoformat(str(form["check_out"])[:10])
     except (KeyError, TypeError, ValueError) as error:
+        if not SUPABASE_ENABLED:
+            get_db().rollback()
         raise ValueError("Choose a valid new departure date.") from error
     if new_departure <= current_departure:
+        if not SUPABASE_ENABLED:
+            get_db().rollback()
         raise ValueError("The new departure date must be after the current departure.")
 
     if SUPABASE_ENABLED:
-        client = get_request_supabase()
         other_stays = client.table("reservations").select(
             "id, check_in, check_out, status, hold_expires_at"
         ).eq("hotel_id", current_hotel_id()).eq(
@@ -2354,13 +2435,13 @@ def extend_reference_reservation(reservation_id, form):
             "status", ["booked", "checked_in", "pending_payment"]
         ).execute().data
         has_conflict = any(
-            stay["id"] != reservation_id
+            str(stay["id"]) != str(reservation_id)
             and (
                 stay["status"] != "pending_payment"
-                or timestamp_is_future(stay["hold_expires_at"])
+                or timestamp_is_future(stay.get("hold_expires_at"))
             )
-            and date.fromisoformat(stay["check_in"]) < new_departure
-            and date.fromisoformat(stay["check_out"]) > current_departure
+            and date.fromisoformat(str(stay["check_in"])[:10]) < new_departure
+            and date.fromisoformat(str(stay["check_out"])[:10]) > current_departure
             for stay in other_stays
         )
         room_results = client.table("rooms").select("rate").eq(
@@ -2369,7 +2450,6 @@ def extend_reference_reservation(reservation_id, form):
         ).limit(1).execute().data
         room = room_results[0] if room_results else None
     else:
-        db = get_db()
         has_conflict = db.execute(
             """SELECT 1 FROM reservations
             WHERE hotel_id = ? AND room_number = ? AND id != ?
@@ -2377,11 +2457,8 @@ def extend_reference_reservation(reservation_id, form):
               AND (status != 'pending_payment' OR hold_expires_at > ?)
               AND check_in < ? AND check_out > ? LIMIT 1""",
             (
-                current_hotel_id(), reservation["room_number"],
-                reservation_id,
-                now_iso(),
-                new_departure.isoformat(),
-                current_departure.isoformat(),
+                current_hotel_id(), reservation["room_number"], reservation_id,
+                now_iso(), new_departure.isoformat(), current_departure.isoformat(),
             ),
         ).fetchone() is not None
         room = db.execute(
@@ -2389,8 +2466,12 @@ def extend_reference_reservation(reservation_id, form):
             (current_hotel_id(), reservation["room_number"]),
         ).fetchone()
     if has_conflict:
+        if not SUPABASE_ENABLED:
+            get_db().rollback()
         raise ValueError("The room has another stay scheduled before that departure date.")
     if not room:
+        if not SUPABASE_ENABLED:
+            get_db().rollback()
         raise ValueError("The room rate could not be found.")
 
     extra_nights = (new_departure - current_departure).days
@@ -2409,25 +2490,24 @@ def extend_reference_reservation(reservation_id, form):
         "status": "checked_in",
     }
     if SUPABASE_ENABLED:
-        client.table("reservations").update(updates).eq(
-            "hotel_id", current_hotel_id()
-        ).eq("id", reservation_id).execute()
-        client.table("rooms").update({"status": "occupied"}).eq(
-            "hotel_id", current_hotel_id()
-        ).eq("number", reservation["room_number"]
-        ).execute()
+        from postgrest.exceptions import APIError
+
+        try:
+            client.table("reservations").update(updates).eq(
+                "hotel_id", current_hotel_id()
+            ).eq("id", reservation_id).execute()
+        except APIError as error:
+            raise_supabase_reservation_conflict(error)
     else:
         db.execute(
-            """UPDATE reservations SET check_out = ?, amount = ?, payment_status = ?, status = ?
+            """UPDATE reservations SET check_out = ?, amount = ?,
+            payment_status = ?, status = ?
             WHERE hotel_id = ? AND id = ?""",
             (
-                updates["check_out"], updates["amount"], updates["payment_status"],
-                updates["status"], current_hotel_id(), reservation_id,
+                updates["check_out"], updates["amount"],
+                updates["payment_status"], updates["status"],
+                current_hotel_id(), reservation_id,
             ),
-        )
-        db.execute(
-            "UPDATE rooms SET status = 'occupied' WHERE hotel_id = ? AND number = ?",
-            (current_hotel_id(), reservation["room_number"]),
         )
         db.commit()
     return extra_nights, extension_charge, new_departure
@@ -2455,7 +2535,9 @@ def update_room_status_from_reservations(room_number):
         ).eq("number", room_number
         ).limit(1).execute().data
         room = rooms[0] if rooms else None
-        stays = client.table("reservations").select("status").eq(
+        stays = client.table("reservations").select(
+            "status, check_in, check_out"
+        ).eq(
             "hotel_id", current_hotel_id()
         ).eq("room_number", room_number
         ).in_("status", ["booked", "checked_in"]).execute().data
@@ -2466,16 +2548,21 @@ def update_room_status_from_reservations(room_number):
             (current_hotel_id(), room_number),
         ).fetchone()
         stays = db.execute(
-            """SELECT status FROM reservations WHERE hotel_id = ? AND room_number = ?
+            """SELECT status, check_in, check_out FROM reservations
+            WHERE hotel_id = ? AND room_number = ?
             AND status IN ('booked', 'checked_in')""",
             (current_hotel_id(), room_number),
         ).fetchall()
     if not room:
         raise ValueError("The assigned room could not be found.")
-    if any(stay["status"] == "checked_in" for stay in stays):
+    today = date.today()
+    current_stays = [
+        stay for stay in stays
+        if date.fromisoformat(str(stay["check_in"])[:10]) <= today
+        < date.fromisoformat(str(stay["check_out"])[:10])
+    ]
+    if current_stays:
         status = "occupied"
-    elif stays:
-        status = "booked"
     elif room["status"] in {"booked", "occupied"}:
         status = "available"
     else:
@@ -2573,10 +2660,15 @@ def update_manager_reservation(reservation_id, form):
         "payment_status": payment_status,
     }
     if SUPABASE_ENABLED:
-        client.table("reservations").update(updates).eq(
-            "hotel_id", current_hotel_id()
-        ).eq("id", reservation_id
-        ).execute()
+        from postgrest.exceptions import APIError
+
+        try:
+            client.table("reservations").update(updates).eq(
+                "hotel_id", current_hotel_id()
+            ).eq("id", reservation_id
+            ).execute()
+        except APIError as error:
+            raise_supabase_reservation_conflict(error)
     else:
         db.execute(
             """UPDATE reservations SET guest_name = ?, email = ?, phone = ?,
@@ -2736,39 +2828,14 @@ def new_reservation():
     role = request.args.get("role", "reception")
     db = get_db()
     rooms = db.execute(
-        "SELECT * FROM rooms WHERE hotel_id = ? AND status = 'available' ORDER BY number",
+        """SELECT * FROM rooms WHERE hotel_id = ?
+        AND lower(status) NOT IN ('unavailable', 'cleaning') ORDER BY number""",
         (current_hotel_id(),),
     ).fetchall()
     if request.method == "POST":
-        form = request.form
         try:
-            check_in = datetime.strptime(form["check_in"], "%Y-%m-%d")
-            check_out = datetime.strptime(form["check_out"], "%Y-%m-%d")
-            nights = (check_out - check_in).days
-            if nights < 1:
-                raise ValueError("Check-out must be after check-in.")
-            room = db.execute(
-                "SELECT rate FROM rooms WHERE hotel_id = ? AND number = ? AND status = 'available'",
-                (current_hotel_id(), form["room_number"]),
-            ).fetchone()
-            if room is None:
-                raise ValueError("Choose an available room.")
-            amount = nights * room["rate"]
-            db.execute(
-                """INSERT INTO reservations
-                (hotel_id, guest_name, email, phone, room_number, check_in, check_out, amount,
-                 payment_method, payment_status, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'checked_in', ?)""",
-                (current_hotel_id(), form["guest_name"], form["email"], form["phone"], form["room_number"],
-                 form["check_in"], form["check_out"], amount, form["payment_method"],
-                 datetime.now().isoformat(timespec="seconds")),
-            )
-            db.execute(
-                "UPDATE rooms SET status = 'occupied' WHERE hotel_id = ? AND number = ?",
-                (current_hotel_id(), form["room_number"]),
-            )
-            db.commit()
-            flash(f"Reservation created for {form['guest_name']}.", "success")
+            create_reference_booking(request.form)
+            flash(f"Reservation created for {request.form['guest_name']}.", "success")
             return redirect(url_for("reservations", role=role))
         except (KeyError, ValueError) as error:
             flash(str(error) or "Please complete all reservation details.", "error")

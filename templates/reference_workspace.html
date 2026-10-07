@@ -156,7 +156,7 @@
 
       {% elif role == 'reception' and page == 'checkout' %}
       <h1>Check Out</h1><p>Complete a guest’s stay and send the room for cleaning.</p><section class="data-panel"><div class="panel-heading"><strong>Current Stays</strong></div><div class="action-list">
-        {% for reservation in reservations if reservation.status in ['booked', 'checked_in'] %}
+        {% for reservation in reservations if reservation.status in ['booked', 'checked_in'] and reservation.check_in <= today < reservation.check_out %}
         <div class="current-stay">
           <span>Room {{ reservation.room_number }} — {{ reservation.guest_name }}<small>Departs {{ reservation.check_out }} · {% if reservation.amount > reservation.amount_paid %}Balance ₦{{ '{:,.0f}'.format(reservation.amount - reservation.amount_paid) }}{% else %}Payment complete{% endif %}</small></span>
           <div class="stay-actions">
@@ -179,7 +179,7 @@
             </div>
           </form>
         </dialog>
-        {% else %}<p>No current stays are ready for check-out.</p>{% endfor %}
+        {% else %}<p>No guests are currently staying in a room.</p>{% endfor %}
       </div></section>
 
       {% elif role == 'reception' and page == 'roomstatus' %}

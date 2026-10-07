@@ -134,6 +134,130 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(cells[3]["guest"], "Online Guest")
         self.assertEqual(cells[4]["status"], "")
 
+    def test_future_reception_stays_show_in_calendar_without_date_clashes(self):
+        manager = self.app_module.app.test_client()
+        hotel_id = self.register_hotel(
+            manager, "Calendar Test Hotel", "calendar",
+            "1 Main Road", "Lagos", "Lagos",
+        )
+        response = manager.post("/workspace/manager/rooms", data={
+            "number": "101", "name": "Standard", "beds": "1", "rate": "50000",
+        })
+        self.assertEqual(response.status_code, 302)
+
+        reception = self.app_module.app.test_client()
+        response = reception.post("/login/reception", data={
+            "username": "reception-calendar",
+            "password": "ReceptionPass123!",
+        })
+        self.assertEqual(response.status_code, 302)
+        response = reception.post("/rooms/101/status", data={
+            "status": "available", "reference": "true",
+        })
+        self.assertEqual(response.status_code, 302)
+
+        arrival = date.today() + timedelta(days=3)
+        departure = date.today() + timedelta(days=6)
+        response = reception.post("/workspace/reception/new", data={
+            "room_number": "101",
+            "guest_name": "Tobi",
+            "phone": "08000000000",
+            "email": "tobi@example.com",
+            "check_in": arrival.isoformat(),
+            "check_out": departure.isoformat(),
+            "total_amount": "150000",
+            "amount_paid": "150000",
+            "payment_method": "Transfer",
+        })
+        self.assertEqual(response.status_code, 302)
+
+        calendar = reception.get("/workspace/reception/calendar", query_string={
+            "reference_date": arrival.isoformat(),
+        })
+        self.assertEqual(calendar.status_code, 200)
+        self.assertIn(b"Tobi", calendar.data)
+        self.assertIn(b"Booked", calendar.data)
+        checkout = reception.get("/workspace/reception/checkout")
+        self.assertEqual(checkout.status_code, 200)
+        self.assertNotIn(b"Tobi", checkout.data)
+
+        response = reception.post("/workspace/reception/new", data={
+            "room_number": "101",
+            "guest_name": "Clashing Guest",
+            "phone": "08000000001",
+            "email": "clash@example.com",
+            "check_in": (arrival + timedelta(days=2)).isoformat(),
+            "check_out": (departure + timedelta(days=1)).isoformat(),
+            "total_amount": "100000",
+            "amount_paid": "0",
+            "payment_method": "Cash",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"already has a booking", response.data)
+
+        response = reception.post(
+            "/reservations/new?role=reception",
+            data={
+                "room_number": "101",
+                "guest_name": "Legacy Clashing Guest",
+                "phone": "08000000003",
+                "email": "legacy-clash@example.com",
+                "check_in": (arrival + timedelta(days=1)).isoformat(),
+                "check_out": (departure + timedelta(days=1)).isoformat(),
+                "payment_method": "Cash",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"already has a booking", response.data)
+
+        response = reception.post("/workspace/reception/new", data={
+            "room_number": "101",
+            "guest_name": "Next Guest",
+            "phone": "08000000002",
+            "email": "next@example.com",
+            "check_in": departure.isoformat(),
+            "check_out": (departure + timedelta(days=2)).isoformat(),
+            "total_amount": "100000",
+            "amount_paid": "0",
+            "payment_method": "Cash",
+        })
+        self.assertEqual(response.status_code, 302)
+        with self.app_module.app.app_context():
+            bookings = self.app_module.get_db().execute(
+                """SELECT guest_name, status FROM reservations
+                WHERE hotel_id = ? AND room_number = '101'
+                ORDER BY check_in""",
+                (hotel_id,),
+            ).fetchall()
+            self.assertEqual(
+                [(row["guest_name"], row["status"]) for row in bookings],
+                [("Tobi", "booked"), ("Next Guest", "booked")],
+            )
+            tobi = self.app_module.get_db().execute(
+                "SELECT id FROM reservations WHERE guest_name = 'Tobi'"
+            ).fetchone()
+
+        response = reception.post(
+            f"/reservations/{tobi['id']}/status",
+            data={
+                "role": "reception",
+                "action": "extend",
+                "check_out": (departure + timedelta(days=1)).isoformat(),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        checkout = reception.get("/workspace/reception/checkout")
+        self.assertIn(
+            b"another stay scheduled before that departure date",
+            checkout.data,
+        )
+        with self.app_module.app.app_context():
+            tobi_checkout = self.app_module.get_db().execute(
+                "SELECT check_out FROM reservations WHERE id = ?",
+                (tobi["id"],),
+            ).fetchone()["check_out"]
+            self.assertEqual(tobi_checkout, departure.isoformat())
+
     def test_signup_guest_selection_booking_and_staff_isolation(self):
         hotel_one_manager = self.app_module.app.test_client()
         hotel_one_id = self.register_hotel(
@@ -307,8 +431,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertIn(b"Guest Two \xc2\xb7 Online", approved_calendar.data)
         checkout_page = reception.get("/workspace/reception/checkout")
         self.assertEqual(checkout_page.status_code, 200)
-        self.assertIn(b"Guest Two", checkout_page.data)
-        self.assertIn(b"Room 101", checkout_page.data)
+        self.assertNotIn(b"Guest Two", checkout_page.data)
         with self.app_module.app.app_context():
             confirmed = self.app_module.get_db().execute(
                 "SELECT status, amount_paid FROM reservations WHERE id = ?",
