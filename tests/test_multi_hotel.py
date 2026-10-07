@@ -4,6 +4,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -66,6 +67,7 @@ class MultiHotelFlowTests(unittest.TestCase):
             "account_name": f"{room_name} Hotel",
             "account_number": "12345678",
             "reception_whatsapp": "+2348012345678",
+            "reception_email": f"reception-{hotel_id[:8]}@example.com",
         })
         self.assertEqual(response.status_code, 302)
         with self.app_module.app.app_context():
@@ -131,22 +133,36 @@ class MultiHotelFlowTests(unittest.TestCase):
         with guest.session_transaction() as guest_session:
             csrf_token = guest_session["public_booking_csrf"]
 
-        response = guest.post("/book", data={
-            "csrf_token": csrf_token,
-            "hotel_id": hotel_two_id,
-            "hotel_slug": hotel_two["slug"],
-            "room_number": "101",
-            "check_in": stay_start,
-            "check_out": stay_end,
-            "guest_name": "Guest Two",
-            "email": "guest@example.com",
-            "phone": "08000000000",
-        })
+        with patch.object(
+            self.app_module,
+            "send_reception_booking_email",
+        ) as send_reception_email:
+            send_reception_email.return_value = None
+            response = guest.post("/book", data={
+                "csrf_token": csrf_token,
+                "hotel_id": hotel_two_id,
+                "hotel_slug": hotel_two["slug"],
+                "room_number": "101",
+                "check_in": stay_start,
+                "check_out": stay_end,
+                "guest_name": "Guest Two",
+                "email": "guest@example.com",
+                "phone": "08000000000",
+            })
         self.assertEqual(response.status_code, 302)
+        send_reception_email.assert_called_once()
+        email_args = send_reception_email.call_args.args
+        self.assertEqual(
+            (email_args[0], email_args[1], *email_args[3:]),
+            (f"reception-{hotel_two_id[:8]}@example.com", "Other Test Hotel",
+             "Guest Two", "guest@example.com", "08000000000", "101",
+             stay_start, stay_end, 90000),
+        )
         confirmation = guest.get("/booking/confirmation")
         self.assertEqual(confirmation.status_code, 200)
         self.assertIn(b"Other Test Hotel", confirmation.data)
         self.assertIn(b"Suite Bank", confirmation.data)
+        self.assertIn(b"notification has been emailed", confirmation.data)
 
         with self.app_module.app.app_context():
             booking = self.app_module.get_db().execute(
@@ -154,6 +170,13 @@ class MultiHotelFlowTests(unittest.TestCase):
             ).fetchone()
             self.assertEqual(booking["hotel_id"], hotel_two_id)
             self.assertEqual(booking["room_number"], "101")
+            self.assertEqual(
+                self.app_module.get_db().execute(
+                    "SELECT hotel_id FROM online_booking_settings WHERE hotel_id = ?",
+                    (hotel_two_id,),
+                ).fetchone()["hotel_id"],
+                hotel_two_id,
+            )
 
         reception = self.app_module.app.test_client()
         response = reception.post("/login/reception", data={
@@ -165,6 +188,18 @@ class MultiHotelFlowTests(unittest.TestCase):
             f"/online-bookings/{booking['id']}/confirm"
         )
         self.assertEqual(response.status_code, 302)
+        self.assertIn(
+            f"/workspace/reception/calendar?reference_date={stay_start}",
+            response.headers["Location"],
+        )
+        approved_calendar = reception.get(response.headers["Location"])
+        self.assertEqual(approved_calendar.status_code, 200)
+        self.assertIn(b"Booked", approved_calendar.data)
+        self.assertIn(b"Guest Two", approved_calendar.data)
+        checkout_page = reception.get("/workspace/reception/checkout")
+        self.assertEqual(checkout_page.status_code, 200)
+        self.assertIn(b"Guest Two", checkout_page.data)
+        self.assertIn(b"Room 101", checkout_page.data)
         with self.app_module.app.app_context():
             confirmed = self.app_module.get_db().execute(
                 "SELECT status, amount_paid FROM reservations WHERE id = ?",
@@ -289,6 +324,13 @@ class MultiHotelFlowTests(unittest.TestCase):
                     db.execute("SELECT bank_name FROM online_booking_settings WHERE hotel_id = ?", (hotel_id,)).fetchone()[0],
                     "Legacy Bank",
                 )
+                self.assertEqual(
+                    db.execute(
+                        "SELECT reception_email FROM online_booking_settings WHERE hotel_id = ?",
+                        (hotel_id,),
+                    ).fetchone()[0],
+                    "",
+                )
                 db.execute(
                     "INSERT INTO hotels (id, name, slug, created_at) VALUES ('tenant-two', 'Second Hotel', 'second-hotel', 'now')"
                 )
@@ -302,6 +344,40 @@ class MultiHotelFlowTests(unittest.TestCase):
             sys.modules.pop(spec.name, None)
         finally:
             shutil.rmtree(legacy_directory)
+
+    def test_reception_booking_email_uses_tls_and_includes_review_link(self):
+        with self.app_module.app.test_request_context():
+            with (
+                patch.dict("os.environ", {
+                    "SMTP_HOST": "smtp.example.com",
+                    "SMTP_PORT": "587",
+                    "SMTP_FROM_EMAIL": "bookings@example.com",
+                    "SMTP_USERNAME": "smtp-user",
+                    "SMTP_PASSWORD": "smtp-password",
+                }),
+                patch.object(self.app_module.smtplib, "SMTP") as smtp_factory,
+            ):
+                smtp = smtp_factory.return_value.__enter__.return_value
+                self.app_module.send_reception_booking_email(
+                    "reception@example.com",
+                    "Test Hotel",
+                    "booking-123",
+                    "Guest Name",
+                    "guest@example.com",
+                    "+2348000000000",
+                    "101",
+                    "2030-01-01",
+                    "2030-01-02",
+                    50000,
+                )
+
+        smtp.starttls.assert_called_once()
+        smtp.login.assert_called_once_with("smtp-user", "smtp-password")
+        sent_message = smtp.send_message.call_args.args[0]
+        self.assertEqual(sent_message["To"], "reception@example.com")
+        self.assertIn("booking-123", sent_message.get_content())
+        self.assertIn("Guest Name", sent_message.get_content())
+        self.assertIn("/workspace/reception/online", sent_message.get_content())
 
 
 if __name__ == "__main__":

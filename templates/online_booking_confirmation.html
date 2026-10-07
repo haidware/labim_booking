@@ -26,6 +26,11 @@
         <dt>Account number</dt><dd>{{ confirmation.account_number }}</dd>
       </dl>
       <p>After you transfer, message Reception on WhatsApp with the booking reference and payment information. Reception will verify the transfer before confirming your reservation.</p>
+      {% if confirmation.email_notification_sent %}
+      <p>A booking notification has been emailed to the hotel’s Reception team.</p>
+      {% else %}
+      <p class="account-error">Your request is held, but the hotel could not be notified by email. Please message Reception on WhatsApp to alert them.</p>
+      {% endif %}
       <a class="primary-button" href="{{ confirmation.whatsapp_url }}" target="_blank" rel="noopener noreferrer">Message Reception on WhatsApp</a>
       <p><a href="{{ url_for('public_booking', hotel=confirmation.hotel_slug) }}">Return to room search</a></p>
     </section>

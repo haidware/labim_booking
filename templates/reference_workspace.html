@@ -63,13 +63,14 @@
       <h1>Online Booking Setup</h1><p>Choose which rooms guests can book online, and configure transfer and Reception contact details.</p>
       <section class="data-panel"><div class="panel-heading"><strong>Guest booking link for {{ hotel_name }}</strong><small>Guests can also browse and select your hotel from the platform booking page.</small></div><p><a href="{{ url_for('public_booking', hotel=hotel_slug) }}" target="_blank" rel="noopener noreferrer">{{ request.url_root }}book?hotel={{ hotel_slug }}</a></p></section>
       <section class="data-panel">
-        <div class="panel-heading"><strong>Bank transfer and Reception WhatsApp</strong><small>Guests see these details after requesting a room</small></div>
+        <div class="panel-heading"><strong>Payment details and Reception notifications</strong><small>Guests receive the transfer details; Reception receives new booking requests by email.</small></div>
         <form class="online-settings-form" method="post">
           <input type="hidden" name="action" value="settings">
           <label>Bank name<input name="bank_name" value="{{ booking_settings.get('bank_name', '') }}" maxlength="100" required></label>
           <label>Account name<input name="account_name" value="{{ booking_settings.get('account_name', '') }}" maxlength="120" required></label>
           <label>Account number<input name="account_number" value="{{ booking_settings.get('account_number', '') }}" inputmode="numeric" maxlength="20" required></label>
           <label>Reception WhatsApp number (include country code)<input name="reception_whatsapp" type="tel" value="{{ booking_settings.get('reception_whatsapp', '') }}" placeholder="+2348012345678" maxlength="24" required></label>
+          <label>Reception notification email<input name="reception_email" type="email" value="{{ booking_settings.get('reception_email', '') }}" maxlength="254" placeholder="reception@example.com" required></label>
           <button class="primary-button" type="submit">Save payment and contact details</button>
         </form>
       </section>

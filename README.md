@@ -27,9 +27,10 @@ Existing SQLite databases are cleaned once at startup: the known sample booking 
 
 1. Ensure the project's existing base schema has been applied. If it was initialized with the sample-room seed, run `supabase_remove_demo_data.sql` now, before enabling multi-hotel onboarding; it removes only matching rooms with no reservation or payment history.
 2. Run `supabase_online_booking_migration.sql` to add online listings/settings, the 30-minute pending-payment status, booking RPCs, and the public room-photo bucket.
-3. Run `supabase_multihotel_migration.sql` once. It migrates existing Labim records into the Labim tenant, adds tenant-scoped room, reservation, payment, profile, and online settings, and updates RLS policies. The Manager publishes rooms from **Online Booking Setup** after uploading a room photo and saving bank/WhatsApp details.
-4. In Railway service variables, set `SUPABASE_URL`, `SUPABASE_ANON_KEY` (the publishable key), and `SUPABASE_SECRET_KEY` (the Supabase secret/server key). Do not put the secret key in `.env.example`, source control, or browser code.
-5. Deploy the service. Use **Hotel Manager? Register your hotel** to create a hotel and its Manager, Director, and Reception accounts. Hotel staff access is isolated by hotel. Guests can select a hotel at `/book` or use its hotel-specific link from Manager **Online Booking Setup**. Reception verifies transfer requests under **Online Requests** and records a confirmed transfer from that page.
+3. Run `supabase_multihotel_migration.sql` once. It migrates existing Labim records into the Labim tenant, adds tenant-scoped room, reservation, payment, profile, and online settings, and updates RLS policies.
+4. Run `supabase_reception_email_migration.sql` to add a per-hotel Reception notification email. In Railway variables, configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM_EMAIL`, `SMTP_USERNAME`, and `SMTP_PASSWORD` using credentials from your email provider. Port 465 uses implicit TLS; other ports use STARTTLS. Keep credentials private and out of source control.
+5. In Manager **Online Booking Setup**, save the hotel's bank details, Reception WhatsApp number, and Reception notification email. Publish rooms after uploading a room photo.
+6. Deploy the service. Use **Hotel Manager? Register your hotel** to create a hotel and its Manager, Director, and Reception accounts. Hotel staff access is isolated by hotel. Guests can select a hotel at `/book` or use its hotel-specific link from Manager **Online Booking Setup**. New guest requests send an email notification to the configured Reception email; Reception still signs into **Online Requests**, verifies payment, and confirms the booking in the app.
 
 The public Data API must expose the `hotels`, `profiles`, `rooms`, `reservations`, `payments`, `online_room_listings`, and `online_booking_settings` tables. The schema grants authenticated users hotel- and role-scoped access through RLS. All role values used by policies are assigned in Supabase Auth `app_metadata` by the server-side Manager account workflow. The service-only Supabase secret must be configured because it powers guest booking, transfer verification, and room-image storage.
 
@@ -37,7 +38,8 @@ The public Data API must expose the `hotels`, `profiles`, `rooms`, `reservations
 
 1. Create a Railway project and deploy this GitHub repository.
 2. Set `FLASK_SECRET_KEY` to a long random value in the Railway service variables.
-3. Set Supabase variables as described above. On an existing database, ensure the base schema and online-booking migration have been applied, then run `supabase_multihotel_migration.sql` once in the Supabase SQL Editor before deploying the multi-hotel application. Do not use an empty local `supabase_schema.sql` as a schema migration.
-4. Deploy with the included Railway config and Procfile; Gunicorn serves the Flask app and `/health` is the health endpoint.
+3. Set Supabase and SMTP variables as described above. On an existing database, ensure the base schema and online-booking migration have been applied, then run `supabase_multihotel_migration.sql` and `supabase_reception_email_migration.sql` in Supabase before deploying. Do not use an empty local `supabase_schema.sql` as a schema migration.
+4. After deployment, Managers must save a valid Reception notification email under **Online Booking Setup**. Existing hotels need to save their notification email once after the migration.
+5. Deploy with the included Railway config and Procfile; Gunicorn serves the Flask app and `/health` is the health endpoint.
 
 SQLite remains a local fallback. The current Railway volume is mounted at `/app/instance` for that fallback only.

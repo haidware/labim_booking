@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+from email.message import EmailMessage
 from functools import lru_cache
 import hmac
 import os
@@ -6,6 +7,8 @@ from pathlib import Path
 import re
 import secrets
 import sqlite3
+import smtplib
+import ssl
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -224,6 +227,7 @@ def init_db():
             account_name TEXT NOT NULL DEFAULT '',
             account_number TEXT NOT NULL DEFAULT '',
             reception_whatsapp TEXT NOT NULL DEFAULT '',
+            reception_email TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL
         );
         """
@@ -317,7 +321,8 @@ def init_db():
             """CREATE TABLE online_booking_settings (
                 hotel_id TEXT PRIMARY KEY, bank_name TEXT NOT NULL DEFAULT '',
                 account_name TEXT NOT NULL DEFAULT '', account_number TEXT NOT NULL DEFAULT '',
-                reception_whatsapp TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+                reception_whatsapp TEXT NOT NULL DEFAULT '',
+                reception_email TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
             )"""
         )
         db.execute(
@@ -328,6 +333,12 @@ def init_db():
             (DEFAULT_HOTEL_ID,),
         )
         db.execute("DROP TABLE online_booking_settings_legacy")
+    if "reception_email" not in {column[1] for column in db.execute(
+        "PRAGMA table_info(online_booking_settings)"
+    )}:
+        db.execute(
+            "ALTER TABLE online_booking_settings ADD COLUMN reception_email TEXT NOT NULL DEFAULT ''"
+        )
     db.execute(
         """INSERT OR IGNORE INTO online_booking_settings (hotel_id, updated_at)
         VALUES (?, CURRENT_TIMESTAMP)""",
@@ -700,6 +711,7 @@ def save_online_booking_settings(form, hotel_id=None):
     account_name = form.get("account_name", "").strip()
     account_number = re.sub(r"\s", "", form.get("account_number", ""))
     whatsapp = form.get("reception_whatsapp", "").strip()
+    reception_email = form.get("reception_email", "").strip().lower()
     whatsapp_digits = re.sub(r"\D", "", whatsapp)
     if not bank_name or not account_name:
         raise ValueError("Enter the bank and account holder name.")
@@ -707,11 +719,16 @@ def save_online_booking_settings(form, hotel_id=None):
         raise ValueError("Enter a valid bank account number.")
     if not 8 <= len(whatsapp_digits) <= 15 or whatsapp_digits.startswith("0"):
         raise ValueError("Enter the Reception WhatsApp number with its country code.")
+    if len(reception_email) > 254 or not re.fullmatch(
+        r"[^\s@]+@[^\s@]+\.[^\s@]+", reception_email
+    ):
+        raise ValueError("Enter a valid Reception notification email address.")
     settings = {
         "bank_name": bank_name[:100],
         "account_name": account_name[:120],
         "account_number": account_number,
         "reception_whatsapp": "+" + whatsapp_digits,
+        "reception_email": reception_email,
         "updated_at": now_iso(),
     }
     if SUPABASE_ENABLED:
@@ -722,20 +739,82 @@ def save_online_booking_settings(form, hotel_id=None):
     else:
         get_db().execute(
             """INSERT INTO online_booking_settings
-            (hotel_id, bank_name, account_name, account_number, reception_whatsapp, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (hotel_id, bank_name, account_name, account_number, reception_whatsapp, reception_email, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(hotel_id) DO UPDATE SET
             bank_name = excluded.bank_name, account_name = excluded.account_name,
             account_number = excluded.account_number,
             reception_whatsapp = excluded.reception_whatsapp,
+            reception_email = excluded.reception_email,
             updated_at = excluded.updated_at""",
             (
                 hotel_id, settings["bank_name"], settings["account_name"],
                 settings["account_number"], settings["reception_whatsapp"],
-                settings["updated_at"],
+                settings["reception_email"], settings["updated_at"],
             ),
         )
         get_db().commit()
+
+
+def send_reception_booking_email(recipient, hotel_name, reference, guest_name,
+                                 guest_email, guest_phone, room_number,
+                                 check_in, check_out, amount):
+    host = os.getenv("SMTP_HOST", "").strip()
+    sender = os.getenv("SMTP_FROM_EMAIL", "").strip()
+    if not host or not sender:
+        raise ValueError("SMTP_HOST and SMTP_FROM_EMAIL must be configured.")
+    try:
+        port = int(os.getenv("SMTP_PORT", "587"))
+    except ValueError as error:
+        raise ValueError("SMTP_PORT must be a valid port number.") from error
+    if not 1 <= port <= 65535:
+        raise ValueError("SMTP_PORT must be between 1 and 65535.")
+
+    username = os.getenv("SMTP_USERNAME", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    if bool(username) != bool(password):
+        raise ValueError("Configure both SMTP_USERNAME and SMTP_PASSWORD.")
+
+    reception_url = url_for(
+        "reference_workspace", role="reception", page="online", _external=True
+    )
+    message = EmailMessage()
+    message["Subject"] = f"Online booking request {reference} - {hotel_name}"
+    message["From"] = sender
+    message["To"] = recipient
+    message.set_content(
+        f"""A guest submitted an online room booking request for {hotel_name}.
+
+Booking reference: {reference}
+Guest: {guest_name}
+Guest email: {guest_email}
+Guest phone: {guest_phone}
+Room: {room_number}
+Stay: {check_in} to {check_out}
+Amount due: NGN {amount:,.0f}
+
+The room is held for {ONLINE_HOLD_MINUTES} minutes pending transfer verification.
+Sign in as Reception and open Online Requests to review the request. Verify
+payment before confirming the reservation:
+{reception_url}
+"""
+    )
+
+    timeout = 15
+    context = ssl.create_default_context()
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=timeout, context=context) as smtp:
+            if username:
+                smtp.login(username, password)
+            smtp.send_message(message)
+    else:
+        with smtplib.SMTP(host, port, timeout=timeout) as smtp:
+            smtp.ehlo()
+            smtp.starttls(context=context)
+            smtp.ehlo()
+            if username:
+                smtp.login(username, password)
+            smtp.send_message(message)
 
 
 def save_online_room_listing(room_number, form):
@@ -926,9 +1005,12 @@ def create_online_booking(form):
         raise ValueError("Choose a hotel that is currently accepting bookings.")
     settings = online_booking_settings(public=True, hotel_id=hotel_id)
     if not all(settings.get(key) for key in (
-        "bank_name", "account_name", "account_number", "reception_whatsapp"
+        "bank_name", "account_name", "account_number", "reception_whatsapp",
+        "reception_email",
     )):
-        raise ValueError("Online booking is not available yet. Please contact the hotel.")
+        raise ValueError(
+            "Online booking setup is incomplete. Please contact the hotel."
+        )
     available = available_online_rooms(check_in, check_out, hotel_id=hotel_id)
     room = next((item for item in available if item["number"] == room_number), None)
     if not room:
@@ -989,12 +1071,33 @@ def create_online_booking(form):
         )
         reservation_id = cursor.lastrowid
         db.commit()
+    amount = (check_out - check_in).days * room["rate"]
+    try:
+        send_reception_booking_email(
+            settings["reception_email"],
+            hotel["name"],
+            str(reservation_id),
+            guest_name,
+            email,
+            phone,
+            room_number,
+            check_in.isoformat(),
+            check_out.isoformat(),
+            amount,
+        )
+        email_notification_sent = True
+    except (OSError, smtplib.SMTPException, ValueError):
+        app.logger.exception(
+            "Could not email Reception about online booking %s for hotel %s",
+            reservation_id, hotel_id,
+        )
+        email_notification_sent = False
     message = (
         f"Hello, I submitted online booking request {reservation_id} for "
         f"{hotel['name']}, "
         f"{guest_name}, room {room_number}, {check_in.isoformat()} to "
         f"{check_out.isoformat()}. I am sending the bank transfer for "
-        f"NGN {(check_out - check_in).days * room['rate']:,.0f}. "
+        f"NGN {amount:,.0f}. "
         "Please confirm once received."
     )
     wa_number = re.sub(r"\D", "", settings["reception_whatsapp"])
@@ -1007,11 +1110,12 @@ def create_online_booking(form):
         "room_type": room["type"],
         "check_in": check_in.isoformat(),
         "check_out": check_out.isoformat(),
-        "amount": (check_out - check_in).days * room["rate"],
+        "amount": amount,
         "bank_name": settings["bank_name"],
         "account_name": settings["account_name"],
         "account_number": settings["account_number"],
         "hold_expires_at": hold_expires_at,
+        "email_notification_sent": email_notification_sent,
         "whatsapp_url": f"https://wa.me/{wa_number}?{urlencode({'text': message})}",
     }
     return reservation_id
@@ -1560,8 +1664,31 @@ def manage_online_room(room_number):
 @app.post("/online-bookings/<reservation_id>/confirm")
 def confirm_online_booking_route(reservation_id):
     try:
+        if SUPABASE_ENABLED:
+            reservations = get_request_supabase().table("reservations").select(
+                "check_in"
+            ).eq("hotel_id", current_hotel_id()).eq(
+                "id", reservation_id
+            ).eq("status", "pending_payment").limit(1).execute().data
+            reservation = reservations[0] if reservations else None
+        else:
+            reservation = get_db().execute(
+                """SELECT check_in FROM reservations
+                WHERE hotel_id = ? AND id = ? AND status = 'pending_payment'""",
+                (current_hotel_id(), reservation_id),
+            ).fetchone()
+        if not reservation:
+            raise ValueError(
+                "This online request is no longer awaiting confirmation."
+            )
         confirm_online_booking(reservation_id, session.get("username", "Reception"))
         flash(f"Online booking {reservation_id} confirmed and payment recorded.", "success")
+        return redirect(url_for(
+            "reference_workspace",
+            role="reception",
+            page="calendar",
+            reference_date=reservation["check_in"],
+        ))
     except ValueError as error:
         flash(str(error), "error")
     return redirect(url_for("reference_workspace", role="reception", page="online"))
@@ -1755,6 +1882,7 @@ def manager_signup():
                         "account_name": "",
                         "account_number": "",
                         "reception_whatsapp": "",
+                        "reception_email": "",
                         "updated_at": now_iso(),
                     }).execute()
                 supabase_admin.table("hotels").update({
@@ -2335,7 +2463,7 @@ def reference_workspace(role, page):
                 action = request.form.get("action")
                 if action == "settings":
                     save_online_booking_settings(request.form)
-                    flash("Online payment and WhatsApp details saved.", "success")
+                    flash("Online payment and Reception contact details saved.", "success")
                 elif action == "listing":
                     room_number = request.form.get("room_number", "").strip()
                     save_online_room_listing(room_number, request.form)
