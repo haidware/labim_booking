@@ -7,11 +7,13 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='reference.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='reference_match.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='icons.css') }}">
 </head>
 <body class="reference-app">
+  {% include '_icons.html' %}
   <header class="reference-header">
     <div><strong><span class="brand-prefix">HAIDWARE</span> <span class="brand-title">HOTEL BOOKING PLATFORM</span></strong><span>{{ hotel_name or 'Register your hotel' }}</span><small>Manager</small></div>
-    <nav class="header-nav"><a href="{{ url_for('reference_workspace', role='manager', page='dashboard') }}">🏨 Operational Overview</a><a href="{{ url_for('reference_workspace', role='manager', page='bookings') }}">📅 Bookings</a><a href="{{ url_for('reference_workspace', role='manager', page='finance') }}">📊 Finance</a><a href="{{ url_for('logout') }}">Log Out</a></nav>
+    <nav class="header-nav"><a href="{{ url_for('reference_workspace', role='manager', page='dashboard') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-hotel"></use></svg>Operational Overview</a><a href="{{ url_for('reference_workspace', role='manager', page='bookings') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg>Bookings</a><a href="{{ url_for('reference_workspace', role='manager', page='finance') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-finance"></use></svg>Finance</a><a href="{{ url_for('logout') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-logout"></use></svg>Log Out</a></nav>
   </header>
   <div class="reference-layout">
     <aside class="reference-sidebar"><a href="{{ url_for('reference_workspace', role='manager', page='dashboard') }}">Dashboard</a><a href="{{ url_for('reference_workspace', role='manager', page='rooms') }}">Rooms</a><a href="{{ url_for('reference_workspace', role='manager', page='bookings') }}">Bookings</a><a href="{{ url_for('reference_workspace', role='manager', page='finance') }}">Booking Finance</a><a class="active" href="{{ url_for('manager_signup') }}">Team Accounts</a></aside>

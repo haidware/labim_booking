@@ -8,17 +8,19 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='icons.css') }}">
 </head>
 <body class="entry-page">
+  {% include '_icons.html' %}
   <main class="entry-panel">
     <h1>HAIDWARE HOTEL BOOKING PLATFORM</h1>
     <p class="entry-subtitle">Book a stay, register your hotel, or choose a workspace</p>
     <p><a class="public-booking-link" href="{{ url_for('public_booking') }}">Explore rooms and book online</a></p>
     <p><a href="{{ url_for('manager_signup') }}">Hotel Manager? Register your hotel</a></p>
     <div class="workspace-cards">
-      <a class="workspace-card" href="{{ url_for('login', role='director') }}"><span class="workspace-icon director">📊</span><strong>Director</strong></a>
-      <a class="workspace-card" href="{{ url_for('login', role='manager') }}"><span class="workspace-icon manager">🏨</span><strong>Manager</strong></a>
-      <a class="workspace-card" href="{{ url_for('login', role='reception') }}"><span class="workspace-icon reception">🛎️</span><strong>Reception</strong></a>
+      <a class="workspace-card" href="{{ url_for('login', role='director') }}"><span class="workspace-icon director"><svg aria-hidden="true"><use href="#icon-chart"></use></svg></span><strong>Director</strong></a>
+      <a class="workspace-card" href="{{ url_for('login', role='manager') }}"><span class="workspace-icon manager"><svg aria-hidden="true"><use href="#icon-hotel"></use></svg></span><strong>Manager</strong></a>
+      <a class="workspace-card" href="{{ url_for('login', role='reception') }}"><span class="workspace-icon reception"><svg aria-hidden="true"><use href="#icon-reception"></use></svg></span><strong>Reception</strong></a>
     </div>
   </main>
 </body>

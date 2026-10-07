@@ -1,0 +1,12 @@
+.icon-library{position:absolute;width:0;height:0;overflow:hidden}
+.entry-panel{width:min(100%,760px)}
+.workspace-cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.workspace-card{min-height:64px;padding:15px}
+.workspace-icon svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.nav-item .nav-icon{display:inline-flex;flex:none;align-items:center;justify-content:center;width:18px;height:18px}
+.nav-icon svg{display:block;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.icon-button{display:inline-grid;place-items:center;width:36px;height:36px;padding:7px;cursor:pointer}
+.icon-button svg{display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.header-nav a{display:inline-flex;align-items:center;gap:6px}
+.header-icon{flex:none;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+@media(max-width:620px){.entry-panel{width:min(100%,470px)}.workspace-cards{grid-template-columns:1fr}.workspace-card{min-height:60px}}

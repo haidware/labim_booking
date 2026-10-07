@@ -8,17 +8,19 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='icons.css') }}">
 </head>
 <body>
+  {% include '_icons.html' %}
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="{{ url_for('dashboard', role=active_role) }}"><span class="brand-mark">L</span><span>labim<span class="brand-muted">/</span>booking</span></a>
       <div class="workspace-label">Workspace</div>
       <nav>
-        <a class="nav-item {% if request.endpoint == 'dashboard' %}selected{% endif %}" href="{{ url_for('dashboard', role=active_role) }}"><span>◫</span> Overview</a>
-        <a class="nav-item {% if request.endpoint in ['reservations', 'new_reservation'] %}selected{% endif %}" href="{{ url_for('reservations', role=active_role) }}"><span>▤</span> Reservations</a>
-        <a class="nav-item" href="{{ url_for('dashboard', role=active_role) }}#rooms"><span>□</span> Rooms</a>
-        <a class="nav-item" href="{{ url_for('dashboard', role=active_role) }}#payments"><span>◌</span> Payments</a>
+        <a class="nav-item {% if request.endpoint == 'dashboard' %}selected{% endif %}" href="{{ url_for('dashboard', role=active_role) }}"><span class="nav-icon"><svg aria-hidden="true"><use href="#icon-dashboard"></use></svg></span> Overview</a>
+        <a class="nav-item {% if request.endpoint in ['reservations', 'new_reservation'] %}selected{% endif %}" href="{{ url_for('reservations', role=active_role) }}"><span class="nav-icon"><svg aria-hidden="true"><use href="#icon-calendar"></use></svg></span> Reservations</a>
+        <a class="nav-item" href="{{ url_for('dashboard', role=active_role) }}#rooms"><span class="nav-icon"><svg aria-hidden="true"><use href="#icon-rooms"></use></svg></span> Rooms</a>
+        <a class="nav-item" href="{{ url_for('dashboard', role=active_role) }}#payments"><span class="nav-icon"><svg aria-hidden="true"><use href="#icon-finance"></use></svg></span> Payments</a>
       </nav>
       <div class="sidebar-bottom">
         <div class="live-indicator"><i></i> {{ 'Supabase' if config.get('SUPABASE_ENABLED') else 'Local database' }} workspace</div>
@@ -28,7 +30,7 @@
     <main class="main-content">
       <header class="topbar">
         <div class="mobile-brand">labim<span>/</span>booking</div>
-        <div class="topbar-actions"><span class="date-label">{{ today }}</span><button class="icon-button" aria-label="Notifications">♧</button><button class="avatar avatar-small">{{ session.get('username', active_role)|first|upper }}</button></div>
+        <div class="topbar-actions"><span class="date-label">{{ today }}</span><button class="icon-button" aria-label="Notifications"><svg aria-hidden="true"><use href="#icon-bell"></use></svg></button><button class="avatar avatar-small">{{ session.get('username', active_role)|first|upper }}</button></div>
       </header>
       <div class="page-content">
         {% with messages = get_flashed_messages(with_categories=true) %}
