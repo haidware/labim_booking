@@ -1,0 +1,10 @@
+.hotel-location-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;border:1px solid #dbe3e8;border-radius:6px;padding:14px}
+.hotel-location-fields legend{padding:0 6px;color:#245568;font-size:12px;font-weight:700}
+.hotel-location-fields label{min-width:0;color:#526e78;font-size:12px}
+.hotel-location-fields label:first-of-type{grid-column:1/-1}
+.hotel-location-fields input,.hotel-location-fields select,.hotel-location-filter input,.hotel-location-filter select{display:block;width:100%;margin-top:6px;padding:10px;border:1px solid #cbdce1;border-radius:4px;background:#fff;color:#294f5e;font:inherit}
+.hotel-location-filter{display:flex;align-items:end;flex-wrap:wrap;gap:12px;margin:22px 0;padding:16px;border:1px solid #dbe3e8;border-radius:7px;background:#fff}
+.hotel-location-filter label{flex:1;min-width:190px;color:#526e78;font-size:12px}
+.hotel-filter-clear{padding:10px 4px;color:#17607a;font-size:12px;font-weight:700}
+.public-hotel-location{color:#71838c;font-size:13px}
+@media(max-width:650px){.hotel-location-fields{grid-template-columns:1fr}.hotel-location-fields label:first-of-type{grid-column:auto}.hotel-location-filter{align-items:stretch;flex-direction:column}.hotel-location-filter>*{width:100%}}

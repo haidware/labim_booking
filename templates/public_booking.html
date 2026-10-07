@@ -6,6 +6,7 @@
   <title>Book a Room · HAIDWARE Hotel Platform</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='reference.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='hotel-location.css') }}">
 </head>
 <body class="public-booking-page">
   <header class="public-booking-header">
@@ -19,17 +20,24 @@
       {% for category, message in messages %}<div class="account-error">{{ message }}</div>{% endfor %}
     {% endwith %}
     {% if not selected_hotel %}
+    <form class="hotel-location-filter" method="get" action="{{ url_for('public_booking') }}">
+      <label>State / FCT<select name="state"><option value="">All states</option>{% for state_name in nigerian_states %}<option value="{{ state_name }}" {% if selected_state == state_name %}selected{% endif %}>{{ state_name }}</option>{% endfor %}</select></label>
+      <label>City<input type="search" name="city" value="{{ city_query }}" placeholder="Search by city" maxlength="100"></label>
+      <button class="primary-button" type="submit">Find hotels</button>
+      {% if selected_state or city_query %}<a class="hotel-filter-clear" href="{{ url_for('public_booking') }}">Clear filters</a>{% endif %}
+    </form>
     {% if hotels %}
     <section class="public-hotel-grid" aria-label="Available hotels">
       {% for hotel in hotels %}
       <a class="public-hotel-card" href="{{ url_for('public_booking', hotel=hotel.slug) }}">
         <span class="public-hotel-card-name">{{ hotel.name }}</span>
+        <span class="public-hotel-location">{{ hotel.address }}{% if hotel.address and (hotel.city or hotel.state) %} · {% endif %}{{ hotel.city }}{% if hotel.city and hotel.state %}, {% endif %}{{ hotel.state }}</span>
         <span class="public-hotel-card-action">View rooms and availability</span>
       </a>
       {% endfor %}
     </section>
     {% else %}
-    <section class="public-no-rooms"><h2>No hotels are currently listed</h2><p>Please check back later.</p></section>
+    <section class="public-no-rooms"><h2>{{ 'No hotels match those location filters' if selected_state or city_query else 'No hotels are currently listed' }}</h2><p>{% if selected_state or city_query %}Try another state or city, or clear the filters.{% else %}Please check back later.{% endif %}</p></section>
     {% endif %}
     {% else %}
     <p class="selected-hotel-name">Booking at <strong>{{ selected_hotel.name }}</strong> · <a href="{{ url_for('public_booking') }}">Choose a different hotel</a></p>

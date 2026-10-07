@@ -35,9 +35,14 @@ class MultiHotelFlowTests(unittest.TestCase):
         sys.path.remove(str(cls.app_directory))
         cls.temp_directory.cleanup()
 
-    def register_hotel(self, client, name, username_suffix):
+    def register_hotel(
+        self, client, name, username_suffix, address, city, state
+    ):
         response = client.post("/signup/manager", data={
             "hotel_name": name,
+            "hotel_address": address,
+            "hotel_city": city,
+            "hotel_state": state,
             "manager_username": f"manager-{username_suffix}",
             "manager_password": "ManagerPass123!",
             "director_username": f"director-{username_suffix}",
@@ -86,7 +91,8 @@ class MultiHotelFlowTests(unittest.TestCase):
     def test_signup_guest_selection_booking_and_staff_isolation(self):
         hotel_one_manager = self.app_module.app.test_client()
         hotel_one_id = self.register_hotel(
-            hotel_one_manager, "Labim Test Hotel", "one"
+            hotel_one_manager, "Labim Test Hotel", "one",
+            "1 Beach Road", "Lagos", "Lagos",
         )
         self.configure_online_booking(
             hotel_one_manager, hotel_one_id, "Standard", 50000
@@ -94,12 +100,20 @@ class MultiHotelFlowTests(unittest.TestCase):
 
         hotel_two_manager = self.app_module.app.test_client()
         hotel_two_id = self.register_hotel(
-            hotel_two_manager, "Other Test Hotel", "two"
+            hotel_two_manager, "Other Test Hotel", "two",
+            "14 Independence Avenue", "Enugu", "Enugu",
         )
         self.configure_online_booking(
             hotel_two_manager, hotel_two_id, "Suite", 90000
         )
         self.assertNotEqual(hotel_one_id, hotel_two_id)
+        with self.app_module.app.app_context():
+            hotel_two_location = self.app_module.hotel_details(hotel_two_id)
+            self.assertEqual(
+                (hotel_two_location["address"], hotel_two_location["city"],
+                 hotel_two_location["state"]),
+                ("14 Independence Avenue", "Enugu", "Enugu"),
+            )
         photo_upload = hotel_two_manager.post(
             "/rooms/101/online",
             data={
@@ -148,11 +162,19 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(hotel_directory.status_code, 200)
         self.assertIn(b"Labim Test Hotel", hotel_directory.data)
         self.assertIn(b"Other Test Hotel", hotel_directory.data)
+        self.assertIn(b"14 Independence Avenue", hotel_directory.data)
         self.assertIn(
             f"/book?hotel={hotel_two['slug']}".encode(),
             hotel_directory.data,
         )
         self.assertNotIn(b'<select name="hotel"', hotel_directory.data)
+        filtered_directory = guest.get("/book", query_string={
+            "state": "Enugu",
+            "city": "enu",
+        })
+        self.assertEqual(filtered_directory.status_code, 200)
+        self.assertIn(b"Other Test Hotel", filtered_directory.data)
+        self.assertNotIn(b"Labim Test Hotel", filtered_directory.data)
         search = guest.get("/book", query_string={
             "hotel": hotel_two["slug"],
             "check_in": stay_start,

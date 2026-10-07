@@ -35,6 +35,14 @@ DEFAULT_HOTEL_ID = "00000000-0000-0000-0000-000000000001"
 MAX_ROOM_PHOTO_BYTES = 5 * 1024 * 1024
 MAX_ROOM_PHOTOS = 3
 ALLOWED_ROOM_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+NIGERIAN_STATES = (
+    "Abia", "Adamawa", "Akwa Ibom", "Anambra", "Bauchi", "Bayelsa",
+    "Benue", "Borno", "Cross River", "Delta", "Ebonyi", "Edo", "Ekiti",
+    "Enugu", "Federal Capital Territory", "Gombe", "Imo", "Jigawa",
+    "Kaduna", "Kano", "Katsina", "Kebbi", "Kogi", "Kwara", "Lagos",
+    "Nasarawa", "Niger", "Ogun", "Ondo", "Osun", "Oyo", "Plateau",
+    "Rivers", "Sokoto", "Taraba", "Yobe", "Zamfara",
+)
 load_dotenv(BASE_DIR / ".env")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://frmekmypefrwvocepjmg.supabase.co")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
@@ -123,25 +131,40 @@ def hotel_details(hotel_id=None):
     hotel_id = hotel_id or current_hotel_id()
     if SUPABASE_ENABLED:
         result = get_supabase_admin().table("hotels").select(
-            "id, name, slug"
+            "id, name, slug, address, city, state"
         ).eq("id", hotel_id).limit(1).execute().data
         return result[0] if result else None
     row = get_db().execute(
-        "SELECT id, name, slug FROM hotels WHERE id = ?", (hotel_id,)
+        "SELECT id, name, slug, address, city, state FROM hotels WHERE id = ?",
+        (hotel_id,),
     ).fetchone()
     return dict(row) if row else None
 
 
 def public_hotels():
     if SUPABASE_ENABLED:
-        return get_supabase_admin().table("hotels").select(
-            "id, name, slug"
+        hotels = get_supabase_admin().table("hotels").select(
+            "id, name, slug, address, city, state"
         ).eq("is_active", True).order("name").execute().data
-    return [
-        dict(row) for row in get_db().execute(
-            "SELECT id, name, slug FROM hotels WHERE is_active = 1 ORDER BY name"
-        ).fetchall()
-    ]
+    else:
+        hotels = [
+            dict(row) for row in get_db().execute(
+                """SELECT id, name, slug, address, city, state FROM hotels
+                WHERE is_active = 1 ORDER BY name"""
+            ).fetchall()
+        ]
+    state_filter = request.args.get("state", "").strip()
+    city_filter = request.args.get("city", "").strip().casefold()
+    if state_filter in NIGERIAN_STATES:
+        hotels = [hotel for hotel in hotels if hotel["state"] == state_filter]
+    elif state_filter:
+        hotels = []
+    if city_filter:
+        hotels = [
+            hotel for hotel in hotels
+            if city_filter in (hotel.get("city") or "").casefold()
+        ]
+    return hotels
 
 
 @app.teardown_appcontext
@@ -165,6 +188,9 @@ def init_db():
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             slug TEXT NOT NULL UNIQUE,
+            address TEXT NOT NULL DEFAULT '',
+            city TEXT NOT NULL DEFAULT '',
+            state TEXT NOT NULL DEFAULT '',
             is_active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL
         );
@@ -237,6 +263,14 @@ def init_db():
         );
         """
     )
+    hotel_columns = {
+        column["name"] for column in db.execute("PRAGMA table_info(hotels)")
+    }
+    for column in ("address", "city", "state"):
+        if column not in hotel_columns:
+            db.execute(
+                f"ALTER TABLE hotels ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+            )
     db.execute(
         """INSERT OR IGNORE INTO hotels (id, name, slug, is_active, created_at)
         VALUES (?, 'Labim Hotel and Suite', 'labim-hotel-and-suite', 1, CURRENT_TIMESTAMP)""",
@@ -1705,6 +1739,9 @@ def public_booking():
         rooms = available_online_rooms(
             check_in, check_out, hotel_id=selected_hotel["id"]
         )
+    state_filter = request.args.get("state", "").strip()
+    if state_filter not in NIGERIAN_STATES:
+        state_filter = ""
     return render_template(
         "public_booking.html",
         hotels=hotels,
@@ -1714,6 +1751,9 @@ def public_booking():
         check_out=check_out.isoformat(),
         today=today.isoformat(),
         csrf_token=session["public_booking_csrf"],
+        nigerian_states=NIGERIAN_STATES,
+        selected_state=state_filter,
+        city_query=request.args.get("city", "").strip(),
     )
 
 
@@ -1928,8 +1968,32 @@ def manager_signup():
             ]
     account_map = {profile["role"]: profile["username"] for profile in existing_profiles}
     current_hotel = hotel_details(hotel_id) if editing else None
+    hotel_name = current_hotel["name"] if current_hotel else ""
+    hotel_location = {
+        "address": current_hotel.get("address", "") if current_hotel else "",
+        "city": current_hotel.get("city", "") if current_hotel else "",
+        "state": current_hotel.get("state", "") if current_hotel else "",
+    }
+
+    def render_signup_page(error=None):
+        return render_template(
+            "manager_signup.html",
+            error=error,
+            account_map=account_map,
+            editing=editing,
+            hotel_name=hotel_name,
+            hotel_id=hotel_id,
+            hotel_location=hotel_location,
+            nigerian_states=NIGERIAN_STATES,
+        )
+
     if request.method == "POST":
         hotel_name = request.form.get("hotel_name", "").strip()
+        hotel_location = {
+            "address": request.form.get("hotel_address", "").strip(),
+            "city": request.form.get("hotel_city", "").strip(),
+            "state": request.form.get("hotel_state", "").strip(),
+        }
         fields = {
             "director": (request.form.get("director_username", "").strip(), request.form.get("director_password", "")),
             "reception": (request.form.get("reception_username", "").strip(), request.form.get("reception_password", "")),
@@ -1937,17 +2001,17 @@ def manager_signup():
         if not editing:
             fields["manager"] = (request.form.get("manager_username", "").strip(), request.form.get("manager_password", ""))
         if not 2 <= len(hotel_name) <= 120:
-            return render_template(
-                "manager_signup.html", error="Enter a hotel name between 2 and 120 characters.",
-                account_map=account_map, editing=editing,
-                hotel_name=hotel_name, hotel_id=hotel_id,
+            return render_signup_page("Enter a hotel name between 2 and 120 characters.")
+        if not 3 <= len(hotel_location["address"]) <= 300:
+            return render_signup_page(
+                "Enter a hotel street address between 3 and 300 characters."
             )
+        if not 2 <= len(hotel_location["city"]) <= 100:
+            return render_signup_page("Enter a city between 2 and 100 characters.")
+        if hotel_location["state"] not in NIGERIAN_STATES:
+            return render_signup_page("Choose a valid Nigerian state or the FCT.")
         if any(not username or not password for username, password in fields.values()):
-            return render_template(
-                "manager_signup.html", error="Complete every required hotel team account.",
-                account_map=account_map, editing=editing,
-                hotel_name=hotel_name, hotel_id=hotel_id,
-            )
+            return render_signup_page("Complete every required hotel team account.")
         if SUPABASE_ENABLED:
             try:
                 if editing:
@@ -1964,6 +2028,7 @@ def manager_signup():
                         "id": saved_hotel_id,
                         "name": hotel_name,
                         "slug": hotel_slug_from_name(hotel_name, saved_hotel_id),
+                        **hotel_location,
                         "is_active": True,
                     }).execute()
                     supabase_admin.table("online_booking_settings").upsert({
@@ -1978,6 +2043,7 @@ def manager_signup():
                 supabase_admin.table("hotels").update({
                     "name": hotel_name,
                     "slug": hotel_slug_from_name(hotel_name, saved_hotel_id),
+                    **hotel_location,
                 }).eq("id", saved_hotel_id).execute()
                 existing_by_role = {profile["role"]: profile for profile in existing_profiles}
                 for account_role, (username, password) in fields.items():
@@ -2033,19 +2099,21 @@ def manager_signup():
                 return redirect(url_for("login", role="manager"))
             except Exception:
                 app.logger.exception("Failed to save hotel team accounts")
-                return render_template(
-                    "manager_signup.html",
-                    error="Could not save the hotel accounts. Check usernames and try again.",
-                    account_map=account_map, editing=editing,
-                    hotel_name=hotel_name, hotel_id=hotel_id,
+                return render_signup_page(
+                    "Could not save the hotel accounts. Check usernames and try again."
                 )
         db = get_db()
         try:
             if editing:
                 saved_hotel_id = hotel_id
                 db.execute(
-                    "UPDATE hotels SET name = ?, slug = ? WHERE id = ?",
-                    (hotel_name, hotel_slug_from_name(hotel_name, hotel_id), hotel_id),
+                    """UPDATE hotels SET name = ?, slug = ?, address = ?, city = ?,
+                    state = ? WHERE id = ?""",
+                    (
+                        hotel_name, hotel_slug_from_name(hotel_name, hotel_id),
+                        hotel_location["address"], hotel_location["city"],
+                        hotel_location["state"], hotel_id,
+                    ),
                 )
                 for account_role, (username, password) in fields.items():
                     db.execute(
@@ -2064,12 +2132,17 @@ def manager_signup():
                 ).fetchone():
                     saved_hotel_id = DEFAULT_HOTEL_ID
                 db.execute(
-                    """INSERT INTO hotels (id, name, slug, is_active, created_at)
-                    VALUES (?, ?, ?, 1, ?) ON CONFLICT(id) DO UPDATE SET
-                    name = excluded.name, slug = excluded.slug""",
+                    """INSERT INTO hotels
+                    (id, name, slug, address, city, state, is_active, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+                    ON CONFLICT(id) DO UPDATE SET name = excluded.name,
+                    slug = excluded.slug, address = excluded.address,
+                    city = excluded.city, state = excluded.state""",
                     (
                         saved_hotel_id, hotel_name,
-                        hotel_slug_from_name(hotel_name, saved_hotel_id), now_iso(),
+                        hotel_slug_from_name(hotel_name, saved_hotel_id),
+                        hotel_location["address"], hotel_location["city"],
+                        hotel_location["state"], now_iso(),
                     ),
                 )
                 db.execute(
@@ -2092,17 +2165,9 @@ def manager_signup():
             db.commit()
         except sqlite3.IntegrityError:
             db.rollback()
-            return render_template(
-                "manager_signup.html", error="An account or username already exists.",
-                account_map=account_map, editing=editing,
-                hotel_name=hotel_name, hotel_id=hotel_id,
-            )
+            return render_signup_page("An account or username already exists.")
         return redirect(url_for("login", role="manager"))
-    return render_template(
-        "manager_signup.html", account_map=account_map, editing=editing,
-        hotel_name=current_hotel["name"] if current_hotel else "",
-        hotel_id=hotel_id,
-    )
+    return render_signup_page()
 
 
 def create_reference_booking(form):

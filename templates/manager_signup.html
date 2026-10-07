@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='reference_match.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='icons.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='hotel-location.css') }}">
 </head>
 <body class="reference-app">
   {% include '_icons.html' %}
@@ -22,6 +23,11 @@
       {% if error %}<div class="account-error">{{ error }}</div>{% endif %}
       <section class="data-panel account-panel"><div class="panel-heading"><strong>Hotel and Workspace Credentials</strong><small>Each team can access only its own hotel records</small></div><p class="account-intro">Enter the hotel name guests should see when selecting a place to book online.</p><form class="reference-account-form" method="post">
         <label>Hotel name<input name="hotel_name" value="{{ hotel_name or '' }}" maxlength="120" autocomplete="organization" required></label>
+        <fieldset class="hotel-location-fields"><legend>Hotel location in Nigeria</legend>
+          <label>Street address<input name="hotel_address" value="{{ hotel_location.address }}" maxlength="300" autocomplete="street-address" required></label>
+          <label>City<input name="hotel_city" value="{{ hotel_location.city }}" maxlength="100" autocomplete="address-level2" required></label>
+          <label>State / FCT<select name="hotel_state" autocomplete="address-level1" required><option value="">Select a state</option>{% for state_name in nigerian_states %}<option value="{{ state_name }}" {% if hotel_location.state == state_name %}selected{% endif %}>{{ state_name }}</option>{% endfor %}</select></label>
+        </fieldset>
         {% if not editing %}<fieldset><legend>Manager login</legend><label>Username / Staff ID<input name="manager_username" autocomplete="username" required></label><label>Password<input name="manager_password" type="password" autocomplete="new-password" required></label></fieldset>{% endif %}{% for role_name, label in [('director','Director'),('reception','Reception')] %}<fieldset><legend>{{ label }} login</legend><label>Username / Staff ID<input name="{{ role_name }}_username" value="{{ account_map.get(role_name, '') if account_map else '' }}" autocomplete="username" required></label><label>Password<input name="{{ role_name }}_password" type="password" autocomplete="new-password" required></label></fieldset>{% endfor %}
         <div class="account-actions"><span>Passwords are protected by the authentication layer and are never displayed.</span><button class="primary-button" type="submit">{{ 'Save hotel and team changes' if editing else 'Register hotel and create accounts' }}</button></div>
       </form></section>
