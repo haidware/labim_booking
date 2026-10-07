@@ -51,7 +51,7 @@
       <div class="public-room-grid">
         {% for room in rooms %}
         <label class="public-room-card">
-          {% if room.photo_url %}<img src="{{ room.photo_url }}" alt="Photo of Room {{ room.number }}">{% else %}<div class="public-room-no-photo">Photo unavailable</div>{% endif %}
+          {% if room.photo_urls %}<div class="public-room-photo-gallery">{% for photo_url in room.photo_urls %}<img src="{{ photo_url }}" alt="Photo {{ loop.index }} of Room {{ room.number }}">{% endfor %}</div>{% else %}<div class="public-room-no-photo">Photo unavailable</div>{% endif %}
           <span class="public-room-info">
             <strong>{{ room.type }} · Room {{ room.number }}</strong>
             <small>{{ room.beds }} bed{{ '' if room.beds == 1 else 's' }} · ₦{{ '{:,.0f}'.format(room.rate) }} per night</small>

@@ -40,7 +40,7 @@
       {% elif page == 'rooms' %}
       <h1>Rooms</h1><p>{{ 'Executive room status view.' if role == 'director' else 'Register rooms and monitor their availability.' if role == 'manager' else 'Booked, occupied, cleaning, available and unavailable rooms.' }}</p>
       {% if role == 'manager' %}
-      <section class="data-panel room-registration"><div class="panel-heading"><strong>Register a Room</strong><small>New rooms start as available</small></div><form class="room-register-form" method="post">
+      <section class="data-panel room-registration"><div class="panel-heading"><strong>Register a Room</strong><small>New rooms start unavailable until Reception marks them available</small></div><form class="room-register-form" method="post">
         <label>Room number<input name="number" required maxlength="30" placeholder="e.g. 101"></label>
         <label>Room type<input name="name" required maxlength="80" placeholder="e.g. Standard"></label>
         <label>Beds<input name="beds" type="number" min="1" step="1" required></label>
@@ -60,7 +60,7 @@
       <section class="data-panel"><div class="panel-heading"><strong>Booking Records</strong></div>{% include 'reference_bookings.html' %}</section>
 
       {% elif role == 'manager' and page == 'online-settings' %}
-      <h1>Online Booking Setup</h1><p>Choose which rooms guests can book online, and configure transfer and Reception contact details.</p>
+      <h1>Online Booking Setup</h1><p>Maintain guest-facing room photos and descriptions, configure transfer and Reception contact details. Reception controls which rooms are available to guests.</p>
       <section class="data-panel"><div class="panel-heading"><strong>Guest booking link for {{ hotel_name }}</strong><small>Guests can also browse and select your hotel from the platform booking page.</small></div><p><a href="{{ url_for('public_booking', hotel=hotel_slug) }}" target="_blank" rel="noopener noreferrer">{{ request.url_root }}book?hotel={{ hotel_slug }}</a></p></section>
       <section class="data-panel">
         <div class="panel-heading"><strong>Payment details and Reception notifications</strong><small>Guests receive the transfer details; Reception receives new booking requests by email.</small></div>
@@ -75,23 +75,22 @@
         </form>
       </section>
       <section class="data-panel">
-        <div class="panel-heading"><strong>Publish rooms online</strong><small>A photo is required before publishing</small></div>
+        <div class="panel-heading"><strong>Room photos and guest descriptions</strong><small>Upload one to three photos; saving a new set replaces the current gallery. Reception controls availability; guests only see available rooms without a date conflict.</small></div>
         <div class="online-room-listings">
           {% for room in online_listings %}
           <article class="online-room-manager-card">
             <div><strong>Room {{ room.number }} · {{ room.type }}</strong><small>{{ room.beds }} bed{{ '' if room.beds == 1 else 's' }} · ₦{{ '{:,.0f}'.format(room.rate) }} per night</small>
-              {% if room.photo_url %}<img src="{{ room.photo_url }}" alt="Room {{ room.number }} photo">{% else %}<p>No room photo uploaded.</p>{% endif %}
+              {% if room.photo_urls %}<div class="online-room-photo-gallery">{% for photo_url in room.photo_urls %}<img src="{{ photo_url }}" alt="Room {{ room.number }} photo {{ loop.index }}">{% endfor %}</div>{% else %}<p>No room photos uploaded.</p>{% endif %}
             </div>
             <form class="online-settings-form" method="post">
               <input type="hidden" name="action" value="listing">
               <input type="hidden" name="room_number" value="{{ room.number }}">
               <label>Guest-facing description<textarea name="description" rows="4" maxlength="1200">{{ room.description }}</textarea></label>
-              <label class="online-publish-toggle"><input type="checkbox" name="enabled" {% if room.enabled %}checked{% endif %}> Show this room in public search</label>
-              <button class="secondary-button" type="submit">Save room listing</button>
+              <button class="secondary-button" type="submit">Save description</button>
             </form>
             <form class="online-photo-upload" method="post" enctype="multipart/form-data" action="{{ url_for('manage_online_room', room_number=room.number) }}">
-              <label>Room photo (JPG, PNG, or WebP; max 5 MB)<input type="file" name="photo" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required></label>
-              <button class="secondary-button" type="submit">Upload photo</button>
+              <label>Room photos (1–3 JPG, PNG, or WebP images; max 5 MB each)<input type="file" name="photos" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple required></label>
+              <button class="secondary-button" type="submit">Save room photos</button>
             </form>
           </article>
           {% else %}<p class="empty-state">Register rooms before publishing them online.</p>{% endfor %}
@@ -181,7 +180,7 @@
       </div></section>
 
       {% elif role == 'reception' and page == 'roomstatus' %}
-      <h1>Room Status</h1><p>Update room availability and housekeeping state.</p><section class="data-panel"><div class="panel-heading"><strong>Room Status Management</strong></div>{% include 'reference_rooms.html' %}</section>
+      <h1>Room Status</h1><p>Update room availability and housekeeping state. Only rooms marked Available and free on the guest’s selected dates appear online.</p><section class="data-panel"><div class="panel-heading"><strong>Room Status Management</strong></div>{% include 'reference_rooms.html' %}</section>
 
       {% elif role == 'reception' and page == 'payments' %}
       <h1>Payments</h1><p>Record and review guest payments.</p>

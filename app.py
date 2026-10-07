@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta
 from email.message import EmailMessage
 from functools import lru_cache
 import hmac
+import json
 import os
 from pathlib import Path
 import re
@@ -32,6 +33,7 @@ ROOM_PHOTO_BUCKET = "room-photos"
 ONLINE_HOLD_MINUTES = 30
 DEFAULT_HOTEL_ID = "00000000-0000-0000-0000-000000000001"
 MAX_ROOM_PHOTO_BYTES = 5 * 1024 * 1024
+MAX_ROOM_PHOTOS = 3
 ALLOWED_ROOM_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 load_dotenv(BASE_DIR / ".env")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://frmekmypefrwvocepjmg.supabase.co")
@@ -51,7 +53,9 @@ app.config["SUPABASE_ENABLED"] = SUPABASE_ENABLED
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = bool(os.getenv("RAILWAY_ENVIRONMENT"))
-app.config["MAX_CONTENT_LENGTH"] = MAX_ROOM_PHOTO_BYTES + 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = (
+    MAX_ROOM_PHOTOS * MAX_ROOM_PHOTO_BYTES + 1024 * 1024
+)
 
 
 class SupabaseSessionExpired(Exception):
@@ -217,6 +221,7 @@ def init_db():
             room_number TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
             photo_path TEXT NOT NULL DEFAULT '',
+            photo_paths TEXT NOT NULL DEFAULT '[]',
             enabled INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT NOT NULL,
             PRIMARY KEY (hotel_id, room_number)
@@ -314,6 +319,12 @@ def init_db():
             FROM online_room_listings_legacy"""
         )
         db.execute("DROP TABLE online_room_listings_legacy")
+    if "photo_paths" not in {
+        column[1] for column in db.execute("PRAGMA table_info(online_room_listings)")
+    }:
+        db.execute(
+            "ALTER TABLE online_room_listings ADD COLUMN photo_paths TEXT NOT NULL DEFAULT '[]'"
+        )
     settings_info = list(db.execute("PRAGMA table_info(online_booking_settings)"))
     if "hotel_id" not in {column[1] for column in settings_info}:
         db.execute("ALTER TABLE online_booking_settings RENAME TO online_booking_settings_legacy")
@@ -640,19 +651,42 @@ def online_room_listings(manager=False, hotel_id=None):
     result = []
     for room in rooms:
         listing = listing_by_room.get(room["number"])
+        photo_paths = room_photo_paths(listing)
         if manager:
             result.append({
                 **room,
                 "description": listing["description"] if listing else "",
-                "photo_path": listing["photo_path"] if listing else "",
-                "enabled": bool(listing and listing["enabled"]),
-                "photo_url": online_photo_url(
-                    listing["photo_path"] if listing else ""
-                ),
+                "photo_paths": photo_paths,
+                "photo_urls": [online_photo_url(path) for path in photo_paths],
+                "photo_url": online_photo_url(photo_paths[0]) if photo_paths else "",
+                "enabled": bool(listing and listing["enabled"] and photo_paths),
             })
         elif listing:
-            result.append({**room, **listing})
+            result.append({
+                **room,
+                **listing,
+                "photo_paths": photo_paths,
+                "photo_urls": [online_photo_url(path) for path in photo_paths],
+            })
     return result
+
+
+def room_photo_paths(listing):
+    if not listing:
+        return []
+    photo_paths = listing.get("photo_paths") or []
+    if isinstance(photo_paths, str):
+        try:
+            photo_paths = json.loads(photo_paths)
+        except json.JSONDecodeError:
+            photo_paths = []
+    if not isinstance(photo_paths, list):
+        photo_paths = []
+    paths = []
+    for path in [listing.get("photo_path", ""), *photo_paths]:
+        if path and path not in paths:
+            paths.append(path)
+    return paths[:MAX_ROOM_PHOTOS]
 
 
 def online_photo_url(photo_path):
@@ -671,7 +705,9 @@ def available_online_rooms(check_in, check_out, hotel_id=None):
     listings = online_room_listings(hotel_id=hotel_id)
     available = []
     for room in listings:
-        if room["status"].lower() in {"unavailable", "cleaning"}:
+        if room["status"].lower() != "available":
+            continue
+        if not room.get("photo_urls"):
             continue
         if SUPABASE_ENABLED:
             stays = get_supabase_admin().table("reservations").select(
@@ -700,7 +736,6 @@ def available_online_rooms(check_in, check_out, hotel_id=None):
                 collision = True
                 break
         if not collision:
-            room["photo_url"] = online_photo_url(room.get("photo_path", ""))
             available.append(room)
     return available
 
@@ -834,67 +869,79 @@ def save_online_room_listing(room_number, form):
     description = form.get("description", "").strip()
     if len(description) > 1200:
         raise ValueError("Room description must be 1,200 characters or fewer.")
-    enabled = form.get("enabled") == "on"
     if SUPABASE_ENABLED:
         client = get_request_supabase()
-        old = client.table("online_room_listings").select("photo_path").eq(
+        old = client.table("online_room_listings").select(
+            "photo_path, photo_paths"
+        ).eq(
             "hotel_id", hotel_id
         ).eq("room_number", room_number
         ).limit(1).execute().data
-        if enabled and (not old or not old[0].get("photo_path")):
-            raise ValueError("Upload a room photo before publishing this room.")
+        photo_paths = room_photo_paths(old[0] if old else None)
         client.table("online_room_listings").upsert({
             "hotel_id": hotel_id,
             "room_number": room_number,
             "description": description,
-            "enabled": enabled,
+            "photo_path": photo_paths[0] if photo_paths else "",
+            "photo_paths": photo_paths,
+            "enabled": bool(photo_paths),
             "updated_at": now_iso(),
         }).execute()
     else:
         db = get_db()
         old = db.execute(
-            "SELECT photo_path FROM online_room_listings WHERE hotel_id = ? AND room_number = ?",
+            "SELECT photo_path, photo_paths FROM online_room_listings WHERE hotel_id = ? AND room_number = ?",
             (hotel_id, room_number),
         ).fetchone()
-        if enabled and (not old or not old["photo_path"]):
-            raise ValueError("Upload a room photo before publishing this room.")
+        photo_paths = room_photo_paths(dict(old) if old else None)
         db.execute(
             """INSERT INTO online_room_listings
-            (hotel_id, room_number, description, enabled, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            (hotel_id, room_number, description, photo_path, photo_paths, enabled, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(hotel_id, room_number) DO UPDATE SET description = excluded.description,
+            photo_path = excluded.photo_path, photo_paths = excluded.photo_paths,
             enabled = excluded.enabled, updated_at = excluded.updated_at""",
-            (hotel_id, room_number, description, int(enabled), now_iso()),
+            (
+                hotel_id, room_number, description,
+                photo_paths[0] if photo_paths else "",
+                json.dumps(photo_paths), int(bool(photo_paths)), now_iso(),
+            ),
         )
         db.commit()
 
 
-def save_room_photo(room_number, uploaded_file):
-    if not uploaded_file or not uploaded_file.filename:
-        raise ValueError("Choose a room photo to upload.")
-    safe_name = secure_filename(uploaded_file.filename)
-    extension = Path(safe_name).suffix.lower()
-    if extension not in ALLOWED_ROOM_PHOTO_EXTENSIONS:
-        raise ValueError("Use a JPG, PNG, or WebP room photo.")
-    content = uploaded_file.stream.read(MAX_ROOM_PHOTO_BYTES + 1)
-    if not content or len(content) > MAX_ROOM_PHOTO_BYTES:
-        raise ValueError("Room photos must be between 1 byte and 5 MB.")
+def save_room_photos(room_number, uploaded_files):
+    uploads = [uploaded for uploaded in uploaded_files if uploaded and uploaded.filename]
+    if not uploads:
+        raise ValueError("Choose one to three room photos to upload.")
+    if len(uploads) > MAX_ROOM_PHOTOS:
+        raise ValueError(f"Upload no more than {MAX_ROOM_PHOTOS} room photos.")
     expected_types = {
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
         ".png": "image/png",
         ".webp": "image/webp",
     }
-    if uploaded_file.mimetype != expected_types[extension]:
-        raise ValueError("The selected photo's file type does not match its extension.")
-    valid_signature = (
-        extension in {".jpg", ".jpeg"} and content.startswith(b"\xff\xd8\xff")
-        or extension == ".png" and content.startswith(b"\x89PNG\r\n\x1a\n")
-        or extension == ".webp" and content.startswith(b"RIFF")
-        and content[8:12] == b"WEBP"
-    )
-    if not valid_signature:
-        raise ValueError("The selected file is not a valid JPG, PNG, or WebP image.")
+    validated_uploads = []
+    for uploaded_file in uploads:
+        extension = Path(secure_filename(uploaded_file.filename)).suffix.lower()
+        if extension not in ALLOWED_ROOM_PHOTO_EXTENSIONS:
+            raise ValueError("Use JPG, PNG, or WebP room photos.")
+        content = uploaded_file.stream.read(MAX_ROOM_PHOTO_BYTES + 1)
+        if not content or len(content) > MAX_ROOM_PHOTO_BYTES:
+            raise ValueError("Each room photo must be between 1 byte and 5 MB.")
+        if uploaded_file.mimetype != expected_types[extension]:
+            raise ValueError("A selected photo's file type does not match its extension.")
+        valid_signature = (
+            extension in {".jpg", ".jpeg"} and content.startswith(b"\xff\xd8\xff")
+            or extension == ".png" and content.startswith(b"\x89PNG\r\n\x1a\n")
+            or extension == ".webp" and content.startswith(b"RIFF")
+            and content[8:12] == b"WEBP"
+        )
+        if not valid_signature:
+            raise ValueError("A selected file is not a valid JPG, PNG, or WebP image.")
+        validated_uploads.append((extension, content, expected_types[extension]))
+
     hotel_id = current_hotel_id()
     if SUPABASE_ENABLED:
         admin = get_supabase_admin()
@@ -905,27 +952,41 @@ def save_room_photo(room_number, uploaded_file):
         if not room:
             raise ValueError("Room not found.")
         existing = admin.table("online_room_listings").select(
-            "photo_path, description, enabled"
+            "photo_path, photo_paths, description"
         ).eq("hotel_id", hotel_id).eq(
             "room_number", room_number
         ).limit(1).execute().data
-        photo_path = f"{hotel_id}/{uuid4().hex}{extension}"
-        admin.storage.from_(ROOM_PHOTO_BUCKET).upload(
-            photo_path,
-            content,
-            {"content-type": expected_types[extension], "upsert": "true"},
-        )
+        photo_paths = []
+        try:
+            for extension, content, content_type in validated_uploads:
+                photo_path = f"{hotel_id}/{uuid4().hex}{extension}"
+                admin.storage.from_(ROOM_PHOTO_BUCKET).upload(
+                    photo_path,
+                    content,
+                    {"content-type": content_type, "upsert": "true"},
+                )
+                photo_paths.append(photo_path)
+        except Exception:
+            app.logger.exception(
+                "Could not upload room photos for hotel %s room %s",
+                hotel_id, room_number,
+            )
+            if photo_paths:
+                admin.storage.from_(ROOM_PHOTO_BUCKET).remove(photo_paths)
+            raise
         admin.table("online_room_listings").upsert({
             "hotel_id": hotel_id,
             "room_number": room_number,
-            "photo_path": photo_path,
+            "photo_path": photo_paths[0],
+            "photo_paths": photo_paths,
             "description": existing[0]["description"] if existing else "",
-            "enabled": existing[0]["enabled"] if existing else False,
+            "enabled": True,
             "updated_at": now_iso(),
         }).execute()
-        if existing and existing[0].get("photo_path"):
+        old_photo_paths = room_photo_paths(existing[0] if existing else None)
+        if old_photo_paths:
             admin.storage.from_(ROOM_PHOTO_BUCKET).remove(
-                [existing[0]["photo_path"]]
+                old_photo_paths
             )
         return
 
@@ -937,31 +998,47 @@ def save_room_photo(room_number, uploaded_file):
     if not room:
         raise ValueError("Room not found.")
     ROOM_PHOTO_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    photo_path = f"{hotel_id}/{uuid4().hex}{extension}"
-    destination = ROOM_PHOTO_DIRECTORY / photo_path
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(content)
     existing = db.execute(
-        """SELECT description, enabled, photo_path FROM online_room_listings
+        """SELECT description, photo_path, photo_paths FROM online_room_listings
         WHERE hotel_id = ? AND room_number = ?""",
         (hotel_id, room_number),
     ).fetchone()
+    photo_paths = []
+    try:
+        for extension, content, _ in validated_uploads:
+            photo_path = f"{hotel_id}/{uuid4().hex}{extension}"
+            destination = ROOM_PHOTO_DIRECTORY / photo_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(content)
+            photo_paths.append(photo_path)
+    except OSError:
+        app.logger.exception(
+            "Could not save room photos for hotel %s room %s",
+            hotel_id, room_number,
+        )
+        for photo_path in photo_paths:
+            destination = ROOM_PHOTO_DIRECTORY / photo_path
+            if destination.is_file():
+                destination.unlink()
+        raise
     db.execute(
         """INSERT INTO online_room_listings
-        (hotel_id, room_number, description, photo_path, enabled, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(hotel_id, room_number) DO UPDATE SET
-        photo_path = excluded.photo_path, updated_at = excluded.updated_at""",
+        (hotel_id, room_number, description, photo_path, photo_paths, enabled, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(hotel_id, room_number) DO UPDATE SET
+        photo_path = excluded.photo_path, photo_paths = excluded.photo_paths,
+        enabled = excluded.enabled, updated_at = excluded.updated_at""",
         (
             hotel_id, room_number,
             existing["description"] if existing else "",
-            photo_path,
-            existing["enabled"] if existing else 0,
+            photo_paths[0],
+            json.dumps(photo_paths),
+            1,
             now_iso(),
         ),
     )
     db.commit()
-    if existing and existing["photo_path"]:
-        previous = ROOM_PHOTO_DIRECTORY / existing["photo_path"]
+    for previous_path in room_photo_paths(dict(existing) if existing else None):
+        previous = ROOM_PHOTO_DIRECTORY / previous_path
         if previous.is_file():
             previous.unlink()
 
@@ -1033,18 +1110,28 @@ def create_online_booking(form):
                 "p_check_out": check_out.isoformat(),
             }).execute().data
         except APIError as error:
-            if error.code == "P0001" and (
-                error.message
-                and "already has a booking" in error.message
+            if error.code == "P0001" and error.message and (
+                "already has a booking" in error.message
+                or "no longer listed or available" in error.message
             ):
                 raise ValueError(
-                    "That room was just booked for the selected dates."
+                    "That room is no longer available for those dates. "
+                    "Reception may have changed its status or another guest may have booked it."
                 ) from error
             raise
         reservation_id = result[0] if isinstance(result, list) else result
     else:
         db = get_db()
         db.execute("BEGIN IMMEDIATE")
+        room_status = db.execute(
+            "SELECT status FROM rooms WHERE hotel_id = ? AND number = ?",
+            (hotel_id, room_number),
+        ).fetchone()
+        if not room_status or room_status["status"] != "available":
+            db.rollback()
+            raise ValueError(
+                "Reception has changed this room's availability. Choose another room."
+            )
         overlap = db.execute(
             """SELECT 1 FROM reservations WHERE hotel_id = ? AND room_number = ?
             AND status IN ('booked', 'checked_in', 'pending_payment')
@@ -1244,7 +1331,7 @@ def create_reference_room(form):
             "name": name,
             "beds": beds,
             "rate": rate,
-            "status": "available",
+            "status": "unavailable",
         }).execute()
         return
 
@@ -1257,7 +1344,7 @@ def create_reference_room(form):
         raise ValueError("A room with that number is already registered.")
     db.execute(
         """INSERT INTO rooms (number, hotel_id, name, beds, rate, status)
-        VALUES (?, ?, ?, ?, ?, 'available')""",
+        VALUES (?, ?, ?, ?, ?, 'unavailable')""",
         (number, current_hotel_id(), name, beds, rate),
     )
     db.commit()
@@ -1652,8 +1739,11 @@ def online_room_photo(photo_path):
 @app.post("/rooms/<room_number>/online")
 def manage_online_room(room_number):
     try:
-        save_room_photo(room_number, request.files.get("photo"))
-        flash(f"Room photo for {room_number} uploaded.", "success")
+        uploaded_files = request.files.getlist("photos")
+        if not any(uploaded_file.filename for uploaded_file in uploaded_files):
+            uploaded_files = [request.files.get("photo")]
+        save_room_photos(room_number, uploaded_files)
+        flash(f"Room photos for {room_number} uploaded.", "success")
     except ValueError as error:
         flash(str(error), "error")
     return redirect(url_for(

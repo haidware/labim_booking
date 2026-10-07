@@ -65,8 +65,14 @@ alter table public.payments add constraint payments_room_tenant_fkey
   foreign key (hotel_id, room_number) references public.rooms(hotel_id, number);
 
 alter table public.online_room_listings add column if not exists hotel_id uuid;
+alter table public.online_room_listings
+  add column if not exists photo_paths jsonb not null default '[]'::jsonb;
 update public.online_room_listings set hotel_id = '00000000-0000-0000-0000-000000000001'
 where hotel_id is null;
+update public.online_room_listings
+set photo_paths = jsonb_build_array(photo_path), enabled = true
+where coalesce(photo_path, '') <> ''
+  and (photo_paths is null or photo_paths = '[]'::jsonb);
 alter table public.online_room_listings alter column hotel_id set not null;
 alter table public.online_room_listings alter column hotel_id
   set default '00000000-0000-0000-0000-000000000001';
@@ -316,7 +322,8 @@ begin
   where r.hotel_id = p_hotel_id
     and r.number = p_room_number
     and l.enabled
-    and r.status not in ('unavailable', 'cleaning')
+    and r.status = 'available'
+    and coalesce(l.photo_path, '') <> ''
     and exists (
       select 1 from public.hotels h
       where h.id = r.hotel_id and h.is_active

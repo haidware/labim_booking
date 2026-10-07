@@ -15,8 +15,8 @@ Open http://127.0.0.1:5000.
 
 ## Roles
 
-- Reception: create reservations, review and confirm online transfer requests, extend active stays, check guests out, and update payments.
-- Manager: maintain the hotel's identity and its separate Director/Reception accounts; register and edit hotel-owned rooms; manage public room photos and descriptions, bank transfer instructions, and Reception's WhatsApp number; review the booking calendar; and edit or cancel bookings while retaining payment history.
+- Reception: control room status (including when a room is available to online guests), create reservations, review and confirm online transfer requests, extend active stays, check guests out, and update payments.
+- Manager: maintain the hotel's identity and its separate Director/Reception accounts; register and edit hotel-owned rooms; manage one to three guest-facing room photos and descriptions, bank transfer instructions, and Reception contacts; review the booking calendar; and edit or cancel bookings while retaining payment history.
 - Director: review the same operational data with revenue and payment visibility.
 
 Supabase is the production data backend when `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and server-only `SUPABASE_SECRET_KEY` are configured. The secret key is used only by Flask for Manager-managed Auth users; passwords are stored by Supabase Auth, never in public tables. Without those variables, local development falls back to SQLite at `instance/booking_os.sqlite3`.
@@ -29,8 +29,9 @@ Existing SQLite databases are cleaned once at startup: the known sample booking 
 2. Run `supabase_online_booking_migration.sql` to add online listings/settings, the 30-minute pending-payment status, booking RPCs, and the public room-photo bucket.
 3. Run `supabase_multihotel_migration.sql` once. It migrates existing Labim records into the Labim tenant, adds tenant-scoped room, reservation, payment, profile, and online settings, and updates RLS policies.
 4. Run `supabase_reception_email_migration.sql` to add a per-hotel Reception notification email. In Railway variables, configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM_EMAIL`, `SMTP_USERNAME`, and `SMTP_PASSWORD` using credentials from your email provider. Port 465 uses implicit TLS; other ports use STARTTLS. Keep credentials private and out of source control.
-5. In Manager **Online Booking Setup**, save the hotel's bank details, Reception WhatsApp number, and Reception notification email. Publish rooms after uploading a room photo.
-6. Deploy the service. Use **Hotel Manager? Register your hotel** to create a hotel and its Manager, Director, and Reception accounts. Hotel staff access is isolated by hotel. Guests can select a hotel at `/book` or use its hotel-specific link from Manager **Online Booking Setup**. New guest requests send an email notification to the configured Reception email; Reception still signs into **Online Requests**, verifies payment, and confirms the booking in the app.
+5. Run `supabase_reception_room_availability_migration.sql` to add support for up to three room photos and require Reception-marked available rooms in the online booking RPC.
+6. In Manager **Online Booking Setup**, save the hotel's bank details, Reception WhatsApp number, and Reception notification email. Managers upload one to three room photos and maintain guest-facing descriptions. Reception controls room status; only rooms marked **Available** and free on the selected dates are shown to guests.
+7. Deploy the service. Use **Hotel Manager? Register your hotel** to create a hotel and its Manager, Director, and Reception accounts. Hotel staff access is isolated by hotel. Guests can select a hotel at `/book` or use its hotel-specific link from Manager **Online Booking Setup**. New guest requests send an email notification to the configured Reception email; Reception still signs into **Online Requests**, verifies payment, and confirms the booking in the app.
 
 The public Data API must expose the `hotels`, `profiles`, `rooms`, `reservations`, `payments`, `online_room_listings`, and `online_booking_settings` tables. The schema grants authenticated users hotel- and role-scoped access through RLS. All role values used by policies are assigned in Supabase Auth `app_metadata` by the server-side Manager account workflow. The service-only Supabase secret must be configured because it powers guest booking, transfer verification, and room-image storage.
 
@@ -38,7 +39,7 @@ The public Data API must expose the `hotels`, `profiles`, `rooms`, `reservations
 
 1. Create a Railway project and deploy this GitHub repository.
 2. Set `FLASK_SECRET_KEY` to a long random value in the Railway service variables.
-3. Set Supabase and SMTP variables as described above. On an existing database, ensure the base schema and online-booking migration have been applied, then run `supabase_multihotel_migration.sql` and `supabase_reception_email_migration.sql` in Supabase before deploying. Do not use an empty local `supabase_schema.sql` as a schema migration.
+3. Set Supabase and SMTP variables as described above. On an existing database, ensure the base schema and online-booking migration have been applied, then run `supabase_multihotel_migration.sql`, `supabase_reception_email_migration.sql`, and `supabase_reception_room_availability_migration.sql` in Supabase before deploying. Do not use an empty local `supabase_schema.sql` as a schema migration.
 4. After deployment, Managers must save a valid Reception notification email under **Online Booking Setup**. Existing hotels need to save their notification email once after the migration.
 5. Deploy with the included Railway config and Procfile; Gunicorn serves the Flask app and `/health` is the health endpoint.
 
