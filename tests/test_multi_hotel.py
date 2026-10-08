@@ -301,6 +301,29 @@ class MultiHotelFlowTests(unittest.TestCase):
             self.assertEqual(response.data.count(b'class="header-nav"'), 1)
             self.assertNotIn(b'class="reference-sidebar"', response.data)
 
+    def test_online_room_price_ranges_are_non_overlapping(self):
+        rooms = [{"rate": rate} for rate in (
+            9_999, 10_000, 50_000, 50_001, 100_000,
+            100_001, 200_000, 200_001,
+        )]
+        expected_rates = {
+            "10000-50000": [10_000, 50_000],
+            "50000-100000": [50_001, 100_000],
+            "100000-200000": [100_001, 200_000],
+            "200000-plus": [200_001],
+        }
+        for price_range, expected in expected_rates.items():
+            with self.subTest(price_range=price_range):
+                self.assertEqual(
+                    [
+                        room["rate"] for room
+                        in self.app_module.filter_rooms_by_price_range(
+                            rooms, price_range
+                        )
+                    ],
+                    expected,
+                )
+
     def test_signup_guest_selection_booking_and_staff_isolation(self):
         hotel_one_manager = self.app_module.app.test_client()
         hotel_one_id = self.register_hotel(
@@ -412,6 +435,26 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertIn(b"Suite", search.data)
         self.assertIn(b"Photo 1 of Room 101", search.data)
         self.assertIn(b"Photo 2 of Room 101", search.data)
+
+        price_filtered_directory = guest.get("/book", query_string={
+            "check_in": stay_start,
+            "check_out": stay_end,
+            "price_range": "50000-100000",
+        })
+        self.assertEqual(price_filtered_directory.status_code, 200)
+        self.assertIn(b"Other Test Hotel", price_filtered_directory.data)
+        self.assertIn(b"1 available room from", price_filtered_directory.data)
+        self.assertNotIn(b"Labim Test Hotel", price_filtered_directory.data)
+
+        price_filtered_search = guest.get("/book", query_string={
+            "hotel": hotel_two["slug"],
+            "check_in": stay_start,
+            "check_out": stay_end,
+            "price_range": "100000-200000",
+        })
+        self.assertEqual(price_filtered_search.status_code, 200)
+        self.assertIn(b"No listed rooms available", price_filtered_search.data)
+
         with guest.session_transaction() as guest_session:
             csrf_token = guest_session["public_booking_csrf"]
 

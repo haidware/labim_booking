@@ -23,21 +23,25 @@
     <form class="hotel-location-filter" method="get" action="{{ url_for('public_booking') }}">
       <label>State / FCT<select name="state"><option value="">All states</option>{% for state_name in nigerian_states %}<option value="{{ state_name }}" {% if selected_state == state_name %}selected{% endif %}>{{ state_name }}</option>{% endfor %}</select></label>
       <label>City<input type="search" name="city" value="{{ city_query }}" placeholder="Search by city" maxlength="100"></label>
-      <button class="primary-button" type="submit">Find hotels</button>
-      {% if selected_state or city_query %}<a class="hotel-filter-clear" href="{{ url_for('public_booking') }}">Clear filters</a>{% endif %}
+      <label>Arrival<input name="check_in" type="date" min="{{ today }}" value="{{ check_in }}" required></label>
+      <label>Departure<input name="check_out" type="date" min="{{ today }}" value="{{ check_out }}" required></label>
+      <label>Room price per night<select name="price_range"><option value="">Any price</option>{% for key, label, minimum, maximum in price_ranges %}<option value="{{ key }}" {% if selected_price_range == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <button class="primary-button" type="submit">Find hotels and rooms</button>
+      {% if selected_state or city_query or selected_price_range %}<a class="hotel-filter-clear" href="{{ url_for('public_booking') }}">Clear filters</a>{% endif %}
     </form>
     {% if hotels %}
     <section class="public-hotel-grid" aria-label="Available hotels">
       {% for hotel in hotels %}
-      <a class="public-hotel-card" href="{{ url_for('public_booking', hotel=hotel.slug) }}">
+      <a class="public-hotel-card" href="{{ url_for('public_booking', hotel=hotel.slug, check_in=check_in, check_out=check_out, price_range=selected_price_range) }}">
         <span class="public-hotel-card-name">{{ hotel.name }}</span>
         <span class="public-hotel-location">{{ hotel.address }}{% if hotel.address and (hotel.city or hotel.state) %} · {% endif %}{{ hotel.city }}{% if hotel.city and hotel.state %}, {% endif %}{{ hotel.state }}</span>
+        {% if hotel.matching_room_count %}<span>{{ hotel.matching_room_count }} available room{{ '' if hotel.matching_room_count == 1 else 's' }} from ₦{{ '{:,.0f}'.format(hotel.lowest_matching_rate) }} per night</span>{% endif %}
         <span class="public-hotel-card-action">View rooms and availability</span>
       </a>
       {% endfor %}
     </section>
     {% else %}
-    <section class="public-no-rooms"><h2>{{ 'No hotels match those location filters' if selected_state or city_query else 'No hotels are currently listed' }}</h2><p>{% if selected_state or city_query %}Try another state or city, or clear the filters.{% else %}Please check back later.{% endif %}</p></section>
+    <section class="public-no-rooms"><h2>{{ 'No hotels have rooms in that price range for those dates' if selected_price_range else 'No hotels match those location filters' if selected_state or city_query else 'No hotels are currently listed' }}</h2><p>{% if selected_price_range %}Try another price range or different dates.{% elif selected_state or city_query %}Try another state or city, or clear the filters.{% else %}Please check back later.{% endif %}</p></section>
     {% endif %}
     {% else %}
     <p class="selected-hotel-name">Booking at <strong>{{ selected_hotel.name }}</strong> · <a href="{{ url_for('public_booking') }}">Choose a different hotel</a></p>
@@ -45,6 +49,7 @@
       <input type="hidden" name="hotel" value="{{ selected_hotel.slug }}">
       <label>Arrival<input name="check_in" type="date" min="{{ today }}" value="{{ check_in }}" required></label>
       <label>Departure<input name="check_out" type="date" min="{{ today }}" value="{{ check_out }}" required></label>
+      <label>Room price per night<select name="price_range"><option value="">Any price</option>{% for key, label, minimum, maximum in price_ranges %}<option value="{{ key }}" {% if selected_price_range == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
       <button class="primary-button" type="submit">Search available rooms</button>
     </form>
     {% if rooms %}
@@ -55,6 +60,7 @@
       <input type="hidden" name="hotel_slug" value="{{ selected_hotel.slug }}">
       <input type="hidden" name="check_in" value="{{ check_in }}">
       <input type="hidden" name="check_out" value="{{ check_out }}">
+      <input type="hidden" name="price_range" value="{{ selected_price_range }}">
       <label class="booking-honeypot" aria-hidden="true">Website<input name="website" tabindex="-1" autocomplete="off"></label>
       <div class="public-room-grid">
         {% for room in rooms %}

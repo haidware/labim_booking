@@ -43,6 +43,12 @@ NIGERIAN_STATES = (
     "Nasarawa", "Niger", "Ogun", "Ondo", "Osun", "Oyo", "Plateau",
     "Rivers", "Sokoto", "Taraba", "Yobe", "Zamfara",
 )
+PUBLIC_PRICE_RANGES = (
+    ("10000-50000", "₦10,000–₦50,000", 10_000, 50_001),
+    ("50000-100000", "Above ₦50,000–₦100,000", 50_001, 100_001),
+    ("100000-200000", "Above ₦100,000–₦200,000", 100_001, 200_001),
+    ("200000-plus", "Above ₦200,000", 200_001, None),
+)
 load_dotenv(BASE_DIR / ".env")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://frmekmypefrwvocepjmg.supabase.co")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
@@ -778,6 +784,25 @@ def available_online_rooms(check_in, check_out, hotel_id=None):
     return available
 
 
+def price_range_bounds(price_range):
+    for key, _label, minimum, maximum_exclusive in PUBLIC_PRICE_RANGES:
+        if price_range == key:
+            return minimum, maximum_exclusive
+    return None
+
+
+def filter_rooms_by_price_range(rooms, price_range):
+    bounds = price_range_bounds(price_range)
+    if bounds is None:
+        return rooms
+    minimum, maximum_exclusive = bounds
+    return [
+        room for room in rooms
+        if room["rate"] >= minimum
+        and (maximum_exclusive is None or room["rate"] < maximum_exclusive)
+    ]
+
+
 def save_online_booking_settings(form, hotel_id=None):
     hotel_id = hotel_id or current_hotel_id()
     bank_name = form.get("bank_name", "").strip()
@@ -1097,6 +1122,9 @@ def create_online_booking(form):
     email = form.get("email", "").strip()
     room_number = form.get("room_number", "").strip()
     hotel_id = form.get("hotel_id", "").strip()
+    price_range = form.get("price_range", "").strip()
+    if price_range and price_range_bounds(price_range) is None:
+        raise ValueError("Choose a valid room price range.")
     if not guest_name or len(guest_name) > 160 or not phone or len(phone) > 40:
         raise ValueError("Enter a guest name and valid phone number.")
     if len(email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
@@ -1126,7 +1154,10 @@ def create_online_booking(form):
         raise ValueError(
             "Online booking setup is incomplete. Please contact the hotel."
         )
-    available = available_online_rooms(check_in, check_out, hotel_id=hotel_id)
+    available = filter_rooms_by_price_range(
+        available_online_rooms(check_in, check_out, hotel_id=hotel_id),
+        price_range,
+    )
     room = next((item for item in available if item["number"] == room_number), None)
     if not room:
         raise ValueError("That room is no longer available for the selected dates.")
@@ -1769,12 +1800,15 @@ def public_booking():
         (hotel for hotel in hotels if hotel["slug"] == requested_hotel_slug),
         None,
     )
+    submitted_filters = request.form if request.method == "POST" else request.args
+    selected_price_range = submitted_filters.get("price_range", "").strip()
+    if selected_price_range and price_range_bounds(selected_price_range) is None:
+        selected_price_range = ""
     try:
-        submitted_dates = request.form if request.method == "POST" else request.args
-        check_in = date.fromisoformat(submitted_dates.get(
+        check_in = date.fromisoformat(submitted_filters.get(
             "check_in", default_check_in.isoformat()
         ))
-        check_out = date.fromisoformat(submitted_dates.get(
+        check_out = date.fromisoformat(submitted_filters.get(
             "check_out", default_check_out.isoformat()
         ))
     except ValueError:
@@ -1802,15 +1836,38 @@ def public_booking():
 
     rooms = []
     if selected_hotel and check_in >= today and check_out > check_in:
-        rooms = available_online_rooms(
-            check_in, check_out, hotel_id=selected_hotel["id"]
+        rooms = filter_rooms_by_price_range(
+            available_online_rooms(
+                check_in, check_out, hotel_id=selected_hotel["id"]
+            ),
+            selected_price_range,
         )
+    hotel_cards = hotels
+    if not selected_hotel and selected_price_range:
+        matching_hotels = []
+        if check_in >= today and check_out > check_in:
+            for hotel in hotels:
+                matching_rooms = filter_rooms_by_price_range(
+                    available_online_rooms(
+                        check_in, check_out, hotel_id=hotel["id"]
+                    ),
+                    selected_price_range,
+                )
+                if matching_rooms:
+                    matching_hotels.append({
+                        **hotel,
+                        "matching_room_count": len(matching_rooms),
+                        "lowest_matching_rate": min(
+                            room["rate"] for room in matching_rooms
+                        ),
+                    })
+        hotel_cards = matching_hotels
     state_filter = request.args.get("state", "").strip()
     if state_filter not in NIGERIAN_STATES:
         state_filter = ""
     return render_template(
         "public_booking.html",
-        hotels=hotels,
+        hotels=hotel_cards,
         selected_hotel=selected_hotel,
         rooms=rooms,
         check_in=check_in.isoformat(),
@@ -1820,6 +1877,8 @@ def public_booking():
         nigerian_states=NIGERIAN_STATES,
         selected_state=state_filter,
         city_query=request.args.get("city", "").strip(),
+        price_ranges=PUBLIC_PRICE_RANGES,
+        selected_price_range=selected_price_range,
     )
 
 
