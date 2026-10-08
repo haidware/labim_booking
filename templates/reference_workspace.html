@@ -30,7 +30,7 @@
       {% elif role == 'manager' and page == 'dashboard' %}
       <h1>Operational Overview</h1><p>Live room status and booking position across the hotel.</p>
       {% include 'reference_metrics.html' %}
-      <section class="data-panel"><div class="panel-heading"><strong>Live Room Status</strong><small>Read-only • Updated by Reception</small></div>{% include 'reference_rooms.html' %}</section>
+      <section class="data-panel"><div class="panel-heading"><strong>Live Room Status</strong><small>Today’s calendar stays • Reception can update room status</small></div>{% include 'reference_rooms.html' %}</section>
       <div class="split-panels"><section><h2>Booking Finance</h2><div class="finance-lines"><span>Total Booking Value <b>₦{{ '{:,.0f}'.format(finance.booking_value) }}</b></span><span>Collected <b>₦{{ '{:,.0f}'.format(finance.collected) }}</b></span><span>Outstanding <b>₦{{ '{:,.0f}'.format(finance.outstanding) }}</b></span></div></section><section><h2>Today’s Booking Summary</h2><div class="finance-lines"><span>Booked Rooms <b>{{ room_metrics[2][1] }}</b></span><span>Occupied Rooms <b>{{ room_metrics[3][1] }}</b></span><span>Rooms Cleaning <b>{{ room_metrics[4][1] }}</b></span><span>Available Now <b>{{ room_metrics[1][1] }}</b></span></div></section></div>
 
       {% elif page == 'rooms' %}
@@ -44,7 +44,7 @@
         <button class="primary-button" type="submit">Register Room</button>
       </form></section>
       {% endif %}
-      <section class="data-panel"><div class="panel-heading"><strong>{{ 'Room Overview' if role == 'director' else 'All Rooms' }}</strong><small>{{ 'Manager can register rooms' if role == 'manager' else 'Read-only • Updated by Reception' if role == 'director' else 'Reception controls room status' }}</small></div>{% include 'reference_rooms.html' %}</section>
+      <section class="data-panel"><div class="panel-heading"><strong>{{ 'Room Overview' if role == 'director' else 'All Rooms' }}</strong><small>{{ 'Manager can register rooms' if role == 'manager' else 'Today’s calendar stays • Read-only' if role == 'director' else 'Reception controls room status' }}</small></div>{% include 'reference_rooms.html' %}</section>
 
       {% elif page == 'finance' %}
       <h1>Finance</h1><p>Monitor hotel booking finances and outstanding guest balances.</p>

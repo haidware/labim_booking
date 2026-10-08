@@ -480,14 +480,53 @@ class MultiHotelFlowTests(unittest.TestCase):
                 "SELECT status, amount_paid FROM reservations WHERE id = ?",
                 (booking["id"],),
             ).fetchone()
+            room_after_confirmation = self.app_module.get_db().execute(
+                "SELECT status FROM rooms WHERE hotel_id = ? AND number = '101'",
+                (hotel_two_id,),
+            ).fetchone()
             payment = self.app_module.get_db().execute(
                 "SELECT hotel_id, amount FROM payments WHERE reservation_id = ?",
                 (booking["id"],),
             ).fetchone()
             self.assertEqual(confirmed["status"], "booked")
             self.assertEqual(confirmed["amount_paid"], 90000)
+            self.assertEqual(room_after_confirmation["status"], "available")
             self.assertEqual(payment["hotel_id"], hotel_two_id)
             self.assertEqual(payment["amount"], 90000)
+
+        with self.app_module.app.app_context():
+            future_room = self.app_module.reference_rooms(
+                hotel_id=hotel_two_id,
+                as_of_date=date.fromisoformat(stay_start),
+            )[0]
+        self.assertEqual(future_room["status"], "Booked")
+        self.assertEqual(future_room["guest"], "Guest Two")
+
+        manager_dashboard = hotel_two_manager.get("/workspace/manager/dashboard")
+        self.assertEqual(manager_dashboard.status_code, 200)
+        self.assertIn(b"Available", manager_dashboard.data)
+
+        response = reception.post("/rooms/101/status", data={
+            "status": "cleaning",
+            "reference": "true",
+        })
+        self.assertEqual(response.status_code, 302)
+        manager_dashboard = hotel_two_manager.get("/workspace/manager/dashboard")
+        self.assertIn(b"Cleaning", manager_dashboard.data)
+        with self.app_module.app.app_context():
+            future_room = self.app_module.reference_rooms(
+                hotel_id=hotel_two_id,
+                as_of_date=date.fromisoformat(stay_start),
+            )[0]
+        self.assertEqual(future_room["status"], "Cleaning")
+        with self.app_module.app.app_context():
+            self.assertEqual(
+                self.app_module.get_db().execute(
+                    "SELECT status FROM rooms WHERE hotel_id = ? AND number = '101'",
+                    (hotel_two_id,),
+                ).fetchone()["status"],
+                "cleaning",
+            )
 
         hotel_two_availability = guest.get("/book", query_string={
             "hotel": hotel_two["slug"],

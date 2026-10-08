@@ -449,8 +449,9 @@ def init_db():
     db.commit()
 
 
-def reference_rooms(hotel_id=None):
+def reference_rooms(hotel_id=None, as_of_date=None):
     hotel_id = hotel_id or current_hotel_id()
+    as_of_date = as_of_date or date.today()
     if SUPABASE_ENABLED:
         client = get_request_supabase()
         rows = client.table("rooms").select("*").eq(
@@ -461,79 +462,70 @@ def reference_rooms(hotel_id=None):
         ).eq("hotel_id", hotel_id).in_(
             "status", ["booked", "checked_in"]
         ).execute().data
-        today = date.today()
-        current_bookings = [
-            booking for booking in bookings
-            if date.fromisoformat(str(booking["check_in"])[:10]) <= today
-            < date.fromisoformat(str(booking["check_out"])[:10])
-        ]
-        guest_by_room = {
-            booking["room_number"]: booking["guest_name"]
-            for booking in current_bookings
-        }
-        active_room_numbers = {
-            booking["room_number"] for booking in current_bookings
-        }
-        return [
-            {
-                "number": row["number"],
-                "type": row["name"],
-                "beds": row["beds"],
-                "rate": row["rate"],
-                "status": row["status"].capitalize(),
-                "guest": guest_by_room.get(row["number"], ""),
-                "active_booking": row["number"] in active_room_numbers,
-            }
-            for row in rows
-        ]
-    guest_by_room = {}
-    booking_guests = get_db().execute(
-        """SELECT room_number, guest_name FROM reservations
-        WHERE hotel_id = ? AND status IN ('booked', 'checked_in')
-        AND check_in <= ? AND check_out > ? ORDER BY created_at""",
-        (hotel_id, date.today().isoformat(), date.today().isoformat()),
-    ).fetchall()
-    guest_by_room.update({row["room_number"]: row["guest_name"] for row in booking_guests})
-    active_room_numbers = {row["room_number"] for row in booking_guests}
-    rows = get_db().execute(
-        "SELECT number, name, beds, rate, status FROM rooms WHERE hotel_id = ? ORDER BY number",
-        (hotel_id,),
-    ).fetchall()
-    return [
-        {
+        room_rows = rows
+        booking_rows = bookings
+    else:
+        booking_rows = get_db().execute(
+            """SELECT room_number, guest_name, status, check_in, check_out
+            FROM reservations
+            WHERE hotel_id = ? AND status IN ('booked', 'checked_in')
+            ORDER BY created_at""",
+            (hotel_id,),
+        ).fetchall()
+        room_rows = get_db().execute(
+            "SELECT number, name, beds, rate, status FROM rooms WHERE hotel_id = ? ORDER BY number",
+            (hotel_id,),
+        ).fetchall()
+
+    bookings_by_room = {}
+    for booking in booking_rows:
+        check_in = date.fromisoformat(str(booking["check_in"])[:10])
+        check_out = date.fromisoformat(str(booking["check_out"])[:10])
+        if check_in <= as_of_date < check_out:
+            bookings_by_room.setdefault(booking["room_number"], []).append(
+                (dict(booking), check_in)
+            )
+
+    rooms = []
+    for row in room_rows:
+        matching_bookings = bookings_by_room.get(row["number"], [])
+        manual_status = str(row["status"]).lower()
+        if manual_status in {"cleaning", "unavailable"} or not matching_bookings:
+            status = manual_status
+        elif manual_status == "occupied" or any(
+            booking["status"] == "checked_in"
+            and check_in <= date.today() < date.fromisoformat(
+                str(booking["check_out"])[:10]
+            )
+            for booking, check_in in matching_bookings
+        ):
+            status = "occupied"
+        else:
+            status = "booked"
+        rooms.append({
             "number": row["number"],
             "type": row["name"],
             "beds": row["beds"],
             "rate": row["rate"],
-            "status": row["status"].capitalize(),
-            "guest": guest_by_room.get(row["number"], ""),
-            "active_booking": row["number"] in active_room_numbers,
-        }
-        for row in rows
-    ]
+            "status": status.capitalize(),
+            "guest": " / ".join(dict.fromkeys(
+                booking["guest_name"]
+                for booking, _ in matching_bookings
+                if booking.get("guest_name")
+            )),
+            "active_booking": bool(matching_bookings),
+        })
+    return rooms
 
 
 def reference_room_metrics():
-    if SUPABASE_ENABLED:
-        rooms = reference_rooms()
-        values = {}
-        for room in rooms:
-            status = room["status"].lower()
-            values[status] = values.get(status, 0) + 1
-        return [
-            ("Total Rooms", len(rooms)),
-            ("Available", values.get("available", 0)),
-            ("Booked", values.get("booked", 0)),
-            ("Occupied", values.get("occupied", 0)),
-            ("Cleaning", values.get("cleaning", 0)),
-        ]
-    counts = get_db().execute(
-        "SELECT status, COUNT(*) AS total FROM rooms WHERE hotel_id = ? GROUP BY status",
-        (current_hotel_id(),),
-    ).fetchall()
-    values = {row["status"]: row["total"] for row in counts}
+    rooms = reference_rooms()
+    values = {}
+    for room in rooms:
+        status = room["status"].lower()
+        values[status] = values.get(status, 0) + 1
     return [
-        ("Total Rooms", sum(values.values())),
+        ("Total Rooms", len(rooms)),
         ("Available", values.get("available", 0)),
         ("Booked", values.get("booked", 0)),
         ("Occupied", values.get("occupied", 0)),
