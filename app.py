@@ -166,6 +166,33 @@ def public_hotels():
                 WHERE is_active = 1 ORDER BY name"""
             ).fetchall()
         ]
+    if hotels:
+        hotel_ids = [hotel["id"] for hotel in hotels]
+        if SUPABASE_ENABLED:
+            subscription_rows = get_supabase_admin().table(
+                "hotel_subscriptions"
+            ).select(
+                "hotel_id, status, trial_ends_at, paid_until"
+            ).in_("hotel_id", hotel_ids).execute().data
+        else:
+            placeholders = ",".join("?" for _ in hotel_ids)
+            subscription_rows = [
+                dict(row) for row in get_db().execute(
+                    f"""SELECT hotel_id, status, trial_ends_at, paid_until
+                    FROM hotel_subscriptions
+                    WHERE hotel_id IN ({placeholders})""",
+                    hotel_ids,
+                ).fetchall()
+            ]
+        subscriptions_by_hotel = {
+            row["hotel_id"]: row for row in subscription_rows
+        }
+        hotels = [
+            hotel for hotel in hotels
+            if subscription_access_for_record(
+                subscriptions_by_hotel.get(hotel["id"])
+            )["allowed"]
+        ]
     state_filter = request.args.get("state", "").strip()
     city_filter = request.args.get("city", "").strip().casefold()
     if state_filter in NIGERIAN_STATES:
@@ -193,8 +220,7 @@ def subscription_record(hotel_id):
     return dict(row) if row else None
 
 
-def subscription_access(hotel_id):
-    record = subscription_record(hotel_id)
+def subscription_access_for_record(record):
     if not record or record["status"] == "legacy":
         return {"allowed": True, "status": "legacy", "record": record}
     now = datetime.now(timezone.utc)
@@ -219,6 +245,10 @@ def subscription_access(hotel_id):
             "record": record,
         }
     return {"allowed": False, "status": "expired", "record": record}
+
+
+def subscription_access(hotel_id):
+    return subscription_access_for_record(subscription_record(hotel_id))
 
 
 def ensure_legacy_subscription(hotel_id):
@@ -1528,6 +1558,11 @@ def create_online_booking(form):
     if form.get("website", "").strip():
         raise ValueError("Booking could not be submitted.")
 
+    if not subscription_access(hotel_id)["allowed"]:
+        raise ValueError(
+            "This hotel's online booking is temporarily unavailable because "
+            "its subscription is inactive."
+        )
     hotel = None
     if SUPABASE_ENABLED:
         hotel_rows = get_supabase_admin().table("hotels").select(
@@ -2235,6 +2270,17 @@ def public_booking():
                 if not selected_hotel or request.form.get(
                     "hotel_id"
                 ) != selected_hotel["id"]:
+                    submitted_hotel_id = request.form.get("hotel_id", "").strip()
+                    if (
+                        submitted_hotel_id
+                        and not subscription_access(
+                            submitted_hotel_id
+                        )["allowed"]
+                    ):
+                        raise ValueError(
+                            "This hotel's online booking is temporarily "
+                            "unavailable because its subscription is inactive."
+                        )
                     raise ValueError("Choose the hotel you want to book.")
                 create_online_booking(request.form)
                 return redirect(url_for("online_booking_confirmation"))

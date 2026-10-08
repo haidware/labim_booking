@@ -393,6 +393,66 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(subscription["status"], "legacy")
         self.assertEqual(subscription["billing_email"], "")
 
+    def test_expired_hotel_is_hidden_and_public_booking_is_rejected(self):
+        manager = self.app_module.app.test_client()
+        hotel_id = self.register_hotel(
+            manager, "Expired Online Hotel", "expired-online",
+            "13 Market Road", "Lagos", "Lagos",
+        )
+        self.configure_online_booking(
+            manager, hotel_id, "Expired Listing", 50000
+        )
+        with self.app_module.app.app_context():
+            hotel = self.app_module.hotel_details(hotel_id)
+            expired_at = (
+                self.app_module.datetime.now(
+                    self.app_module.timezone.utc
+                ) - timedelta(seconds=1)
+            ).isoformat()
+            self.app_module.get_db().execute(
+                """UPDATE hotel_subscriptions SET trial_ends_at = ?
+                WHERE hotel_id = ?""",
+                (expired_at, hotel_id),
+            )
+            self.app_module.get_db().commit()
+
+        guest = self.app_module.app.test_client()
+        directory = guest.get("/book")
+        self.assertEqual(directory.status_code, 200)
+        self.assertNotIn(b"Expired Online Hotel", directory.data)
+        direct_hotel_page = guest.get(
+            "/book", query_string={"hotel": hotel["slug"]}
+        )
+        self.assertEqual(direct_hotel_page.status_code, 200)
+        self.assertNotIn(b"Expired Listing", direct_hotel_page.data)
+
+        with guest.session_transaction() as guest_session:
+            csrf_token = guest_session["public_booking_csrf"]
+        check_in = (date.today() + timedelta(days=3)).isoformat()
+        check_out = (date.today() + timedelta(days=4)).isoformat()
+        response = guest.post("/book", data={
+            "csrf_token": csrf_token,
+            "hotel_id": hotel_id,
+            "hotel_slug": hotel["slug"],
+            "room_number": "101",
+            "check_in": check_in,
+            "check_out": check_out,
+            "guest_name": "Blocked Guest",
+            "email": "blocked@example.com",
+            "phone": "08000000000",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"online booking is temporarily unavailable",
+            response.data,
+        )
+        with self.app_module.app.app_context():
+            reservation_count = self.app_module.get_db().execute(
+                "SELECT COUNT(*) FROM reservations WHERE hotel_id = ?",
+                (hotel_id,),
+            ).fetchone()[0]
+        self.assertEqual(reservation_count, 0)
+
     def test_monthly_subscription_activates_only_after_paystack_verification(self):
         client = self.app_module.app.test_client()
         hotel_id = self.register_hotel(
