@@ -305,6 +305,10 @@ def paystack_request(path, method="GET", payload=None):
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "User-Agent": (
+                "HAIDWARE-LabimBookingOS/1.0 "
+                "(Paystack API client; https://labim-booking-production.up.railway.app)"
+            ),
         },
     )
     req.headers["Authorization"] = "Bearer " + key
@@ -312,8 +316,43 @@ def paystack_request(path, method="GET", payload=None):
         with urlopen(req, timeout=20) as response:
             result = json.loads(response.read().decode("utf-8"))
     except HTTPError as error:
-        app.logger.warning("Paystack API returned HTTP %s for %s", error.code, path)
-        raise ValueError("Paystack could not process the request. Please try again.") from error
+        response_message = ""
+        response_code = ""
+        try:
+            error_payload = json.loads(error.read().decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            error_payload = {}
+        if isinstance(error_payload, dict):
+            response_message = str(error_payload.get("message") or "").strip()
+            response_code = str(
+                error_payload.get("code")
+                or error_payload.get("error_code")
+                or ""
+            ).strip()
+            if not response_message:
+                response_message = str(
+                    error_payload.get("error_name")
+                    or error_payload.get("detail")
+                    or ""
+                ).strip()
+        response_message = " ".join(response_message.split())[:240]
+        response_code = " ".join(response_code.split())[:80]
+        app.logger.warning(
+            "Paystack API returned HTTP %s for %s (code=%s): %s",
+            error.code,
+            path,
+            response_code or "unavailable",
+            response_message or "no response message",
+        )
+        if response_message:
+            code_suffix = f" ({response_code})" if response_code else ""
+            raise ValueError(
+                "Paystack returned an error"
+                f"{code_suffix}: {response_message}"
+            ) from error
+        raise ValueError(
+            "Paystack could not process the request. Please try again."
+        ) from error
     except (URLError, TimeoutError, json.JSONDecodeError) as error:
         app.logger.exception("Paystack request failed for %s", path)
         raise ValueError("Could not reach Paystack. Please try again.") from error

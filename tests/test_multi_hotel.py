@@ -1,5 +1,6 @@
 import importlib.util
 from io import BytesIO
+import json
 import sqlite3
 import shutil
 import sys
@@ -560,6 +561,74 @@ class MultiHotelFlowTests(unittest.TestCase):
                 headers={"x-paystack-signature": signature},
             )
         self.assertEqual(response.status_code, 200)
+
+    def test_paystack_http_errors_include_provider_message(self):
+        error = self.app_module.HTTPError(
+            "https://api.paystack.co/transaction/initialize",
+            403,
+            "Forbidden",
+            {},
+            BytesIO(json.dumps({
+                "status": False,
+                "message": "Payment initialization is not permitted.",
+                "code": "forbidden",
+            }).encode("utf-8")),
+        )
+        with patch.dict(
+            self.app_module.os.environ,
+            {"PAYSTACK_SECRET_KEY": "sk_live_diagnostic"},
+        ), patch.object(
+            self.app_module, "urlopen", side_effect=error
+        ) as mocked_urlopen:
+            with self.assertRaisesRegex(
+                ValueError,
+                "Payment initialization is not permitted",
+            ):
+                self.app_module.paystack_request(
+                    "/transaction/initialize",
+                    "POST",
+                    {"email": "manager@example.com"},
+                )
+        request_headers = {
+            name.lower(): value
+            for name, value in mocked_urlopen.call_args.args[0].header_items()
+        }
+        self.assertEqual(
+            request_headers["user-agent"],
+            "HAIDWARE-LabimBookingOS/1.0 "
+            "(Paystack API client; https://labim-booking-production.up.railway.app)",
+        )
+
+    def test_paystack_cloudflare_block_error_is_reported(self):
+        cloudflare_error = self.app_module.HTTPError(
+            "https://api.paystack.co/transaction/initialize",
+            403,
+            "Forbidden",
+            {},
+            BytesIO(json.dumps({
+                "type": "https://developers.cloudflare.com/support/",
+                "title": "Error 1010: Access denied",
+                "status": 403,
+                "detail": "The site owner has blocked access based on your browser's signature.",
+                "error_code": 1010,
+                "error_name": "browser_signature_banned",
+            }).encode("utf-8")),
+        )
+        with patch.dict(
+            self.app_module.os.environ,
+            {"PAYSTACK_SECRET_KEY": "sk_live_diagnostic"},
+        ), patch.object(
+            self.app_module, "urlopen", side_effect=cloudflare_error
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "1010.*browser_signature_banned",
+            ):
+                self.app_module.paystack_request(
+                    "/transaction/initialize",
+                    "POST",
+                    {"email": "manager@example.com"},
+                )
 
     def test_paid_signup_redirects_to_matching_paystack_checkout(self):
         for plan, amount in (("monthly", 8_000_000), ("annual", 80_000_000)):
