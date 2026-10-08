@@ -1,7 +1,8 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from functools import lru_cache
 import hmac
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,9 @@ import secrets
 import sqlite3
 import smtplib
 import ssl
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode, urlparse
+from urllib.error import HTTPError, URLError
+from urllib.request import Request as UrlRequest, urlopen
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -31,6 +34,10 @@ DATABASE = BASE_DIR / "instance" / "booking_os.sqlite3"
 ROOM_PHOTO_DIRECTORY = BASE_DIR / "instance" / "room_photos"
 ROOM_PHOTO_BUCKET = "room-photos"
 ONLINE_HOLD_MINUTES = 30
+TRIAL_DAYS = 30
+MONTHLY_PLAN_AMOUNT = 80_000
+ANNUAL_PLAN_AMOUNT = 800_000
+PAYSTACK_API_BASE = "https://api.paystack.co"
 DEFAULT_HOTEL_ID = "00000000-0000-0000-0000-000000000001"
 MAX_ROOM_PHOTO_BYTES = 5 * 1024 * 1024
 MAX_ROOM_PHOTOS = 3
@@ -173,6 +180,329 @@ def public_hotels():
     return hotels
 
 
+def subscription_record(hotel_id):
+    if SUPABASE_ENABLED:
+        rows = get_supabase_admin().table("hotel_subscriptions").select(
+            "*"
+        ).eq("hotel_id", hotel_id).limit(1).execute().data
+        return rows[0] if rows else None
+    row = get_db().execute(
+        "SELECT * FROM hotel_subscriptions WHERE hotel_id = ?",
+        (hotel_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def subscription_access(hotel_id):
+    record = subscription_record(hotel_id)
+    if not record or record["status"] == "legacy":
+        return {"allowed": True, "status": "legacy", "record": record}
+    now = datetime.now(timezone.utc)
+    if record["status"] == "trial" and record.get("trial_ends_at"):
+        trial_ends = datetime.fromisoformat(record["trial_ends_at"])
+        if trial_ends.tzinfo is None:
+            trial_ends = trial_ends.replace(tzinfo=timezone.utc)
+        return {
+            "allowed": now < trial_ends,
+            "status": "trial" if now < trial_ends else "expired",
+            "expires_at": trial_ends,
+            "record": record,
+        }
+    if record["status"] == "active" and record.get("paid_until"):
+        paid_until = datetime.fromisoformat(record["paid_until"])
+        if paid_until.tzinfo is None:
+            paid_until = paid_until.replace(tzinfo=timezone.utc)
+        return {
+            "allowed": now < paid_until,
+            "status": "active" if now < paid_until else "expired",
+            "expires_at": paid_until,
+            "record": record,
+        }
+    return {"allowed": False, "status": "expired", "record": record}
+
+
+def ensure_legacy_subscription(hotel_id):
+    if subscription_record(hotel_id):
+        return
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    legacy_subscription = {
+        "hotel_id": hotel_id,
+        "plan": "legacy",
+        "status": "legacy",
+        "billing_email": "",
+        "updated_at": now,
+    }
+    if SUPABASE_ENABLED:
+        get_supabase_admin().table("hotel_subscriptions").insert(
+            legacy_subscription
+        ).execute()
+        return
+    db = get_db()
+    db.execute(
+        """INSERT OR IGNORE INTO hotel_subscriptions
+        (hotel_id, plan, status, billing_email, updated_at)
+        VALUES (?, 'legacy', 'legacy', '', ?)""",
+        (hotel_id, now),
+    )
+    db.commit()
+
+
+def create_hotel_subscription(hotel_id, plan, billing_email):
+    now = datetime.now(timezone.utc)
+    is_trial = plan == "trial"
+    subscription = {
+        "hotel_id": hotel_id,
+        "plan": "trial" if is_trial else plan,
+        "status": "trial" if is_trial else "pending",
+        "trial_started_at": now.isoformat(timespec="seconds") if is_trial else None,
+        "trial_ends_at": (
+            (now + timedelta(days=TRIAL_DAYS)).isoformat(timespec="seconds")
+            if is_trial else None
+        ),
+        "paid_until": None,
+        "billing_email": billing_email,
+        "pending_reference": None,
+        "pending_plan": None if is_trial else plan,
+        "updated_at": now.isoformat(timespec="seconds"),
+    }
+    if SUPABASE_ENABLED:
+        get_supabase_admin().table("hotel_subscriptions").upsert(
+            subscription
+        ).execute()
+    else:
+        get_db().execute(
+            """INSERT INTO hotel_subscriptions
+            (hotel_id, plan, status, trial_started_at, trial_ends_at, paid_until,
+             billing_email, pending_reference, pending_plan, updated_at)
+            VALUES (:hotel_id, :plan, :status, :trial_started_at, :trial_ends_at,
+             :paid_until, :billing_email, :pending_reference, :pending_plan, :updated_at)
+            ON CONFLICT(hotel_id) DO UPDATE SET plan = excluded.plan,
+             status = excluded.status, trial_started_at = excluded.trial_started_at,
+             trial_ends_at = excluded.trial_ends_at, paid_until = excluded.paid_until,
+             billing_email = excluded.billing_email,
+             pending_reference = excluded.pending_reference,
+             pending_plan = excluded.pending_plan, updated_at = excluded.updated_at""",
+            subscription,
+        )
+        get_db().commit()
+
+
+def paystack_secret_key():
+    key = os.getenv("PAYSTACK_SECRET_KEY", "").strip()
+    if not key:
+        raise ValueError("Paystack payments are not configured yet. Please contact the hotel platform administrator.")
+    return key
+
+
+def paystack_request(path, method="GET", payload=None):
+    key = paystack_secret_key()
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = UrlRequest(
+        f"{PAYSTACK_API_BASE}{path}",
+        data=body,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    req.headers["Authorization"] = "Bearer " + key
+    try:
+        with urlopen(req, timeout=20) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        app.logger.warning("Paystack API returned HTTP %s for %s", error.code, path)
+        raise ValueError("Paystack could not process the request. Please try again.") from error
+    except (URLError, TimeoutError, json.JSONDecodeError) as error:
+        app.logger.exception("Paystack request failed for %s", path)
+        raise ValueError("Could not reach Paystack. Please try again.") from error
+    if not result.get("status") or not isinstance(result.get("data"), dict):
+        app.logger.error("Paystack returned an unsuccessful response for %s", path)
+        raise ValueError("Paystack could not process the request. Please try again.")
+    return result["data"]
+
+
+def initialize_subscription_payment(hotel_id, plan):
+    if plan not in {"monthly", "annual"}:
+        raise ValueError("Choose a valid subscription plan.")
+    subscription = subscription_record(hotel_id)
+    if not subscription or not subscription.get("billing_email"):
+        raise ValueError("Add a valid billing email before subscribing.")
+    amount = MONTHLY_PLAN_AMOUNT if plan == "monthly" else ANNUAL_PLAN_AMOUNT
+    reference = f"hotel-{uuid4().hex}"
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if SUPABASE_ENABLED:
+        admin = get_supabase_admin()
+        admin.table("hotel_subscription_payments").insert({
+            "reference": reference,
+            "hotel_id": hotel_id,
+            "plan": plan,
+            "amount": amount * 100,
+            "status": "pending",
+            "created_at": now,
+        }).execute()
+        admin.table("hotel_subscriptions").update({
+            "pending_reference": reference,
+            "pending_plan": plan,
+            "updated_at": now,
+        }).eq("hotel_id", hotel_id).execute()
+    else:
+        db = get_db()
+        db.execute("BEGIN IMMEDIATE")
+        db.execute(
+            """INSERT INTO hotel_subscription_payments
+            (reference, hotel_id, plan, amount, status, created_at)
+            VALUES (?, ?, ?, ?, 'pending', ?)""",
+            (reference, hotel_id, plan, amount * 100, now),
+        )
+        db.execute(
+            """UPDATE hotel_subscriptions SET pending_reference = ?,
+            pending_plan = ?, updated_at = ? WHERE hotel_id = ?""",
+            (reference, plan, now, hotel_id),
+        )
+        db.commit()
+    try:
+        data = paystack_request("/transaction/initialize", "POST", {
+            "email": subscription["billing_email"],
+            "amount": amount * 100,
+            "currency": "NGN",
+            "reference": reference,
+            "callback_url": url_for("paystack_callback", _external=True),
+            "metadata": {
+                "hotel_id": hotel_id,
+                "plan": plan,
+                "custom_fields": [{
+                    "display_name": "Hotel",
+                    "variable_name": "hotel_id",
+                    "value": hotel_id,
+                }],
+            },
+        })
+    except ValueError:
+        fail_subscription_payment(reference, hotel_id)
+        raise
+    authorization_url = data.get("authorization_url")
+    checkout = urlparse(authorization_url or "")
+    if checkout.scheme != "https" or checkout.hostname != "checkout.paystack.com":
+        fail_subscription_payment(reference, hotel_id)
+        raise RuntimeError("Paystack did not return a secure checkout URL.")
+    return authorization_url
+
+
+def fail_subscription_payment(reference, hotel_id):
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if SUPABASE_ENABLED:
+        admin = get_supabase_admin()
+        admin.table("hotel_subscription_payments").update({
+            "status": "failed",
+        }).eq("reference", reference).eq("hotel_id", hotel_id).eq(
+            "status", "pending"
+        ).execute()
+        admin.table("hotel_subscriptions").update({
+            "pending_reference": None,
+            "pending_plan": None,
+            "updated_at": now,
+        }).eq("hotel_id", hotel_id).eq(
+            "pending_reference", reference
+        ).execute()
+        return
+    db = get_db()
+    db.execute("BEGIN IMMEDIATE")
+    db.execute(
+        """UPDATE hotel_subscription_payments SET status = 'failed'
+        WHERE reference = ? AND hotel_id = ? AND status = 'pending'""",
+        (reference, hotel_id),
+    )
+    db.execute(
+        """UPDATE hotel_subscriptions SET pending_reference = NULL,
+        pending_plan = NULL, updated_at = ?
+        WHERE hotel_id = ? AND pending_reference = ?""",
+        (now, hotel_id, reference),
+    )
+    db.commit()
+
+
+def activate_subscription_payment(reference, transaction_id, amount, currency):
+    if SUPABASE_ENABLED:
+        result = get_supabase_admin().rpc(
+            "activate_hotel_subscription_payment",
+            {
+                "p_reference": reference,
+                "p_transaction_id": str(transaction_id),
+                "p_amount": amount,
+                "p_currency": currency,
+            },
+        ).execute().data
+        if not result:
+            raise ValueError("The Paystack payment does not match a pending hotel subscription.")
+        return result
+    db = get_db()
+    db.execute("BEGIN IMMEDIATE")
+    payment = db.execute(
+        "SELECT * FROM hotel_subscription_payments WHERE reference = ?",
+        (reference,),
+    ).fetchone()
+    if not payment:
+        db.rollback()
+        raise ValueError("No subscription payment exists for this reference.")
+    if payment["status"] == "paid":
+        db.commit()
+        return True
+    expected_amount = (
+        MONTHLY_PLAN_AMOUNT * 100
+        if payment["plan"] == "monthly"
+        else ANNUAL_PLAN_AMOUNT * 100
+    )
+    if (
+        payment["status"] != "pending"
+        or payment["amount"] != amount
+        or payment["amount"] != expected_amount
+        or currency != "NGN"
+    ):
+        db.rollback()
+        raise ValueError("The Paystack payment does not match the pending subscription.")
+    now = datetime.now(timezone.utc)
+    subscription = db.execute(
+        """SELECT paid_until, pending_reference, pending_plan
+        FROM hotel_subscriptions WHERE hotel_id = ?""",
+        (payment["hotel_id"],),
+    ).fetchone()
+    if not subscription:
+        db.rollback()
+        raise ValueError("The hotel subscription record could not be found.")
+    current_expiry = subscription["paid_until"]
+    start = now
+    if current_expiry:
+        parsed_expiry = datetime.fromisoformat(current_expiry)
+        if parsed_expiry.tzinfo is None:
+            parsed_expiry = parsed_expiry.replace(tzinfo=timezone.utc)
+        if parsed_expiry > start:
+            start = parsed_expiry
+    paid_until = start + timedelta(days=30 if payment["plan"] == "monthly" else 365)
+    db.execute(
+        """UPDATE hotel_subscription_payments SET status = 'paid',
+        paystack_transaction_id = ?, paid_at = ? WHERE reference = ?""",
+        (str(transaction_id), now.isoformat(timespec="seconds"), reference),
+    )
+    db.execute(
+        """UPDATE hotel_subscriptions SET plan = ?, status = 'active',
+        paid_until = ?,
+        pending_reference = CASE WHEN pending_reference = ? THEN NULL
+            ELSE pending_reference END,
+        pending_plan = CASE WHEN pending_reference = ? THEN NULL
+            ELSE pending_plan END,
+        updated_at = ? WHERE hotel_id = ?""",
+        (
+            payment["plan"], paid_until.isoformat(timespec="seconds"),
+            reference, reference,
+            now.isoformat(timespec="seconds"), payment["hotel_id"],
+        ),
+    )
+    db.commit()
+    return True
+
+
 @app.teardown_appcontext
 def close_db(exception=None):
     db = g.pop("db", None)
@@ -267,7 +597,34 @@ def init_db():
             reception_email TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS hotel_subscriptions (
+            hotel_id TEXT PRIMARY KEY,
+            plan TEXT NOT NULL,
+            status TEXT NOT NULL,
+            trial_started_at TEXT,
+            trial_ends_at TEXT,
+            paid_until TEXT,
+            billing_email TEXT NOT NULL DEFAULT '',
+            pending_reference TEXT,
+            pending_plan TEXT,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS hotel_subscription_payments (
+            reference TEXT PRIMARY KEY,
+            hotel_id TEXT NOT NULL,
+            plan TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            paystack_transaction_id TEXT,
+            created_at TEXT NOT NULL,
+            paid_at TEXT
+        );
         """
+    )
+    db.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS hotel_subscription_transaction_idx
+        ON hotel_subscription_payments(paystack_transaction_id)
+        WHERE paystack_transaction_id IS NOT NULL"""
     )
     hotel_columns = {
         column["name"] for column in db.execute("PRAGMA table_info(hotels)")
@@ -1761,9 +2118,17 @@ def handle_supabase_session_expired(error):
 @app.before_request
 def require_workspace_login():
     endpoint = request.endpoint
-    if endpoint in {"home", "health", "login", "manager_signup", "logout", "static"}:
+    if endpoint in {
+        "home", "health", "login", "manager_signup", "logout", "static",
+        "billing", "start_subscription_payment", "save_billing_email",
+        "paystack_callback", "paystack_webhook",
+    }:
         return None
-    if endpoint == "reference_workspace":
+    if request.path.startswith("/workspace/"):
+        required_role = (request.view_args or {}).get("role")
+        if required_role is None:
+            required_role = request.path.split("/", 3)[2]
+    elif endpoint == "reference_workspace":
         required_role = (request.view_args or {}).get("role")
     elif endpoint == "update_room":
         required_role = "reception"
@@ -1783,6 +2148,10 @@ def require_workspace_login():
         session.get("user_role") != required_role or not session.get("hotel_id")
     ):
         return redirect(url_for("login", role=required_role))
+    if required_role and session.get("hotel_id"):
+        access = subscription_access(session["hotel_id"])
+        if not access["allowed"]:
+            return redirect(url_for("billing"))
     return None
 
 
@@ -2074,6 +2443,8 @@ def hotel_slug_from_name(name, hotel_id):
 def manager_signup():
     editing = session.get("user_role") == "manager" and bool(session.get("hotel_id"))
     hotel_id = current_hotel_id() if editing else None
+    if editing and not subscription_access(hotel_id)["allowed"]:
+        return redirect(url_for("billing"))
     if SUPABASE_ENABLED:
         supabase_admin = get_supabase_admin()
         existing_profiles = (
@@ -2099,6 +2470,8 @@ def manager_signup():
         "city": current_hotel.get("city", "") if current_hotel else "",
         "state": current_hotel.get("state", "") if current_hotel else "",
     }
+    selected_plan = "trial"
+    billing_email = ""
 
     def render_signup_page(error=None):
         return render_template(
@@ -2110,6 +2483,8 @@ def manager_signup():
             hotel_id=hotel_id,
             hotel_location=hotel_location,
             nigerian_states=NIGERIAN_STATES,
+            selected_plan=selected_plan,
+            billing_email=billing_email,
         )
 
     if request.method == "POST":
@@ -2119,6 +2494,8 @@ def manager_signup():
             "city": request.form.get("hotel_city", "").strip(),
             "state": request.form.get("hotel_state", "").strip(),
         }
+        selected_plan = request.form.get("plan", "trial").strip().lower()
+        billing_email = request.form.get("billing_email", "").strip().lower()
         fields = {
             "director": (request.form.get("director_username", "").strip(), request.form.get("director_password", "")),
             "reception": (request.form.get("reception_username", "").strip(), request.form.get("reception_password", "")),
@@ -2135,6 +2512,13 @@ def manager_signup():
             return render_signup_page("Enter a city between 2 and 100 characters.")
         if hotel_location["state"] not in NIGERIAN_STATES:
             return render_signup_page("Choose a valid Nigerian state or the FCT.")
+        if not editing and selected_plan not in {"trial", "monthly", "annual"}:
+            return render_signup_page("Choose a valid subscription plan.")
+        if not editing and (
+            len(billing_email) > 254
+            or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", billing_email)
+        ):
+            return render_signup_page("Enter a valid billing email address.")
         if any(not username or not password for username, password in fields.values()):
             return render_signup_page("Complete every required hotel team account.")
         if SUPABASE_ENABLED:
@@ -2221,6 +2605,28 @@ def manager_signup():
                                 "created_by": session.get("supabase_user_id"),
                             }
                         ).execute()
+                if not editing:
+                    create_hotel_subscription(
+                        saved_hotel_id, selected_plan, billing_email
+                    )
+                    if selected_plan in {"monthly", "annual"}:
+                        try:
+                            checkout_url = initialize_subscription_payment(
+                                saved_hotel_id, selected_plan
+                            )
+                        except (RuntimeError, ValueError) as error:
+                            app.logger.warning(
+                                "Could not initialize signup subscription checkout: %s",
+                                error,
+                            )
+                            flash(
+                                "Your hotel is registered, but payment checkout "
+                                "could not start. Sign in as Manager and retry from "
+                                "Plan & Billing.",
+                                "error",
+                            )
+                            return redirect(url_for("login", role="manager"))
+                        return redirect(checkout_url, code=303)
                 return redirect(url_for("login", role="manager"))
             except Exception:
                 app.logger.exception("Failed to save hotel team accounts")
@@ -2287,12 +2693,213 @@ def manager_signup():
                         for account_role, (username, password) in fields.items()
                     ],
                 )
+                if not editing:
+                    now = datetime.now(timezone.utc)
+                    is_trial = selected_plan == "trial"
+                    db.execute(
+                        """INSERT INTO hotel_subscriptions
+                        (hotel_id, plan, status, trial_started_at, trial_ends_at,
+                         billing_email, pending_plan, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            saved_hotel_id,
+                            "trial" if is_trial else selected_plan,
+                            "trial" if is_trial else "pending",
+                            now.isoformat(timespec="seconds") if is_trial else None,
+                            (
+                                (now + timedelta(days=TRIAL_DAYS)).isoformat(
+                                    timespec="seconds"
+                                )
+                                if is_trial else None
+                            ),
+                            billing_email,
+                            None if is_trial else selected_plan,
+                            now.isoformat(timespec="seconds"),
+                        ),
+                    )
             db.commit()
         except sqlite3.IntegrityError:
             db.rollback()
             return render_signup_page("An account or username already exists.")
+        if not editing and selected_plan in {"monthly", "annual"}:
+            try:
+                checkout_url = initialize_subscription_payment(
+                    saved_hotel_id, selected_plan
+                )
+            except (RuntimeError, ValueError) as error:
+                app.logger.warning(
+                    "Could not initialize signup subscription checkout: %s",
+                    error,
+                )
+                flash(
+                    "Your hotel is registered, but payment checkout could not "
+                    "start. Sign in as Manager and retry from Plan & Billing.",
+                    "error",
+                )
+                return redirect(url_for("login", role="manager"))
+            return redirect(checkout_url, code=303)
         return redirect(url_for("login", role="manager"))
     return render_signup_page()
+
+
+@app.route("/billing")
+def billing():
+    hotel_id = session.get("hotel_id")
+    if not hotel_id or session.get("user_role") not in {
+        "manager", "director", "reception"
+    }:
+        return redirect(url_for("login", role="manager"))
+    ensure_legacy_subscription(hotel_id)
+    record = subscription_record(hotel_id)
+    access = subscription_access(hotel_id)
+    csrf_token = session.setdefault("billing_csrf_token", secrets.token_urlsafe(32))
+    return render_template(
+        "billing.html",
+        role=session["user_role"],
+        page="billing",
+        record=record,
+        access=access,
+        csrf_token=csrf_token,
+        is_manager=session["user_role"] == "manager",
+        trial_days=TRIAL_DAYS,
+        monthly_amount=MONTHLY_PLAN_AMOUNT,
+        annual_amount=ANNUAL_PLAN_AMOUNT,
+    )
+
+
+def billing_manager_required():
+    if session.get("user_role") != "manager" or not session.get("hotel_id"):
+        return redirect(url_for("login", role="manager"))
+    return None
+
+
+def valid_billing_csrf():
+    return bool(
+        session.get("billing_csrf_token")
+        and hmac.compare_digest(
+            session["billing_csrf_token"],
+            request.form.get("csrf_token", ""),
+        )
+    )
+
+
+@app.route("/billing/email", methods=["POST"])
+def save_billing_email():
+    denied = billing_manager_required()
+    if denied:
+        return denied
+    if not valid_billing_csrf():
+        return "Invalid billing form. Reload the page and try again.", 400
+    email = request.form.get("billing_email", "").strip().lower()
+    if len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        flash("Enter a valid billing email address.", "error")
+        return redirect(url_for("billing"))
+    hotel_id = session["hotel_id"]
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if SUPABASE_ENABLED:
+        get_supabase_admin().table("hotel_subscriptions").update({
+            "billing_email": email,
+            "updated_at": now,
+        }).eq("hotel_id", hotel_id).execute()
+    else:
+        db = get_db()
+        db.execute(
+            """UPDATE hotel_subscriptions SET billing_email = ?, updated_at = ?
+            WHERE hotel_id = ?""",
+            (email, now, hotel_id),
+        )
+        db.commit()
+    flash("Billing email saved.", "success")
+    return redirect(url_for("billing"))
+
+
+@app.route("/billing/subscribe", methods=["POST"])
+def start_subscription_payment():
+    denied = billing_manager_required()
+    if denied:
+        return denied
+    if not valid_billing_csrf():
+        return "Invalid billing form. Reload the page and try again.", 400
+    plan = request.form.get("plan", "").strip().lower()
+    try:
+        checkout_url = initialize_subscription_payment(
+            session["hotel_id"], plan
+        )
+    except (RuntimeError, ValueError) as error:
+        app.logger.warning("Could not initialize subscription checkout: %s", error)
+        flash(str(error), "error")
+        return redirect(url_for("billing"))
+    return redirect(checkout_url, code=303)
+
+
+def verify_paystack_subscription(reference):
+    if not reference or len(reference) > 120:
+        raise ValueError("The payment reference is invalid.")
+    data = paystack_request(
+        "/transaction/verify/" + quote(reference, safe="")
+    )
+    if (
+        data.get("status") != "success"
+        or data.get("reference") != reference
+        or not isinstance(data.get("amount"), int)
+        or data.get("currency") != "NGN"
+        or data.get("id") is None
+    ):
+        raise ValueError("Paystack has not confirmed this subscription payment.")
+    activate_subscription_payment(
+        reference, data["id"], data["amount"], data["currency"]
+    )
+
+
+@app.route("/billing/paystack/callback")
+def paystack_callback():
+    reference = request.args.get("reference") or request.args.get("trxref")
+    try:
+        verify_paystack_subscription(reference)
+    except ValueError as error:
+        app.logger.warning("Subscription callback verification failed: %s", error)
+        flash(str(error), "error")
+    except Exception:
+        app.logger.exception("Subscription callback verification failed")
+        flash("Payment could not be verified yet. Please check Plan & Billing.", "error")
+    else:
+        flash("Payment confirmed. Your subscription is now active.", "success")
+    if session.get("hotel_id"):
+        return redirect(url_for("billing"))
+    return redirect(url_for("login", role="manager"))
+
+
+@app.route("/billing/paystack/webhook", methods=["POST"])
+def paystack_webhook():
+    try:
+        secret = paystack_secret_key()
+    except ValueError:
+        app.logger.error("Paystack webhook received before payments were configured")
+        return "Webhook is not configured.", 503
+    raw_body = request.get_data(cache=False)
+    signature = request.headers.get("x-paystack-signature", "")
+    expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha512).hexdigest()
+    if not signature or not hmac.compare_digest(signature, expected):
+        return "Invalid signature.", 401
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError:
+        return "Invalid payload.", 400
+    if not isinstance(payload, dict):
+        return "Invalid payload.", 400
+    if payload.get("event") != "charge.success":
+        return "Ignored.", 200
+    transaction = payload.get("data") or {}
+    reference = transaction.get("reference")
+    try:
+        verify_paystack_subscription(reference)
+    except ValueError as error:
+        app.logger.warning("Paystack webhook verification failed: %s", error)
+        return "Payment not verified.", 400
+    except Exception:
+        app.logger.exception("Paystack webhook could not verify transaction")
+        return "Verification temporarily unavailable.", 503
+    return "OK.", 200
 
 
 def raise_supabase_reservation_conflict(error):

@@ -11,6 +11,7 @@
     <a href="{{ url_for('reference_workspace', role=role, page='finance') }}" {% if page == 'finance' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-finance"></use></svg>Finance</a>
     <a href="{{ url_for('reference_workspace', role=role, page='online-settings') }}" {% if page == 'online-settings' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-online"></use></svg>Online Booking Setup</a>
     <a href="{{ url_for('manager_signup') }}" {% if page == 'team' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-team"></use></svg>Hotel and Team</a>
+    <a href="{{ url_for('billing') }}" {% if page == 'billing' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-finance"></use></svg>Plan &amp; Billing</a>
   {% else %}
     <a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}" {% if page == 'dashboard' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-hotel"></use></svg>Dashboard</a>
     <a href="{{ url_for('reference_workspace', role=role, page='calendar') }}" {% if page == 'calendar' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg>Booking Calendar</a>

@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='icons.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='hotel-location.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='workspace_nav.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='subscriptions.css') }}">
 </head>
 <body class="reference-app">
   {% include '_icons.html' %}
@@ -28,6 +29,17 @@
           <label>City<input name="hotel_city" value="{{ hotel_location.city }}" maxlength="100" autocomplete="address-level2" required></label>
           <label>State / FCT<select name="hotel_state" autocomplete="address-level1" required><option value="">Select a state</option>{% for state_name in nigerian_states %}<option value="{{ state_name }}" {% if hotel_location.state == state_name %}selected{% endif %}>{{ state_name }}</option>{% endfor %}</select></label>
         </fieldset>
+        {% if not editing %}
+        <fieldset class="subscription-plan-fields"><legend>Choose a plan</legend>
+          <div class="subscription-plan-grid">
+            <label class="subscription-plan"><input type="radio" name="plan" value="trial" {% if selected_plan == 'trial' %}checked{% endif %} required><span><strong>Free for 30 days</strong><small>Full access during the trial. No payment required to start.</small></span></label>
+            <label class="subscription-plan"><input type="radio" name="plan" value="monthly" {% if selected_plan == 'monthly' %}checked{% endif %}><span><strong>Monthly · ₦80,000</strong><small>One-time payment for 30 days. Renew manually.</small></span></label>
+            <label class="subscription-plan"><input type="radio" name="plan" value="annual" {% if selected_plan == 'annual' %}checked{% endif %}><span><strong>Annual · ₦800,000</strong><small>One-time payment for 365 days. Renew manually.</small></span></label>
+          </div>
+          <ul class="subscription-features"><li>Manager, Director, and Reception workspaces</li><li>Room and team management</li><li>Booking calendar, reservations, and check-in/check-out</li><li>Online guest booking, room listings, and availability controls</li><li>Finance, payment records, and operational dashboards</li></ul>
+        </fieldset>
+        <label class="billing-email-field">Billing email<input name="billing_email" type="email" value="{{ billing_email }}" maxlength="254" autocomplete="email" required><small>Used for Paystack subscription receipts and payment checkout.</small></label>
+        {% endif %}
         {% if not editing %}<fieldset><legend>Manager login</legend><label>Username / Staff ID<input name="manager_username" autocomplete="username" required></label><label>Password<input name="manager_password" type="password" autocomplete="new-password" required></label></fieldset>{% endif %}{% for role_name, label in [('director','Director'),('reception','Reception')] %}<fieldset><legend>{{ label }} login</legend><label>Username / Staff ID<input name="{{ role_name }}_username" value="{{ account_map.get(role_name, '') if account_map else '' }}" autocomplete="username" required></label><label>Password<input name="{{ role_name }}_password" type="password" autocomplete="new-password" required></label></fieldset>{% endfor %}
         <div class="account-actions"><span>Passwords are protected by the authentication layer and are never displayed.</span><button class="primary-button" type="submit">{{ 'Save hotel and team changes' if editing else 'Register hotel and create accounts' }}</button></div>
       </form></section>

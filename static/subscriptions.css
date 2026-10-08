@@ -1,0 +1,30 @@
+.subscription-plan-fields{display:block!important}
+.subscription-plan-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.subscription-plan{display:flex;align-items:flex-start;gap:10px;padding:14px;border:1px solid #dbe3e8;border-radius:6px;background:#fff;cursor:pointer}
+.subscription-plan input{width:auto!important;margin:2px 0 0!important}
+.subscription-plan span,.subscription-plan strong,.subscription-plan small{display:block}
+.subscription-plan strong{color:#1b4b5e;font-size:13px}
+.subscription-plan small{margin-top:7px;color:#71838c;font-size:11px;line-height:1.5}
+.subscription-features{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 22px;margin:15px 0 0;padding:13px 15px;background:#f1f6f7;border-radius:5px;color:#526e78;font-size:11px}
+.subscription-features li{padding-left:2px}
+.billing-email-field{display:block;color:#526e78;font-size:12px}
+.billing-email-field input{display:block;width:100%;max-width:520px;margin-top:7px;border:1px solid #cbdce1;border-radius:4px;padding:10px;background:#fff;color:#294f5e}
+.billing-email-field small{display:block;margin-top:6px;color:#71838c}
+.billing-panel{max-width:850px}
+.billing-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:10px 0 22px}
+.billing-details>div{padding:13px;border:1px solid #e1e8eb;border-radius:5px}
+.billing-details dt{color:#71838c;font-size:11px}
+.billing-details dd{margin:7px 0 0;color:#1b4b5e;font-weight:700}
+.billing-email-form{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;padding:15px 0;border-top:1px solid #e1e8eb}
+.billing-email-form label{min-width:min(100%,320px);color:#526e78;font-size:12px}
+.billing-email-form input{display:block;width:100%;margin-top:7px;border:1px solid #cbdce1;border-radius:4px;padding:10px;background:#fff;color:#294f5e}
+.billing-plans{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:15px 0}
+.billing-plans form{display:grid;gap:15px;padding:16px;border:1px solid #dbe3e8;border-radius:6px}
+.billing-plans form>div{display:grid;gap:8px}
+.billing-plans strong{color:#1b4b5e}
+.billing-plans span{color:#71838c;font-size:13px}
+.billing-note{padding:12px;background:#f1f6f7;border-radius:4px;color:#58717b!important;font-size:12px}
+.billing-message{max-width:850px;margin:0 0 12px;padding:11px 13px;border-radius:4px;font-size:12px}
+.billing-message.error{background:#fbe8e5;color:#a34d45}
+.billing-message.success{background:#e2f3e9;color:#2b8556}
+@media(max-width:700px){.subscription-plan-grid,.billing-plans,.billing-details{grid-template-columns:1fr}.billing-email-form{align-items:stretch;flex-direction:column}.billing-email-form .primary-button{width:100%}}

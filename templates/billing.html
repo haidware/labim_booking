@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plan &amp; Billing | HAIDWARE Hotel Booking Platform</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference_match.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='icons.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='workspace_nav.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='subscriptions.css') }}">
+</head>
+<body class="reference-app">
+  {% include '_icons.html' %}
+  <header class="reference-header">
+    <div><strong><span class="brand-prefix">HAIDWARE</span> <span class="brand-title">HOTEL BOOKING PLATFORM</span></strong><span>Plan and billing</span><small>{{ role|title }}</small></div>
+    {% if access.status == 'expired' %}
+      <nav class="header-nav"><a href="{{ url_for('logout') }}">Log Out</a></nav>
+    {% else %}
+      {% include '_workspace_nav.html' %}
+    {% endif %}
+  </header>
+  <div class="reference-layout">
+    <main class="reference-main account-main">
+      <div class="heading-row">
+        <div>
+          <h1>{% if access.status == 'expired' %}Subscription required{% else %}Plan &amp; Billing{% endif %}</h1>
+          <p>
+            {% if access.status == 'expired' %}
+              Hotel workspace access is paused because its trial or subscription has ended.
+            {% elif access.status == 'trial' %}
+              Your hotel has full access during its free trial.
+            {% elif access.status == 'legacy' %}
+              This hotel keeps its existing access and is not required to subscribe.
+            {% else %}
+              Manage your hotel's subscription and billing details.
+            {% endif %}
+          </p>
+        </div>
+        <span class="read-only-note">{{ access.status|title }}</span>
+      </div>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}<div class="billing-message {{ category }}">{{ message }}</div>{% endfor %}
+      {% endwith %}
+      <section class="data-panel billing-panel">
+        <div class="panel-heading"><strong>Hotel subscription</strong><small>Payments are securely processed by Paystack</small></div>
+        {% if record %}
+          <dl class="billing-details">
+            <div><dt>Current plan</dt><dd>{{ record.plan|title }}</dd></div>
+            {% if record.trial_ends_at %}<div><dt>Trial ends</dt><dd>{{ record.trial_ends_at[:10] }}</dd></div>{% endif %}
+            {% if record.paid_until %}<div><dt>Paid through</dt><dd>{{ record.paid_until[:10] }}</dd></div>{% endif %}
+            <div><dt>Billing email</dt><dd>{{ record.billing_email or 'Not set' }}</dd></div>
+          </dl>
+        {% endif %}
+        {% if access.status == 'legacy' %}
+          <p class="billing-note">Your existing hotel access is grandfathered. No subscription is required.</p>
+        {% endif %}
+        {% if not is_manager %}
+          <p class="billing-note">Only the Hotel Manager can update billing details or subscribe. Please contact your Manager.</p>
+        {% elif record %}
+          <form class="billing-email-form" method="post" action="{{ url_for('save_billing_email') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label>Billing email<input type="email" name="billing_email" value="{{ record.billing_email }}" maxlength="254" autocomplete="email" required></label>
+            <button class="primary-button" type="submit">Save billing email</button>
+          </form>
+          {% if record.status == 'pending' %}<p class="billing-note">A payment is awaiting confirmation, or no payment has been completed yet. You may retry below.</p>{% endif %}
+          <div class="billing-plans">
+            <form method="post" action="{{ url_for('start_subscription_payment') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="plan" value="monthly">
+              <div><strong>Monthly</strong><span>₦{{ "{:,}".format(monthly_amount) }} / 30 days</span></div>
+              <button class="primary-button" type="submit">Pay monthly with Paystack</button>
+            </form>
+            <form method="post" action="{{ url_for('start_subscription_payment') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="plan" value="annual">
+              <div><strong>Annual</strong><span>₦{{ "{:,}".format(annual_amount) }} / 365 days</span></div>
+              <button class="primary-button" type="submit">Pay annually with Paystack</button>
+            </form>
+          </div>
+          <p class="billing-note">Plans are paid once; they do not auto-renew. A new verified payment extends access from the later of today or the current paid-through date.</p>
+        {% endif %}
+      </section>
+    </main>
+  </div>
+</body>
+</html>
