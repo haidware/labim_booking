@@ -17,7 +17,7 @@ from urllib.request import Request as UrlRequest, urlopen
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from flask import Flask, flash, g, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -32,6 +32,10 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE = BASE_DIR / "instance" / "booking_os.sqlite3"
 ROOM_PHOTO_DIRECTORY = BASE_DIR / "instance" / "room_photos"
+FLUTTER_WEB_BUILD_DIRECTORY = Path(os.getenv(
+    "FLUTTER_WEB_BUILD_DIRECTORY",
+    str(BASE_DIR / "hotel_booking_web_app" / "build" / "web"),
+))
 ROOM_PHOTO_BUCKET = "room-photos"
 ONLINE_HOLD_MINUTES = 30
 TRIAL_DAYS = 30
@@ -2189,6 +2193,16 @@ def handle_supabase_session_expired(error):
     return redirect(url_for("login", role=error.role))
 
 
+@app.after_request
+def add_public_api_cors_headers(response):
+    if request.path.startswith("/api/public/"):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        response.headers["Access-Control-Max-Age"] = "600"
+    return response
+
+
 @app.before_request
 def require_workspace_login():
     endpoint = request.endpoint
@@ -2229,7 +2243,135 @@ def require_workspace_login():
     return None
 
 
-@app.route("/book", methods=["GET", "POST"])
+def parse_public_stay_dates(args):
+    today = date.today()
+    default_check_in = today + timedelta(days=1)
+    default_check_out = default_check_in + timedelta(days=1)
+    try:
+        check_in = date.fromisoformat(
+            args.get("check_in", default_check_in.isoformat())
+        )
+        check_out = date.fromisoformat(
+            args.get("check_out", default_check_out.isoformat())
+        )
+    except ValueError as error:
+        raise ValueError("Choose valid arrival and departure dates.") from error
+    if check_in < today:
+        raise ValueError("Arrival date cannot be in the past.")
+    if check_out <= check_in:
+        raise ValueError("Departure must be after arrival.")
+    return check_in, check_out
+
+
+def public_api_photo_url(photo_url):
+    if not photo_url or photo_url.startswith(("https://", "http://")):
+        return photo_url
+    return request.url_root.rstrip("/") + "/" + photo_url.lstrip("/")
+
+
+@app.get("/api/public/config")
+def public_booking_api_config():
+    return jsonify({
+        "states": NIGERIAN_STATES,
+        "price_ranges": [
+            {"key": key, "label": label}
+            for key, label, _minimum, _maximum in PUBLIC_PRICE_RANGES
+        ],
+    })
+
+
+@app.get("/api/public/hotels")
+def public_booking_api_hotels():
+    try:
+        check_in, check_out = parse_public_stay_dates(request.args)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    price_range = request.args.get("price_range", "").strip()
+    if price_range and price_range_bounds(price_range) is None:
+        return jsonify({"error": "Choose a valid room price range."}), 400
+    hotels = public_hotels()
+    hotel_results = []
+    for hotel in hotels:
+        rooms = available_online_rooms(
+            check_in, check_out, hotel_id=hotel["id"]
+        )
+        matching_rooms = filter_rooms_by_price_range(rooms, price_range)
+        if price_range and not matching_rooms:
+            continue
+        preview_room = matching_rooms[0] if matching_rooms else None
+        hotel_results.append({
+            **hotel,
+            "available_room_count": len(matching_rooms),
+            "lowest_rate": (
+                min(room["rate"] for room in matching_rooms)
+                if matching_rooms else None
+            ),
+            "cover_photo_url": (
+                public_api_photo_url(preview_room["photo_urls"][0])
+                if preview_room and preview_room.get("photo_urls")
+                else None
+            ),
+        })
+    return jsonify({"hotels": hotel_results})
+
+
+@app.get("/api/public/hotels/<hotel_slug>/rooms")
+def public_booking_api_rooms(hotel_slug):
+    hotels = public_hotels()
+    hotel = next(
+        (item for item in hotels if item["slug"] == hotel_slug),
+        None,
+    )
+    if not hotel:
+        return jsonify({
+            "error": "This hotel is not currently accepting online bookings."
+        }), 404
+    try:
+        check_in, check_out = parse_public_stay_dates(request.args)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    price_range = request.args.get("price_range", "").strip()
+    if price_range and price_range_bounds(price_range) is None:
+        return jsonify({"error": "Choose a valid room price range."}), 400
+    rooms = filter_rooms_by_price_range(
+        available_online_rooms(
+            check_in, check_out, hotel_id=hotel["id"]
+        ),
+        price_range,
+    )
+    return jsonify({
+        "hotel": hotel,
+        "check_in": check_in.isoformat(),
+        "check_out": check_out.isoformat(),
+        "rooms": [{
+            "number": str(room["number"]),
+            "type": room["type"],
+            "beds": room["beds"],
+            "rate": room["rate"],
+            "description": room.get("description", ""),
+            "photo_urls": [
+                public_api_photo_url(photo_url)
+                for photo_url in room.get("photo_urls", [])
+            ],
+        } for room in rooms],
+    })
+
+
+@app.post("/api/public/bookings")
+def public_booking_api_create():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Send booking details as a JSON object."}), 400
+    try:
+        create_online_booking(payload)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    return jsonify({
+        "booking": session["online_booking_confirmation"],
+    }), 201
+
+
+@app.route("/book-legacy", methods=["GET", "POST"])
 def public_booking():
     today = date.today()
     default_check_in = today + timedelta(days=1)
@@ -2334,6 +2476,21 @@ def public_booking():
         price_ranges=PUBLIC_PRICE_RANGES,
         selected_price_range=selected_price_range,
     )
+
+
+@app.get("/book/")
+def flutter_booking_app_trailing_slash():
+    return redirect(
+        url_for("flutter_booking_app", **request.args.to_dict(flat=False)),
+        code=308,
+    )
+
+
+@app.get("/book")
+def flutter_booking_app():
+    if not (FLUTTER_WEB_BUILD_DIRECTORY / "index.html").is_file():
+        return "The Flutter booking app has not been built.", 503
+    return send_from_directory(FLUTTER_WEB_BUILD_DIRECTORY, "index.html")
 
 
 @app.get("/booking/confirmation")
@@ -3750,6 +3907,13 @@ def manage_room(room_number):
 
 with app.app_context():
     init_db()
+
+
+@app.get("/<path:asset_path>")
+def flutter_booking_asset(asset_path):
+    if not FLUTTER_WEB_BUILD_DIRECTORY.is_dir():
+        return "The Flutter booking app has not been built.", 503
+    return send_from_directory(FLUTTER_WEB_BUILD_DIRECTORY, asset_path)
 
 
 if __name__ == "__main__":

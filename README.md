@@ -48,3 +48,7 @@ The public Data API must expose the `hotels`, `profiles`, `rooms`, `reservations
 6. Deploy with the included Railway config and Procfile; Gunicorn serves the Flask app and `/health` is the health endpoint.
 
 SQLite remains a local fallback. The current Railway volume is mounted at `/app/instance` for that fallback only.
+
+## Flutter guest booking web app
+
+The Flutter Web guest booking PWA is served at `/book` (for example, `https://labim-booking-production.up.railway.app/book`). It reads live hotels, listed rooms, and availability through `/api/public/*` and submits booking requests into the existing reservation and Reception-notification workflow. Railway builds it with the root `Dockerfile`; a rooms-management app can link to `/book?hotel=<slug>`. The previous server-rendered booking page remains available at `/book-legacy`. Run the Flutter app locally with the Flask service active: `cd hotel_booking_web_app; flutter pub get; flutter run -d chrome --dart-define=API_BASE_URL=http://127.0.0.1:5000`. See `hotel_booking_web_app/README.md` for details.

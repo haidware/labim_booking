@@ -57,7 +57,7 @@
 
       {% elif role == 'manager' and page == 'online-settings' %}
       <h1>Online Booking Setup</h1><p>Maintain guest-facing room photos and descriptions, configure transfer and Reception contact details. Reception controls which rooms are available to guests.</p>
-      <section class="data-panel"><div class="panel-heading"><strong>Guest booking link for {{ hotel_name }}</strong><small>Guests can also browse and select your hotel from the platform booking page.</small></div><p><a href="{{ url_for('public_booking', hotel=hotel_slug) }}" target="_blank" rel="noopener noreferrer">{{ request.url_root }}book?hotel={{ hotel_slug }}</a></p></section>
+      <section class="data-panel"><div class="panel-heading"><strong>Guest booking link for {{ hotel_name }}</strong><small>Guests can also browse and select your hotel from the platform booking page.</small></div><p><a href="{{ url_for('flutter_booking_app', hotel=hotel_slug) }}" target="_blank" rel="noopener noreferrer">{{ request.url_root }}book?hotel={{ hotel_slug }}</a></p></section>
       <section class="data-panel">
         <div class="panel-heading"><strong>Payment details and Reception notifications</strong><small>Guests receive the transfer details; Reception receives new booking requests by email.</small></div>
         <form class="online-settings-form" method="post">
@@ -96,7 +96,7 @@
       {% elif role == 'reception' and page == 'online' %}
       <h1>Online Booking Requests</h1><p>Pending bank transfers hold the selected dates for 30 minutes. Verify each transfer before confirming it as paid.</p>
       <section class="data-panel">
-        <div class="panel-heading"><strong>Awaiting transfer verification</strong><a href="{{ url_for('public_booking') }}" target="_blank" rel="noopener">Open guest booking page ↗</a></div>
+        <div class="panel-heading"><strong>Awaiting transfer verification</strong><a href="{{ url_for('flutter_booking_app') }}" target="_blank" rel="noopener">Open guest booking page ↗</a></div>
         {% if pending_online_bookings %}
         <div class="table-wrap"><table class="manager-bookings">
           <thead><tr><th>Reference / Room</th><th>Guest</th><th>Stay</th><th>Amount</th><th>Hold expires</th><th>Action</th></tr></thead>

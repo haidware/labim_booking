@@ -1,0 +1,10 @@
+.git
+.venv
+venv
+instance
+__pycache__
+**/__pycache__
+**/.env
+**/.env.*
+hotel_booking_web_app/.dart_tool
+hotel_booking_web_app/build

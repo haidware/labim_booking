@@ -417,20 +417,29 @@ class MultiHotelFlowTests(unittest.TestCase):
             self.app_module.get_db().commit()
 
         guest = self.app_module.app.test_client()
-        directory = guest.get("/book")
+        directory = guest.get("/book-legacy")
         self.assertEqual(directory.status_code, 200)
         self.assertNotIn(b"Expired Online Hotel", directory.data)
         direct_hotel_page = guest.get(
-            "/book", query_string={"hotel": hotel["slug"]}
+            "/book-legacy", query_string={"hotel": hotel["slug"]}
         )
         self.assertEqual(direct_hotel_page.status_code, 200)
         self.assertNotIn(b"Expired Listing", direct_hotel_page.data)
+
+        api_rooms = guest.get(
+            f"/api/public/hotels/{hotel['slug']}/rooms",
+            query_string={
+                "check_in": (date.today() + timedelta(days=3)).isoformat(),
+                "check_out": (date.today() + timedelta(days=4)).isoformat(),
+            },
+        )
+        self.assertEqual(api_rooms.status_code, 404)
 
         with guest.session_transaction() as guest_session:
             csrf_token = guest_session["public_booking_csrf"]
         check_in = (date.today() + timedelta(days=3)).isoformat()
         check_out = (date.today() + timedelta(days=4)).isoformat()
-        response = guest.post("/book", data={
+        response = guest.post("/book-legacy", data={
             "csrf_token": csrf_token,
             "hotel_id": hotel_id,
             "hotel_slug": hotel["slug"],
@@ -446,12 +455,166 @@ class MultiHotelFlowTests(unittest.TestCase):
             b"online booking is temporarily unavailable",
             response.data,
         )
+        api_booking = guest.post(
+            "/api/public/bookings",
+            json={
+                "hotel_id": hotel_id,
+                "hotel_slug": hotel["slug"],
+                "room_number": "101",
+                "check_in": check_in,
+                "check_out": check_out,
+                "guest_name": "Blocked API Guest",
+                "email": "blocked-api@example.com",
+                "phone": "08000000000",
+            },
+        )
+        self.assertEqual(api_booking.status_code, 400)
+        self.assertIn(
+            "subscription is inactive",
+            api_booking.get_json()["error"],
+        )
         with self.app_module.app.app_context():
             reservation_count = self.app_module.get_db().execute(
                 "SELECT COUNT(*) FROM reservations WHERE hotel_id = ?",
                 (hotel_id,),
             ).fetchone()[0]
         self.assertEqual(reservation_count, 0)
+
+    def test_flutter_public_api_search_room_and_booking_flow(self):
+        manager = self.app_module.app.test_client()
+        hotel_id = self.register_hotel(
+            manager, "Flutter API Hotel", "flutter-api",
+            "15 Market Road", "Flutter City", "Lagos",
+        )
+        self.configure_online_booking(
+            manager, hotel_id, "API Suite", 75000
+        )
+        with self.app_module.app.app_context():
+            self.app_module.get_db().execute(
+                """UPDATE rooms SET status = 'available'
+                WHERE hotel_id = ? AND number = '101'""",
+                (hotel_id,),
+            )
+            self.app_module.get_db().commit()
+        guest = self.app_module.app.test_client()
+        config_response = guest.get("/api/public/config")
+        self.assertEqual(config_response.status_code, 200)
+        self.assertIn(
+            "Lagos",
+            config_response.get_json()["states"],
+        )
+        self.assertIn(
+            "10000-50000",
+            {
+                price_range["key"]
+                for price_range in config_response.get_json()["price_ranges"]
+            },
+        )
+
+        check_in = (date.today() + timedelta(days=4)).isoformat()
+        check_out = (date.today() + timedelta(days=5)).isoformat()
+        hotels_response = guest.get("/api/public/hotels", query_string={
+            "check_in": check_in,
+            "check_out": check_out,
+            "city": "flutter",
+        })
+        self.assertEqual(hotels_response.status_code, 200)
+        self.assertEqual(
+            hotels_response.headers["Access-Control-Allow-Origin"], "*"
+        )
+        hotel_result = hotels_response.get_json()["hotels"][0]
+        self.assertTrue(hotel_result["slug"].startswith("flutter-api-hotel"))
+        self.assertEqual(hotel_result["available_room_count"], 1)
+        self.assertIn(hotel_id, hotel_result["cover_photo_url"])
+
+        rooms_response = guest.get(
+            f"/api/public/hotels/{hotel_result['slug']}/rooms",
+            query_string={
+                "check_in": check_in,
+                "check_out": check_out,
+            },
+        )
+        self.assertEqual(rooms_response.status_code, 200)
+        room_result = rooms_response.get_json()["rooms"][0]
+        self.assertEqual(room_result["type"], "API Suite")
+        self.assertEqual(room_result["rate"], 75000)
+
+        with patch.object(
+            self.app_module, "send_reception_booking_email"
+        ) as send_reception_email:
+            response = guest.post(
+                "/api/public/bookings",
+                json={
+                    "hotel_id": hotel_id,
+                    "hotel_slug": hotel_result["slug"],
+                    "room_number": room_result["number"],
+                    "check_in": check_in,
+                    "check_out": check_out,
+                    "guest_name": "Flutter Guest",
+                    "email": "flutter-guest@example.com",
+                    "phone": "08000000000",
+                },
+            )
+        self.assertEqual(response.status_code, 201)
+        booking_result = response.get_json()["booking"]
+        self.assertEqual(booking_result["hotel_name"], "Flutter API Hotel")
+        self.assertEqual(booking_result["amount"], 75000)
+        self.assertEqual(booking_result["bank_name"], "API Suite Bank")
+        self.assertTrue(booking_result["whatsapp_url"].startswith("https://wa.me/"))
+        send_reception_email.assert_called_once()
+
+    def test_flutter_pwa_is_served_at_book_and_assets_at_root(self):
+        with tempfile.TemporaryDirectory() as build_directory:
+            build_path = Path(build_directory)
+            (build_path / "index.html").write_text(
+                '<base href="/"><link rel="manifest" href="manifest.json">',
+                encoding="utf-8",
+            )
+            (build_path / "manifest.json").write_text(
+                '{"start_url":"/book","scope":"/"}',
+                encoding="utf-8",
+            )
+            (build_path / "flutter_bootstrap.js").write_text(
+                "window.flutterBootstrapLoaded = true;",
+                encoding="utf-8",
+            )
+            client = self.app_module.app.test_client()
+            with patch.object(
+                self.app_module,
+                "FLUTTER_WEB_BUILD_DIRECTORY",
+                build_path,
+            ):
+                landing = client.get("/")
+                self.assertIn(b'href="/book"', landing.data)
+
+                trailing_slash = client.get(
+                    "/book/?hotel=test-hotel",
+                    follow_redirects=False,
+                )
+                self.assertEqual(trailing_slash.status_code, 308)
+                self.assertEqual(
+                    trailing_slash.headers["Location"],
+                    "/book?hotel=test-hotel",
+                )
+
+                app_page = client.get("/book?hotel=test-hotel")
+                self.assertEqual(app_page.status_code, 200)
+                self.assertIn(b'<base href="/">', app_page.data)
+                self.assertIn(b"hotel=test-hotel", app_page.request.query_string)
+                app_page.close()
+
+                manifest = client.get("/manifest.json")
+                self.assertEqual(manifest.status_code, 200)
+                self.assertIn(b'"start_url":"/book"', manifest.data)
+                manifest.close()
+
+                bootstrap = client.get("/flutter_bootstrap.js")
+                self.assertEqual(bootstrap.status_code, 200)
+                self.assertIn(b"flutterBootstrapLoaded", bootstrap.data)
+                bootstrap.close()
+
+        legacy_page = client.get("/book-legacy")
+        self.assertEqual(legacy_page.status_code, 200)
 
     def test_monthly_subscription_activates_only_after_paystack_verification(self):
         client = self.app_module.app.test_client()
@@ -817,24 +980,24 @@ class MultiHotelFlowTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 302)
         guest = self.app_module.app.test_client()
-        hotel_directory = guest.get("/book")
+        hotel_directory = guest.get("/book-legacy")
         self.assertEqual(hotel_directory.status_code, 200)
         self.assertIn(b"Labim Test Hotel", hotel_directory.data)
         self.assertIn(b"Other Test Hotel", hotel_directory.data)
         self.assertIn(b"14 Independence Avenue", hotel_directory.data)
         self.assertIn(
-            f"/book?hotel={hotel_two['slug']}".encode(),
+            f"/book-legacy?hotel={hotel_two['slug']}".encode(),
             hotel_directory.data,
         )
         self.assertNotIn(b'<select name="hotel"', hotel_directory.data)
-        filtered_directory = guest.get("/book", query_string={
+        filtered_directory = guest.get("/book-legacy", query_string={
             "state": "Enugu",
             "city": "enu",
         })
         self.assertEqual(filtered_directory.status_code, 200)
         self.assertIn(b"Other Test Hotel", filtered_directory.data)
         self.assertNotIn(b"Labim Test Hotel", filtered_directory.data)
-        search = guest.get("/book", query_string={
+        search = guest.get("/book-legacy", query_string={
             "hotel": hotel_two["slug"],
             "check_in": stay_start,
             "check_out": stay_end,
@@ -848,7 +1011,7 @@ class MultiHotelFlowTests(unittest.TestCase):
             "reference": "true",
         })
         self.assertEqual(response.status_code, 302)
-        search = guest.get("/book", query_string={
+        search = guest.get("/book-legacy", query_string={
             "hotel": hotel_two["slug"],
             "check_in": stay_start,
             "check_out": stay_end,
@@ -859,7 +1022,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertIn(b"Photo 1 of Room 101", search.data)
         self.assertIn(b"Photo 2 of Room 101", search.data)
 
-        price_filtered_directory = guest.get("/book", query_string={
+        price_filtered_directory = guest.get("/book-legacy", query_string={
             "check_in": stay_start,
             "check_out": stay_end,
             "price_range": "50000-100000",
@@ -869,7 +1032,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertIn(b"1 available room from", price_filtered_directory.data)
         self.assertNotIn(b"Labim Test Hotel", price_filtered_directory.data)
 
-        price_filtered_search = guest.get("/book", query_string={
+        price_filtered_search = guest.get("/book-legacy", query_string={
             "hotel": hotel_two["slug"],
             "check_in": stay_start,
             "check_out": stay_end,
@@ -886,7 +1049,7 @@ class MultiHotelFlowTests(unittest.TestCase):
             "send_reception_booking_email",
         ) as send_reception_email:
             send_reception_email.return_value = None
-            response = guest.post("/book", data={
+            response = guest.post("/book-legacy", data={
                 "csrf_token": csrf_token,
                 "hotel_id": hotel_two_id,
                 "hotel_slug": hotel_two["slug"],
@@ -994,7 +1157,7 @@ class MultiHotelFlowTests(unittest.TestCase):
                 "cleaning",
             )
 
-        hotel_two_availability = guest.get("/book", query_string={
+        hotel_two_availability = guest.get("/book-legacy", query_string={
             "hotel": hotel_two["slug"],
             "check_in": stay_start,
             "check_out": stay_end,
@@ -1002,7 +1165,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertIn(b"No listed rooms available", hotel_two_availability.data)
         with self.app_module.app.app_context():
             hotel_one = self.app_module.hotel_details(hotel_one_id)
-        hotel_one_availability = guest.get("/book", query_string={
+        hotel_one_availability = guest.get("/book-legacy", query_string={
             "hotel": hotel_one["slug"],
             "check_in": stay_start,
             "check_out": stay_end,
@@ -1019,7 +1182,7 @@ class MultiHotelFlowTests(unittest.TestCase):
             "reference": "true",
         })
         self.assertEqual(response.status_code, 302)
-        hotel_one_availability = guest.get("/book", query_string={
+        hotel_one_availability = guest.get("/book-legacy", query_string={
             "hotel": hotel_one["slug"],
             "check_in": stay_start,
             "check_out": stay_end,

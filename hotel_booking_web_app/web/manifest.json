@@ -1,0 +1,36 @@
+{
+    "name": "HAIDWARE Hotel Booking",
+    "short_name": "Hotel Booking",
+    "start_url": "/book",
+    "scope": "/",
+    "display": "standalone",
+    "background_color": "#FBFCFC",
+    "theme_color": "#17607A",
+    "description": "Find hotels, check live room availability, and request your stay.",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}
