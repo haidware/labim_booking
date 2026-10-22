@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 from datetime import date, timedelta
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 
 class MultiHotelFlowTests(unittest.TestCase):
@@ -561,9 +562,19 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(booking_result["amount"], 75000)
         self.assertEqual(booking_result["bank_name"], "API Suite Bank")
         self.assertTrue(booking_result["whatsapp_url"].startswith("https://wa.me/"))
+        whatsapp_message = parse_qs(
+            urlparse(booking_result["whatsapp_url"]).query
+        )["text"][0]
+        self.assertIn("Booking reference:", whatsapp_message)
+        self.assertIn("Flutter API Hotel", whatsapp_message)
+        self.assertIn("Flutter Guest", whatsapp_message)
+        self.assertIn("API Suite (", whatsapp_message)
+        self.assertIn("Amount transferred: NGN 75,000", whatsapp_message)
+        self.assertIn("verify the payment and confirm my booking", whatsapp_message)
+        self.assertIn("attach receipt", whatsapp_message)
         send_reception_email.assert_called_once()
 
-    def test_flutter_pwa_is_served_at_book_and_assets_at_root(self):
+    def test_reference_booking_flow_is_at_book_and_flutter_pwa_at_book_app(self):
         with tempfile.TemporaryDirectory() as build_directory:
             build_path = Path(build_directory)
             (build_path / "index.html").write_text(
@@ -571,7 +582,7 @@ class MultiHotelFlowTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (build_path / "manifest.json").write_text(
-                '{"start_url":"/book","scope":"/"}',
+                '{"start_url":"/book-app","scope":"/"}',
                 encoding="utf-8",
             )
             (build_path / "flutter_bootstrap.js").write_text(
@@ -597,7 +608,23 @@ class MultiHotelFlowTests(unittest.TestCase):
                     "/book?hotel=test-hotel",
                 )
 
-                app_page = client.get("/book?hotel=test-hotel")
+                reference_page = client.get("/book")
+                self.assertEqual(reference_page.status_code, 200)
+                self.assertIn(b"Choose a hotel", reference_page.data)
+                self.assertIn(b"Find hotels and rooms", reference_page.data)
+                reference_page.close()
+
+                app_slash = client.get(
+                    "/book-app/?hotel=test-hotel",
+                    follow_redirects=False,
+                )
+                self.assertEqual(app_slash.status_code, 308)
+                self.assertEqual(
+                    app_slash.headers["Location"],
+                    "/book-app?hotel=test-hotel",
+                )
+
+                app_page = client.get("/book-app?hotel=test-hotel")
                 self.assertEqual(app_page.status_code, 200)
                 self.assertIn(b'<base href="/">', app_page.data)
                 self.assertIn(b"hotel=test-hotel", app_page.request.query_string)
@@ -605,7 +632,7 @@ class MultiHotelFlowTests(unittest.TestCase):
 
                 manifest = client.get("/manifest.json")
                 self.assertEqual(manifest.status_code, 200)
-                self.assertIn(b'"start_url":"/book"', manifest.data)
+                self.assertIn(b'"start_url":"/book-app"', manifest.data)
                 manifest.close()
 
                 bootstrap = client.get("/flutter_bootstrap.js")
@@ -986,7 +1013,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertIn(b"Other Test Hotel", hotel_directory.data)
         self.assertIn(b"14 Independence Avenue", hotel_directory.data)
         self.assertIn(
-            f"/book-legacy?hotel={hotel_two['slug']}".encode(),
+            f"/book?hotel={hotel_two['slug']}".encode(),
             hotel_directory.data,
         )
         self.assertNotIn(b'<select name="hotel"', hotel_directory.data)

@@ -346,69 +346,82 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   Widget _buildHeader() {
     return Container(
       decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Color(0xFFE6ECEE))),
+        color: Color(0xFF153D4C),
+        border: Border(bottom: BorderSide(color: Color(0xFF244F5D))),
       ),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1240),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF153D4C),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.hotel_rounded,
-                    color: Colors.white,
-                    size: 22,
-                  ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 460;
+              return Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: compact ? 16 : 24,
+                  vertical: 15,
                 ),
-                const SizedBox(width: 12),
-                const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
                   children: [
-                    Text(
-                      'HAIDWARE',
-                      style: TextStyle(
-                        color: Color(0xFF153D4C),
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.2,
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF244F5D),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.hotel_rounded,
+                        color: Colors.white,
+                        size: 22,
                       ),
                     ),
-                    Text(
-                      'HOTEL BOOKING',
-                      style: TextStyle(
-                        color: Color(0xFF789098),
-                        fontSize: 10,
-                        letterSpacing: 1.25,
+                    const SizedBox(width: 12),
+                    const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'HAIDWARE',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                        Text(
+                          'HOTEL BOOKING',
+                          style: TextStyle(
+                            color: Color(0xFFC1D5D9),
+                            fontSize: 10,
+                            letterSpacing: 1.25,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    Tooltip(
+                      message: 'Secure guest booking',
+                      child: const Icon(
+                        Icons.lock_outline,
+                        size: 16,
+                        color: Color(0xFFC1D5D9),
                       ),
                     ),
+                    if (!compact) ...[
+                      const SizedBox(width: 7),
+                      const Text(
+                        'Secure guest booking',
+                        style: TextStyle(
+                          color: Color(0xFFC1D5D9),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
-                const Spacer(),
-                const Icon(
-                  Icons.lock_outline,
-                  size: 16,
-                  color: Color(0xFF71868C),
-                ),
-                const SizedBox(width: 7),
-                const Text(
-                  'Secure guest booking',
-                  style: TextStyle(
-                    color: Color(0xFF71868C),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
+              );
+            },
           ),
         ),
       ),
@@ -422,37 +435,35 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1240),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 38, 24, 56),
+            padding: const EdgeInsets.fromLTRB(24, 32, 24, 56),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildHero(),
-                const SizedBox(height: 27),
+                Text(
+                  'Choose a hotel',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  'Choose from our hotels to begin your booking.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 22),
                 _buildSearchPanel(),
-                const SizedBox(height: 38),
+                const SizedBox(height: 28),
                 Row(
                   children: [
                     Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Find your stay',
-                            style: Theme.of(context).textTheme.headlineMedium,
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            'Hotels and availability are updated directly from the booking system.',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ],
+                      child: Text(
+                        'Hotels and available rooms',
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
                     ),
                     if (!_loadingHotels && _hotels.isNotEmpty)
                       _ResultCount(count: _hotels.length),
                   ],
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
                 if (_error != null) _ErrorBanner(message: _error!),
                 if (_loadingHotels)
                   const _LoadingPanel(label: 'Finding available hotels…')
@@ -478,7 +489,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                           crossAxisCount: columns,
                           crossAxisSpacing: 18,
                           mainAxisSpacing: 18,
-                          childAspectRatio: columns == 1 ? 1.38 : 0.88,
+                          childAspectRatio: columns == 1 ? 1.05 : 0.88,
                         ),
                         itemBuilder: (context, index) {
                           final hotel = _hotels[index];
@@ -497,89 +508,6 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildHero() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 34),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEAF3F4),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFFDCE9EB)),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 650;
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 11,
-                        vertical: 7,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                      child: const Text(
-                        'NIGERIA · HOTEL COLLECTION',
-                        style: TextStyle(
-                          color: Color(0xFF17607A),
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.1,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'A better stay\nstarts here.',
-                      style: Theme.of(context).textTheme.headlineLarge
-                          ?.copyWith(fontSize: compact ? 34 : 46, height: 1.08),
-                    ),
-                    const SizedBox(height: 12),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 480),
-                      child: const Text(
-                        'Discover trusted hotels, check real room availability, '
-                        'and request your booking in just a few steps.',
-                        style: TextStyle(
-                          color: Color(0xFF596B70),
-                          fontSize: 15,
-                          height: 1.65,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (!compact) ...[
-                const SizedBox(width: 30),
-                Container(
-                  width: 160,
-                  height: 160,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFD4E7E8),
-                    borderRadius: BorderRadius.circular(80),
-                  ),
-                  child: const Icon(
-                    Icons.apartment_rounded,
-                    size: 78,
-                    color: Color(0xFF17607A),
-                  ),
-                ),
-              ],
-            ],
-          );
-        },
       ),
     );
   }
@@ -630,6 +558,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
               SizedBox(
                 width: fieldWidth,
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   initialValue: _stateFilter.isEmpty ? null : _stateFilter,
                   decoration: const InputDecoration(
                     labelText: 'STATE / FCT',
@@ -664,6 +593,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
               SizedBox(
                 width: fieldWidth,
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   initialValue: _priceRange.isEmpty ? null : _priceRange,
                   decoration: const InputDecoration(
                     labelText: 'PRICE PER NIGHT',
@@ -722,7 +652,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                 TextButton.icon(
                   onPressed: _backToHotels,
                   icon: const Icon(Icons.arrow_back_rounded),
-                  label: const Text('All hotels'),
+                  label: const Text('Choose a different hotel'),
                   style: TextButton.styleFrom(
                     foregroundColor: const Color(0xFF17607A),
                   ),
@@ -736,15 +666,13 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            hotel.name,
+                            'Find your room at ${hotel.name}',
                             style: Theme.of(context).textTheme.headlineMedium,
                           ),
                           const SizedBox(height: 7),
                           Text(
-                            [
-                              hotel.address,
-                              hotel.location,
-                            ].where((part) => part.isNotEmpty).join(' · '),
+                            'Select your dates to see the rooms listed and available.'
+                            '${hotel.location.isEmpty ? '' : ' ${hotel.location}'}',
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
                         ],
@@ -791,7 +719,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                           crossAxisCount: columns,
                           crossAxisSpacing: 18,
                           mainAxisSpacing: 18,
-                          childAspectRatio: columns == 1 ? 1.35 : 0.85,
+                          childAspectRatio: columns == 1 ? 1.0 : 0.85,
                         ),
                         itemBuilder: (context, index) {
                           final room = _rooms[index];
@@ -901,6 +829,13 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                   'Reception will confirm the booking after verifying payment.',
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
+                const SizedBox(height: 14),
+                const _InfoNote(
+                  icon: Icons.payments_outlined,
+                  text:
+                      'Transfer the exact amount to the account below before the hold expires. '
+                      'After paying, tap the WhatsApp button and send the prefilled payment confirmation.',
+                ),
                 const SizedBox(height: 24),
                 _ConfirmationCard(
                   title: 'Your booking',
@@ -977,7 +912,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                     }
                   },
                   icon: const Icon(Icons.chat_rounded),
-                  label: const Text('Message reception on WhatsApp'),
+                  label: const Text('Confirm payment on WhatsApp'),
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFF208A62),
                     foregroundColor: Colors.white,
@@ -1192,22 +1127,30 @@ class _RoomCard extends StatelessWidget {
                   ).textTheme.titleLarge?.copyWith(fontSize: 17),
                 ),
                 const SizedBox(height: 7),
-                Row(
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 6,
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    const Icon(
-                      Icons.bed_outlined,
-                      color: Color(0xFF71868C),
-                      size: 17,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.bed_outlined,
+                          color: Color(0xFF71868C),
+                          size: 17,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          '${room.beds} bed${room.beds == 1 ? '' : 's'}',
+                          style: const TextStyle(
+                            color: Color(0xFF71868C),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 5),
-                    Text(
-                      '${room.beds} bed${room.beds == 1 ? '' : 's'}',
-                      style: const TextStyle(
-                        color: Color(0xFF71868C),
-                        fontSize: 12,
-                      ),
-                    ),
-                    const Spacer(),
                     Text(
                       '${naira.format(room.rate)}/night',
                       style: const TextStyle(
@@ -1598,30 +1541,38 @@ class _DetailRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 130,
-            child: Text(
-              label,
-              style: const TextStyle(color: Color(0xFF71868C), fontSize: 13),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: TextStyle(
-                color: const Color(0xFF153D4C),
-                fontSize: 13,
-                fontWeight: emphasized ? FontWeight.w800 : FontWeight.w600,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final labelWidth = constraints.maxWidth < 380 ? 96.0 : 130.0;
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: [
+              SizedBox(
+                width: labelWidth,
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    color: Color(0xFF71868C),
+                    fontSize: 13,
+                  ),
+                ),
               ),
-            ),
+              Expanded(
+                child: Text(
+                  value,
+                  style: TextStyle(
+                    color: const Color(0xFF153D4C),
+                    fontSize: 13,
+                    fontWeight: emphasized ? FontWeight.w800 : FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (trailing != null) trailing!,
+            ],
           ),
-          if (trailing != null) trailing!,
-        ],
-      ),
+        );
+      },
     );
   }
 }

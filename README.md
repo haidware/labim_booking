@@ -79,10 +79,10 @@ retained temporarily for rollback.
 
 ## Flutter guest booking web app
 
-The Flutter Web guest booking PWA is served at `/book` on the active host. It
-uses the same origin as Flask for `/api/public/*` and submits booking requests
-into the existing reservation and Reception-notification workflow. A rooms app
-can link to `/book?hotel=<slug>`. The previous server-rendered booking page
-remains available at `/book-legacy`. Run the Flutter app locally with the Flask
-service active: `cd hotel_booking_web_app; flutter pub get; flutter run -d chrome --dart-define=API_BASE_URL=http://127.0.0.1:5000`.
-See `hotel_booking_web_app/README.md` for details.
+The server-rendered guest booking flow at `/book` matches the intended hotel
+directory, date/price search, room selection, guest details, and payment
+handoff. It uses the same origin as Flask and submits directly into the existing
+reservation and Reception-notification workflow. A rooms app can link to
+`/book?hotel=<slug>`. `/book-legacy` remains an alias for this flow. The Flutter
+guest booking PWA is available separately at `/book-app`; see
+`hotel_booking_web_app/README.md` for local development details.

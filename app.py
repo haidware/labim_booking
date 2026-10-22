@@ -1690,12 +1690,15 @@ def create_online_booking(form):
         )
         email_notification_sent = False
     message = (
-        f"Hello, I submitted online booking request {reservation_id} for "
-        f"{hotel['name']}, "
-        f"{guest_name}, room {room_number}, {check_in.isoformat()} to "
-        f"{check_out.isoformat()}. I am sending the bank transfer for "
-        f"NGN {amount:,.0f}. "
-        "Please confirm once received."
+        "Hello, I have made the bank transfer for my online booking.\n"
+        f"Booking reference: {reservation_id}\n"
+        f"Hotel: {hotel['name']}\n"
+        f"Guest: {guest_name}\n"
+        f"Room: {room['type']} ({room_number})\n"
+        f"Stay: {check_in.isoformat()} to {check_out.isoformat()}\n"
+        f"Amount transferred: NGN {amount:,.0f}\n"
+        "Please verify the payment and confirm my booking.\n"
+        "Transfer reference: [add your transfer reference or attach receipt]"
     )
     wa_number = re.sub(r"\D", "", settings["reception_whatsapp"])
     session["online_booking_confirmation"] = {
@@ -2378,6 +2381,7 @@ def public_booking_api_create():
 
 
 @app.route("/book-legacy", methods=["GET", "POST"])
+@app.route("/book", methods=["GET", "POST"])
 def public_booking():
     today = date.today()
     default_check_in = today + timedelta(days=1)
@@ -2485,6 +2489,14 @@ def public_booking():
 
 
 @app.get("/book/")
+def public_booking_trailing_slash():
+    return redirect(
+        url_for("public_booking", **request.args.to_dict(flat=False)),
+        code=308,
+    )
+
+
+@app.get("/book-app/")
 def flutter_booking_app_trailing_slash():
     return redirect(
         url_for("flutter_booking_app", **request.args.to_dict(flat=False)),
@@ -2492,7 +2504,7 @@ def flutter_booking_app_trailing_slash():
     )
 
 
-@app.get("/book")
+@app.get("/book-app")
 def flutter_booking_app():
     if not (FLUTTER_WEB_BUILD_DIRECTORY / "index.html").is_file():
         return "The Flutter booking app has not been built.", 503

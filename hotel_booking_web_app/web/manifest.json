@@ -1,7 +1,7 @@
 {
     "name": "HAIDWARE Hotel Booking",
     "short_name": "Hotel Booking",
-    "start_url": "/book",
+    "start_url": "/book-app",
     "scope": "/",
     "display": "standalone",
     "background_color": "#FBFCFC",
