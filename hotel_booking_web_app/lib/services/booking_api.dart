@@ -2,11 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-const _defaultApiUrl = 'https://labim-booking-production.up.railway.app';
-const apiBaseUrl = String.fromEnvironment(
-  'API_BASE_URL',
-  defaultValue: _defaultApiUrl,
-);
+const apiBaseUrl = String.fromEnvironment('API_BASE_URL', defaultValue: '');
 
 class BookingApiException implements Exception {
   const BookingApiException(this.message);
@@ -143,7 +139,13 @@ class BookingApi {
   BookingApi({http.Client? client}) : _client = client ?? http.Client();
 
   final http.Client _client;
-  final String _baseUrl = apiBaseUrl.replaceFirst(RegExp(r'/$'), '');
+  final String _baseUrl =
+      (apiBaseUrl.isNotEmpty
+              ? apiBaseUrl
+              : Uri.base.scheme == 'http' || Uri.base.scheme == 'https'
+              ? Uri.base.origin
+              : 'http://127.0.0.1:5000')
+          .replaceFirst(RegExp(r'/$'), '');
 
   Uri _uri(String path, [Map<String, String>? query]) {
     return Uri.parse('$_baseUrl$path').replace(queryParameters: query);

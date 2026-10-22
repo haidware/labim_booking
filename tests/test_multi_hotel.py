@@ -819,7 +819,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(
             request_headers["user-agent"],
             "HAIDWARE-LabimBookingOS/1.0 "
-            "(Paystack API client; https://labim-booking-production.up.railway.app)",
+            "(Paystack API client; Labim Booking OS)",
         )
 
     def test_paystack_cloudflare_block_error_is_reported(self):

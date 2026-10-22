@@ -29,7 +29,7 @@ Existing SQLite databases are cleaned once at startup: the known sample booking 
 2. Run `supabase_online_booking_migration.sql` to add online listings/settings, the 30-minute pending-payment status, booking RPCs, and the public room-photo bucket.
 3. Run `supabase_multihotel_migration.sql` once. It migrates existing Labim records into the Labim tenant, adds tenant-scoped room, reservation, payment, profile, and online settings, and updates RLS policies.
 4. Run `supabase_hotel_location_migration.sql` to add the address, city, and Nigerian state fields for existing hotel records.
-5. Run `supabase_reception_email_migration.sql` to add a per-hotel Reception notification email. In Railway variables, configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM_EMAIL`, `SMTP_USERNAME`, and `SMTP_PASSWORD` using credentials from your email provider. Port 465 uses implicit TLS; other ports use STARTTLS. Keep credentials private and out of source control.
+5. Run `supabase_reception_email_migration.sql` to add a per-hotel Reception notification email. In the hosting service's environment variables, configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM_EMAIL`, `SMTP_USERNAME`, and `SMTP_PASSWORD` using credentials from your email provider. Port 465 uses implicit TLS; other ports use STARTTLS. Keep credentials private and out of source control.
 6. Run `supabase_reception_room_availability_migration.sql` to add support for up to three room photos and require Reception-marked available rooms in the online booking RPC.
 7. Run `supabase_reservation_overlap_guard_migration.sql` to serialize reservation writes per room and reject overlapping active stays, including Reception bookings, online requests, edits, extensions, and confirmations.
 8. Run `supabase_hotel_subscriptions_migration.sql` before deploying subscription-enabled code. Existing hotels are backfilled as grandfathered (`legacy`) and retain access. New registrations can start a 30-day trial or select monthly (₦80,000 / 30 days) or annual (₦800,000 / 365 days) access. Trials and paid access are not automatically renewed. When a trial or paid term expires, the hotel is hidden from the public booking directory and new online booking submissions are rejected until renewal; existing reservations are retained.
@@ -38,17 +38,51 @@ Existing SQLite databases are cleaned once at startup: the known sample booking 
 
 The public Data API must expose the `hotels`, `profiles`, `rooms`, `reservations`, `payments`, `online_room_listings`, `online_booking_settings`, `hotel_subscriptions`, and `hotel_subscription_payments` tables. The schema grants authenticated users hotel- and role-scoped access through RLS; subscription tables have no client policies and are managed server-side only. All role values used by policies are assigned in Supabase Auth `app_metadata` by the server-side Manager account workflow. The service-only Supabase secret must be configured because it powers guest booking, transfer verification, subscription billing, and room-image storage.
 
-## Deploy to Railway
+## Deploy to Render
 
-1. Create a Railway project and deploy this GitHub repository.
-2. Set `FLASK_SECRET_KEY` to a long random value in the Railway service variables.
-3. Set Supabase and SMTP variables as described above. Set `PAYSTACK_SECRET_KEY` using the Paystack secret key (never expose it in client-side code or commit it). Configure the Paystack webhook URL as `https://<your-railway-domain>/billing/paystack/webhook`.
-4. On an existing database, ensure the base schema and online-booking migration have been applied, then run `supabase_multihotel_migration.sql`, `supabase_hotel_location_migration.sql`, `supabase_reception_email_migration.sql`, `supabase_reception_room_availability_migration.sql`, `supabase_reservation_overlap_guard_migration.sql`, and `supabase_hotel_subscriptions_migration.sql` in Supabase before deploying. Do not use an empty local `supabase_schema.sql` as a schema migration.
-5. After deployment, Managers must save a valid Reception notification email under **Online Booking Setup**. Existing hotels need to save their notification email once after the migration.
-6. Deploy with the included Railway config and Procfile; Gunicorn serves the Flask app and `/health` is the health endpoint.
+The root `render.yaml` Blueprint builds the Flutter PWA and Flask service from
+the root `Dockerfile`, checks `/health`, and mounts a persistent disk at
+`/app/instance` for SQLite fallback data and locally stored room photos.
 
-SQLite remains a local fallback. The current Railway volume is mounted at `/app/instance` for that fallback only.
+1. In Render, create a **Blueprint** from this GitHub repository and select the
+   branch containing `render.yaml`. The service needs a paid plan for its
+   persistent disk.
+2. When prompted, copy the current `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+   `SUPABASE_SECRET_KEY`, `PAYSTACK_SECRET_KEY`, `SMTP_HOST`, `SMTP_PORT`,
+   `SMTP_FROM_EMAIL`, `SMTP_USERNAME`, and `SMTP_PASSWORD` values from the
+   existing host into Render's private environment variables. Never paste
+   secret values into chat or commit them. Render generates `FLASK_SECRET_KEY`.
+3. On an existing database, ensure the base schema and online-booking migration
+   have been applied, then run `supabase_multihotel_migration.sql`,
+   `supabase_hotel_location_migration.sql`,
+   `supabase_reception_email_migration.sql`,
+   `supabase_reception_room_availability_migration.sql`,
+   `supabase_reservation_overlap_guard_migration.sql`, and
+   `supabase_hotel_subscriptions_migration.sql` in Supabase before deploying.
+   Do not use an empty local `supabase_schema.sql` as a schema migration.
+4. Verify `/health`, `/book`, hotel search, a test booking, manager/reception
+   login, and Paystack subscription checkout on Render. Update the Paystack
+   webhook URL to `https://<your-render-domain>/billing/paystack/webhook`.
+5. After verifying production behavior, point your custom domain at Render (if
+   you have one) and update links in any external rooms app. The Railway
+   generated `railway.app` hostname cannot be reused on Render. Keep Railway
+   available until Render has passed verification; then disable its service to
+   avoid duplicate production instances.
+6. After deployment, Managers must save a valid Reception notification email
+   under **Online Booking Setup**. Existing hotels need to save their
+   notification email once after the migration.
+
+Supabase remains the production database, so deploying to Render does not move
+or reset hotel records. The persistent disk is for the SQLite fallback and
+local files; keep it attached if either is used. The older `railway.json` is
+retained temporarily for rollback.
 
 ## Flutter guest booking web app
 
-The Flutter Web guest booking PWA is served at `/book` (for example, `https://labim-booking-production.up.railway.app/book`). It reads live hotels, listed rooms, and availability through `/api/public/*` and submits booking requests into the existing reservation and Reception-notification workflow. Railway builds it with the root `Dockerfile`; a rooms-management app can link to `/book?hotel=<slug>`. The previous server-rendered booking page remains available at `/book-legacy`. Run the Flutter app locally with the Flask service active: `cd hotel_booking_web_app; flutter pub get; flutter run -d chrome --dart-define=API_BASE_URL=http://127.0.0.1:5000`. See `hotel_booking_web_app/README.md` for details.
+The Flutter Web guest booking PWA is served at `/book` on the active host. It
+uses the same origin as Flask for `/api/public/*` and submits booking requests
+into the existing reservation and Reception-notification workflow. A rooms app
+can link to `/book?hotel=<slug>`. The previous server-rendered booking page
+remains available at `/book-legacy`. Run the Flutter app locally with the Flask
+service active: `cd hotel_booking_web_app; flutter pub get; flutter run -d chrome --dart-define=API_BASE_URL=http://127.0.0.1:5000`.
+See `hotel_booking_web_app/README.md` for details.

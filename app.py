@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 from flask import Flask, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 try:
     from supabase import create_client
@@ -66,18 +67,23 @@ SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 SUPABASE_ENABLED = bool(SUPABASE_URL and SUPABASE_ANON_KEY and SUPABASE_SECRET_KEY and create_client)
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
-if os.getenv("RAILWAY_ENVIRONMENT") and not FLASK_SECRET_KEY:
-    raise RuntimeError("Set FLASK_SECRET_KEY in Railway service variables before deploying.")
-if os.getenv("RAILWAY_ENVIRONMENT") and SUPABASE_ANON_KEY and not SUPABASE_SECRET_KEY:
-    raise RuntimeError("Set SUPABASE_SECRET_KEY in Railway service variables before enabling Supabase.")
+IS_PRODUCTION = bool(
+    os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER")
+)
+if IS_PRODUCTION and not FLASK_SECRET_KEY:
+    raise RuntimeError("Set FLASK_SECRET_KEY in production service variables before deploying.")
+if IS_PRODUCTION and SUPABASE_ANON_KEY and not SUPABASE_SECRET_KEY:
+    raise RuntimeError("Set SUPABASE_SECRET_KEY in production service variables before enabling Supabase.")
 
 app = Flask(__name__)
+if IS_PRODUCTION:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_host=1, x_proto=1)
 app.config["SECRET_KEY"] = FLASK_SECRET_KEY or "local-development-key-change-before-deploy"
 app.config["DATABASE"] = DATABASE
 app.config["SUPABASE_ENABLED"] = SUPABASE_ENABLED
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = bool(os.getenv("RAILWAY_ENVIRONMENT"))
+app.config["SESSION_COOKIE_SECURE"] = IS_PRODUCTION
 app.config["MAX_CONTENT_LENGTH"] = (
     MAX_ROOM_PHOTOS * MAX_ROOM_PHOTO_BYTES + 1024 * 1024
 )
@@ -341,7 +347,7 @@ def paystack_request(path, method="GET", payload=None):
             "Accept": "application/json",
             "User-Agent": (
                 "HAIDWARE-LabimBookingOS/1.0 "
-                "(Paystack API client; https://labim-booking-production.up.railway.app)"
+                "(Paystack API client; Labim Booking OS)"
             ),
         },
     )

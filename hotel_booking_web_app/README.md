@@ -4,9 +4,10 @@ Flutter Web guest booking PWA for the Labim Booking OS. Hotel, room, nightly rat
 availability, and payment-instruction data is retrieved from the Flask service;
 this app contains no seeded hotel or room records.
 
-In production, the app is served by Flask and Railway at
-`https://labim-booking-production.up.railway.app/book`. Installable PWA launches
-open `/book`; `?hotel=<slug>` can be added to link directly to a hotel.
+In production, the app is served by Flask at `/book` on the active host.
+Installable PWA launches open `/book`; `?hotel=<slug>` can be added to link
+directly to a hotel. The PWA uses the current page's origin for the backend by
+default, so the Render service URL does not need to be compiled into the app.
 
 ## Local development
 
@@ -48,7 +49,7 @@ rooms-management app can link directly to a particular hotel's guest page.
 - `GET /api/public/hotels/<slug>/rooms`
 - `POST /api/public/bookings`
 
-The API is served by the Flask app in the parent repository. Railway builds the
+The API is served by the Flask app in the parent repository. Render builds the
 Flutter web assets and packages them with Flask using the repository-root
 `Dockerfile`. Configure the rooms app's Hotel button with the deployed `/book`
 URL, optionally including `?hotel=<slug>`.

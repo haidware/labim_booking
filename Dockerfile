@@ -3,8 +3,7 @@ FROM ghcr.io/cirruslabs/flutter:stable AS flutter-build
 WORKDIR /src/hotel_booking_web_app
 COPY hotel_booking_web_app/ ./
 RUN flutter pub get \
-    && flutter build web --release --base-href=/ \
-       --dart-define=API_BASE_URL=https://labim-booking-production.up.railway.app
+    && flutter build web --release --base-href=/
 
 FROM python:3.11-slim
 
