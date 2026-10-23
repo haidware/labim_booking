@@ -81,14 +81,17 @@ retained temporarily for rollback.
 ## Flutter guest booking web app
 
 The hotel search and booking experience is served at `/`, with the **Hotels**
-tab selected first. **Short Stays** is marked coming soon; the **Homes** tab
-opens the house-rental preview at `/rental`. The old `/book` URL redirects to
-`/`; hotel-specific links use `/?hotel=<slug>`. The hotel flow includes date and price search, room selection,
+tab selected first. **Apartment** opens the short-stay preview at `/apartment`,
+**Homes** opens the house-rental preview at `/rental`, and **Land/Properties**
+opens the land preview at `/land-properties`. The apartment and land/property
+pages show clearly labeled sample listings only; they do not yet connect to
+live inventory or accept enquiries. The old `/book` URL redirects to `/`;
+hotel-specific links use `/?hotel=<slug>`. The hotel flow includes date and price search, room selection,
 guest details, and payment handoff, submitting into the existing reservation
 and Reception-notification workflow. `/book-app` remains an alias for the
 Flutter hotel booking experience, and `/book-legacy` remains available for the
 older server-rendered booking flow. The Hotel Manager, Director, and Reception
-portal is at `/book.admin`. The rental page remains a mockup with sample
+portal is at `/book.admin`. The Homes page remains a mockup with sample
 listings and a simulated inspection-choice flow; it does not read rental data,
 send requests, or collect payments. The separate rental admin and Supabase
 integration will be connected later. See `hotel_booking_web_app/README.md` for

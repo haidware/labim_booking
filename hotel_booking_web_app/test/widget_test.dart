@@ -4,6 +4,7 @@ import 'package:flutter/material.dart'
     show MaterialApp, Scrollable, TextFormField;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hotel_booking_web_app/main.dart';
+import 'package:hotel_booking_web_app/property_category_preview_page.dart';
 import 'package:hotel_booking_web_app/rental_preview_page.dart';
 import 'package:hotel_booking_web_app/services/booking_api.dart';
 
@@ -107,8 +108,9 @@ void main() {
 
     expect(find.text('Find your next stay'), findsOneWidget);
     expect(find.text('Hotels'), findsOneWidget);
-    expect(find.text('Short Stays'), findsOneWidget);
+    expect(find.text('Apartment'), findsOneWidget);
     expect(find.text('Homes'), findsOneWidget);
+    expect(find.text('Land/Properties'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -122,8 +124,51 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Hotels'), findsOneWidget);
-    expect(find.text('Short Stays'), findsOneWidget);
+    expect(find.text('Apartment'), findsOneWidget);
     expect(find.text('Homes'), findsOneWidget);
+    expect(find.text('Land/Properties'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('apartment tab preview shows short-stay sample listings', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MaterialApp(home: ApartmentPreviewPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Short-stay apartments'), findsOneWidget);
+    expect(find.text('Serviced city apartment'), findsOneWidget);
+    expect(
+      find.textContaining('PREVIEW — sample listings only'),
+      findsOneWidget,
+    );
+    expect(find.text('Land/Properties'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('land and properties tab preview includes rent and sale', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      const MaterialApp(home: LandPropertiesPreviewPage()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Land and properties'), findsOneWidget);
+    expect(find.text('Residential plot'), findsOneWidget);
+    expect(find.text('Commercial land'), findsOneWidget);
+    expect(find.textContaining('for sale'), findsWidgets);
+    expect(find.textContaining('per year'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -178,8 +223,9 @@ void main() {
 
     expect(find.text('Find your next stay'), findsOneWidget);
     expect(find.text('Hotels'), findsOneWidget);
-    expect(find.text('Short Stays'), findsOneWidget);
+    expect(find.text('Apartment'), findsOneWidget);
     expect(find.text('Homes'), findsOneWidget);
+    expect(find.text('Land/Properties'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

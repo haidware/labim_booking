@@ -5,19 +5,22 @@ availability, and payment-instruction data is retrieved from the Flask service;
 this app contains no seeded hotel or room records.
 
 In production, this Flutter app serves the hotel search and booking experience
-at `/`, with **Hotels** selected first, **Short Stays** marked coming soon, and
-a **Homes** tab for the rental preview at `/rental`. The old `/book` URL redirects to `/`; `/book-app` also
+at `/`, with **Hotels** selected first, **Apartment** for the short-stay sample
+preview at `/apartment`, **Homes** for the rental preview at `/rental`, and
+**Land/Properties** for sample land listings at `/land-properties`. These
+category previews do not connect to live inventory or accept enquiries. The old
+`/book` URL redirects to `/`; `/book-app` also
 opens the hotel booking experience for backward compatibility. The hotel staff
 portal is at `/book.admin`. Installable PWA launches open `/`. Add
 `?hotel=<slug>` to the homepage to link directly to a hotel. The PWA uses
 the current page's origin for the backend by default, so the Render service URL
 does not need to be compiled into the app.
 
-The **Homes** tab and `/rental` route are currently a mockup with clearly
-labeled sample properties and a simulated inspection-choice flow. It does not
-connect to rental data, send WhatsApp messages, or collect rent or fees. The
-separate house-rental admin and Supabase integration will be connected in a
-later step.
+The **Apartment**, **Homes**, and **Land/Properties** tabs are currently
+mockups with clearly labeled sample listings. The Homes page has a simulated
+inspection-choice flow. These previews do not connect to rental data, send
+WhatsApp messages, accept enquiries, or collect rent or fees. The separate
+house-rental admin and Supabase integration will be connected in a later step.
 
 ## Local development
 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-enum RoomsCategoryTab { hotels, homes }
+enum RoomsCategoryTab { hotels, apartments, homes, landProperties }
 
 class RoomsCategoryTabs extends StatelessWidget {
   const RoomsCategoryTabs({required this.activeTab, super.key});
@@ -13,7 +13,12 @@ class RoomsCategoryTabs extends StatelessWidget {
   static const _line = Color(0xFFE3E9EE);
 
   Future<void> _openTab(BuildContext context, RoomsCategoryTab tab) async {
-    final path = tab == RoomsCategoryTab.hotels ? '/' : '/rental';
+    final path = switch (tab) {
+      RoomsCategoryTab.hotels => '/',
+      RoomsCategoryTab.apartments => '/apartment',
+      RoomsCategoryTab.homes => '/rental',
+      RoomsCategoryTab.landProperties => '/land-properties',
+    };
     final opened = await launchUrl(
       Uri.base.resolve(path),
       webOnlyWindowName: '_self',
@@ -46,18 +51,20 @@ class RoomsCategoryTabs extends StatelessWidget {
                 selected: activeTab == RoomsCategoryTab.hotels,
                 onTap: () => _openTab(context, RoomsCategoryTab.hotels),
               ),
-              const Tooltip(
-                message: 'Short stays are coming soon.',
-                child: _CategoryTab(
-                  label: 'Short Stays',
-                  selected: false,
-                  onTap: null,
-                ),
+              _CategoryTab(
+                label: 'Apartment',
+                selected: activeTab == RoomsCategoryTab.apartments,
+                onTap: () => _openTab(context, RoomsCategoryTab.apartments),
               ),
               _CategoryTab(
                 label: 'Homes',
                 selected: activeTab == RoomsCategoryTab.homes,
                 onTap: () => _openTab(context, RoomsCategoryTab.homes),
+              ),
+              _CategoryTab(
+                label: 'Land/Properties',
+                selected: activeTab == RoomsCategoryTab.landProperties,
+                onTap: () => _openTab(context, RoomsCategoryTab.landProperties),
               ),
             ],
           ),
