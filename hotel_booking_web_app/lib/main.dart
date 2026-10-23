@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'rental_preview_page.dart';
 import 'rooms_home_page.dart';
 import 'services/booking_api.dart';
 
@@ -74,9 +75,11 @@ class HotelBookingApp extends StatelessWidget {
       ),
       home:
           bookingPage ??
-          (Uri.base.path == '/book-app'
-              ? const HotelBookingPage()
-              : const RoomsHomePage()),
+          switch (Uri.base.path) {
+            '/book-app' => const HotelBookingPage(),
+            '/rental' => const RentalPreviewPage(),
+            _ => const RoomsHomePage(),
+          },
     );
   }
 }

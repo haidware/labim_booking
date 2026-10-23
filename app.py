@@ -150,6 +150,16 @@ def current_hotel_id():
     return session.get("hotel_id", DEFAULT_HOTEL_ID)
 
 
+def form_text(value, default=""):
+    if value is None:
+        return default
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", "replace")
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
 def hotel_details(hotel_id=None):
     hotel_id = hotel_id or current_hotel_id()
     if SUPABASE_ENABLED:
@@ -203,8 +213,8 @@ def public_hotels():
                 subscriptions_by_hotel.get(hotel["id"])
             )["allowed"]
         ]
-    state_filter = request.args.get("state", "").strip()
-    city_filter = request.args.get("city", "").strip().casefold()
+    state_filter = form_text(request.args.get("state", ""))
+    city_filter = form_text(request.args.get("city", "")).casefold()
     if state_filter in NIGERIAN_STATES:
         hotels = [hotel for hotel in hotels if hotel["state"] == state_filter]
     elif state_filter:
@@ -1241,11 +1251,11 @@ def filter_rooms_by_price_range(rooms, price_range):
 
 def save_online_booking_settings(form, hotel_id=None):
     hotel_id = hotel_id or current_hotel_id()
-    bank_name = form.get("bank_name", "").strip()
-    account_name = form.get("account_name", "").strip()
-    account_number = re.sub(r"\s", "", form.get("account_number", ""))
-    whatsapp = form.get("reception_whatsapp", "").strip()
-    reception_email = form.get("reception_email", "").strip().lower()
+    bank_name = form_text(form.get("bank_name"))
+    account_name = form_text(form.get("account_name"))
+    account_number = re.sub(r"\s", "", form_text(form.get("account_number")))
+    whatsapp = form_text(form.get("reception_whatsapp"))
+    reception_email = form_text(form.get("reception_email")).lower()
     whatsapp_digits = re.sub(r"\D", "", whatsapp)
     if not bank_name or not account_name:
         raise ValueError("Enter the bank and account holder name.")
@@ -1365,7 +1375,7 @@ def save_online_room_listing(room_number, form):
         ).fetchone()
     if not room:
         raise ValueError("Room not found.")
-    description = form.get("description", "").strip()
+    description = form_text(form.get("description"))
     if len(description) > 1200:
         raise ValueError("Room description must be 1,200 characters or fewer.")
     if SUPABASE_ENABLED:
@@ -1544,8 +1554,8 @@ def save_room_photos(room_number, uploaded_files):
 
 def create_online_booking(form):
     try:
-        check_in = date.fromisoformat(form.get("check_in", ""))
-        check_out = date.fromisoformat(form.get("check_out", ""))
+        check_in = date.fromisoformat(form_text(form.get("check_in")))
+        check_out = date.fromisoformat(form_text(form.get("check_out")))
     except ValueError as error:
         raise ValueError("Choose valid arrival and departure dates.") from error
     today = date.today()
@@ -1553,19 +1563,19 @@ def create_online_booking(form):
         raise ValueError("Arrival date cannot be in the past.")
     if check_out <= check_in:
         raise ValueError("Departure must be after arrival.")
-    guest_name = form.get("guest_name", "").strip()
-    phone = form.get("phone", "").strip()
-    email = form.get("email", "").strip()
-    room_number = form.get("room_number", "").strip()
-    hotel_id = form.get("hotel_id", "").strip()
-    price_range = form.get("price_range", "").strip()
+    guest_name = form_text(form.get("guest_name"))
+    phone = form_text(form.get("phone"))
+    email = form_text(form.get("email")).lower()
+    room_number = form_text(form.get("room_number"))
+    hotel_id = form_text(form.get("hotel_id"))
+    price_range = form_text(form.get("price_range"))
     if price_range and price_range_bounds(price_range) is None:
         raise ValueError("Choose a valid room price range.")
     if not guest_name or len(guest_name) > 160 or not phone or len(phone) > 40:
         raise ValueError("Enter a guest name and valid phone number.")
     if len(email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
         raise ValueError("Enter a valid email address.")
-    if form.get("website", "").strip():
+    if form_text(form.get("website")):
         raise ValueError("Booking could not be submitted.")
 
     if not subscription_access(hotel_id)["allowed"]:
@@ -2504,10 +2514,25 @@ def flutter_booking_app_trailing_slash():
     )
 
 
+@app.get("/rental/")
+def flutter_rental_preview_trailing_slash():
+    return redirect(
+        url_for("flutter_rental_preview", **request.args.to_dict(flat=False)),
+        code=308,
+    )
+
+
 @app.get("/book-app")
 def flutter_booking_app():
     if not (FLUTTER_WEB_BUILD_DIRECTORY / "index.html").is_file():
         return "The Flutter booking app has not been built.", 503
+    return send_from_directory(FLUTTER_WEB_BUILD_DIRECTORY, "index.html")
+
+
+@app.get("/rental")
+def flutter_rental_preview():
+    if not (FLUTTER_WEB_BUILD_DIRECTORY / "index.html").is_file():
+        return "The Flutter rental preview has not been built.", 503
     return send_from_directory(FLUTTER_WEB_BUILD_DIRECTORY, "index.html")
 
 

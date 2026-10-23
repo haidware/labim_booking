@@ -92,6 +92,26 @@ class MultiHotelFlowTests(unittest.TestCase):
             )
             self.app_module.get_db().commit()
 
+    def test_rental_preview_routes_serve_flutter_app(self):
+        with tempfile.TemporaryDirectory() as build_directory:
+            build_path = Path(build_directory)
+            (build_path / "index.html").write_text(
+                "<!doctype html><title>Rooms</title>",
+                encoding="utf-8",
+            )
+            with patch.object(
+                self.app_module, "FLUTTER_WEB_BUILD_DIRECTORY", build_path
+            ):
+                client = self.app_module.app.test_client()
+                response = client.get("/rental")
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(b"<title>Rooms</title>", response.data)
+                response.close()
+
+                trailing_slash = client.get("/rental/")
+                self.assertEqual(trailing_slash.status_code, 308)
+                self.assertEqual(trailing_slash.headers["Location"], "/rental")
+
     def test_calendar_shows_booked_and_approved_online_stays(self):
         week_start = date.today() - timedelta(days=date.today().weekday())
         calendar_days, calendar_rows = self.app_module.reference_calendar(

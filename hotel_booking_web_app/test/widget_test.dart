@@ -1,8 +1,10 @@
 import 'dart:ui' show Size;
 
-import 'package:flutter/material.dart' show MaterialApp, TextFormField;
+import 'package:flutter/material.dart'
+    show MaterialApp, Scrollable, TextFormField;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hotel_booking_web_app/main.dart';
+import 'package:hotel_booking_web_app/rental_preview_page.dart';
 import 'package:hotel_booking_web_app/rooms_home_page.dart';
 import 'package:hotel_booking_web_app/services/booking_api.dart';
 
@@ -91,6 +93,61 @@ class _BookingFlowApi extends _EmptyBookingApi {
 }
 
 void main() {
+  testWidgets('home offers hotel bookings and the rental preview', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MaterialApp(home: RoomsHomePage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Hotel'), findsOneWidget);
+    expect(find.text('Rent House'), findsNWidgets(2));
+    expect(find.text('Rental listings preview only'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('rental preview keeps inspection selection local', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MaterialApp(home: RentalPreviewPage()));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('MOCKUP — sample listings only'),
+      findsOneWidget,
+    );
+    expect(find.text('Preview inspection'), findsNWidgets(3));
+    expect(find.text('no payment was collected'), findsNothing);
+
+    await tester.scrollUntilVisible(
+      find.text('Preview inspection').first,
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview inspection').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Preview an inspection request'), findsOneWidget);
+
+    await tester.tap(find.text('Virtual viewing'));
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Inspection preview complete'), findsOneWidget);
+    expect(find.textContaining('Virtual viewing selected'), findsOneWidget);
+    expect(find.textContaining('no request was sent'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Rooms landing page adapts to narrow screens', (tester) async {
     tester.view.physicalSize = const Size(320, 800);
     tester.view.devicePixelRatio = 1;

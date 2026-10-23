@@ -6,11 +6,17 @@ this app contains no seeded hotel or room records.
 
 In production, this Flutter app serves the Rooms homepage at `/` and the guest
 booking PWA at `/book-app`. The server-rendered guest booking experience is at
-`/book`, and the hotel staff portal is at `/book.admin`. Installable PWA
+`/book`, the rental preview is at `/rental`, and the hotel staff portal is at
+`/book.admin`. Installable PWA
 launches open `/`; guests can open `/book-app` for the dedicated Flutter
 booking screen. Add `?hotel=<slug>` to link directly to a hotel. The PWA uses
 the current page's origin for the backend by default, so the Render service URL
 does not need to be compiled into the app.
+
+The `/rental` route is currently a mockup with clearly labeled sample
+properties and a simulated inspection-choice flow. It does not connect to
+rental data, send WhatsApp messages, or collect rent or fees. The separate
+house-rental admin and Supabase integration will be connected in a later step.
 
 ## Local development
 

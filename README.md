@@ -79,8 +79,12 @@ retained temporarily for rollback.
 
 ## Flutter guest booking web app
 
-The Flutter Rooms homepage is served at `/`, and the Hotel Manager, Director,
-and Reception portal is available at `/book.admin`. The server-rendered guest
+The Flutter Rooms homepage is served at `/`, the house-rental preview is at
+`/rental`, and the Hotel Manager, Director, and Reception portal is available
+at `/book.admin`. The rental page is a mockup with clearly labeled sample
+listings and a simulated inspection-choice flow; it does not read rental data,
+send requests, or collect payments. The separate rental admin and Supabase
+integration will be connected later. The server-rendered guest
 booking flow at `/book` matches the intended hotel
 directory, date/price search, room selection, guest details, and payment
 handoff. It uses the same origin as Flask and submits directly into the existing

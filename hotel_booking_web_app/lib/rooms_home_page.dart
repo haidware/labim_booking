@@ -16,15 +16,6 @@ class _RoomsHomePageState extends State<RoomsHomePage> {
   static const _line = Color(0xFFE3E9EE);
   static const _background = Color(0xFFF6F8FA);
 
-  final _scrollController = ScrollController();
-  final _footerKey = GlobalKey();
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
   Future<void> _openBooking() async {
     final bookingUri = Uri.base.resolve('/book');
     final opened = await launchUrl(bookingUri, webOnlyWindowName: '_blank');
@@ -35,13 +26,14 @@ class _RoomsHomePageState extends State<RoomsHomePage> {
     }
   }
 
-  void _showRentHouseSection() {
-    final footerContext = _footerKey.currentContext;
-    if (footerContext != null) {
-      Scrollable.ensureVisible(
-        footerContext,
-        duration: const Duration(milliseconds: 350),
-        curve: Curves.easeOut,
+  Future<void> _openRentals() async {
+    final opened = await launchUrl(
+      Uri.base.resolve('/rental'),
+      webOnlyWindowName: '_self',
+    );
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open house rentals.')),
       );
     }
   }
@@ -59,7 +51,6 @@ class _RoomsHomePageState extends State<RoomsHomePage> {
                 _buildHeader(isMobile),
                 Expanded(
                   child: SingleChildScrollView(
-                    controller: _scrollController,
                     child: Column(
                       children: [
                         Padding(
@@ -89,7 +80,7 @@ class _RoomsHomePageState extends State<RoomsHomePage> {
                                               ),
                                               const SizedBox(height: 18),
                                               _RentChoice(
-                                                onTap: _showRentHouseSection,
+                                                onTap: _openRentals,
                                                 compact: true,
                                               ),
                                             ],
@@ -106,7 +97,7 @@ class _RoomsHomePageState extends State<RoomsHomePage> {
                                               const SizedBox(width: 25),
                                               Expanded(
                                                 child: _RentChoice(
-                                                  onTap: _showRentHouseSection,
+                                                  onTap: _openRentals,
                                                 ),
                                               ),
                                             ],
@@ -118,7 +109,6 @@ class _RoomsHomePageState extends State<RoomsHomePage> {
                           ),
                         ),
                         Container(
-                          key: _footerKey,
                           width: double.infinity,
                           padding: const EdgeInsets.all(19),
                           decoration: const BoxDecoration(
@@ -126,7 +116,7 @@ class _RoomsHomePageState extends State<RoomsHomePage> {
                             border: Border(top: BorderSide(color: _line)),
                           ),
                           child: const Text(
-                            'Rooms · Hotel booking and trusted owner-direct property rentals',
+                            'Rooms · Hotel bookings and a house-rental preview',
                             textAlign: TextAlign.center,
                             style: TextStyle(fontSize: 12, color: _muted),
                           ),
@@ -230,7 +220,7 @@ class _Intro extends StatelessWidget {
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
           child: Text(
-            'Book available hotel rooms or discover trusted houses and flats directly from property owners.',
+            'Book available hotel rooms or preview homes for rent.',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: _RoomsHomePageState._muted,
@@ -288,12 +278,12 @@ class _RentChoice extends StatelessWidget {
       icon: '🏡',
       title: 'Rent House',
       description:
-          'Find trusted rooms, flats and houses listed directly by their owners — no agents in between.',
+          'Explore houses and flats, then preview how to request a property inspection.',
       buttonText: 'Rent House',
       buttonColor: _RoomsHomePageState._gold,
       buttonTextColor: const Color(0xFF1D2D3B),
       arrow: '→',
-      microcopy: 'Direct owner-to-tenant connections',
+      microcopy: 'Rental listings preview only',
     );
   }
 }
