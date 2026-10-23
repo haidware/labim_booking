@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import 'rooms_category_tabs.dart';
+
 class RentalPreviewPage extends StatelessWidget {
   const RentalPreviewPage({super.key});
 
@@ -135,79 +137,91 @@ class RentalPreviewPage extends StatelessWidget {
         backgroundColor: Colors.white,
         foregroundColor: _navy,
         title: const Text(
-          'Rooms.  House rentals',
+          'Rooms',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final columns = constraints.maxWidth >= 1000
-              ? 3
-              : constraints.maxWidth >= 650
-              ? 2
-              : 1;
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(18, 28, 18, 40),
-            children: [
-              Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1100),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const _PreviewNotice(),
-                      const SizedBox(height: 25),
-                      Text(
-                        'Find a place to call home',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.headlineLarge
-                            ?.copyWith(
-                              color: _navy,
-                              fontSize: constraints.maxWidth < 500 ? 30 : 40,
+      body: Column(
+        children: [
+          const RoomsCategoryTabs(activeTab: RoomsCategoryTab.homes),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = constraints.maxWidth >= 1000
+                    ? 3
+                    : constraints.maxWidth >= 650
+                    ? 2
+                    : 1;
+                return ListView(
+                  padding: const EdgeInsets.fromLTRB(18, 28, 18, 40),
+                  children: [
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 1100),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const _PreviewNotice(),
+                            const SizedBox(height: 25),
+                            Text(
+                              'Find a place to call home',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.headlineLarge
+                                  ?.copyWith(
+                                    color: _navy,
+                                    fontSize: constraints.maxWidth < 500
+                                        ? 30
+                                        : 40,
+                                  ),
                             ),
-                      ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'Explore sample homes and preview how an inspection request will work.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: _muted, height: 1.6),
-                      ),
-                      const SizedBox(height: 25),
-                      GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: _listings.length,
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          crossAxisSpacing: 18,
-                          mainAxisSpacing: 18,
-                          mainAxisExtent: 490,
+                            const SizedBox(height: 10),
+                            const Text(
+                              'Explore sample homes and preview how an inspection request will work.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: _muted, height: 1.6),
+                            ),
+                            const SizedBox(height: 25),
+                            GridView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: _listings.length,
+                              gridDelegate:
+                                  SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: columns,
+                                    crossAxisSpacing: 18,
+                                    mainAxisSpacing: 18,
+                                    mainAxisExtent: 490,
+                                  ),
+                              itemBuilder: (context, index) => _RentalCard(
+                                listing: _listings[index],
+                                rentLabel: _naira.format(_listings[index].rent),
+                                onInspect: () => _showInspectionFlow(
+                                  context,
+                                  _listings[index],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            const Text(
+                              'Preview listings are examples only. Live property data, owner contact, '
+                              'and inspection requests will be connected later.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: _muted,
+                                fontSize: 12,
+                                height: 1.5,
+                              ),
+                            ),
+                          ],
                         ),
-                        itemBuilder: (context, index) => _RentalCard(
-                          listing: _listings[index],
-                          rentLabel: _naira.format(_listings[index].rent),
-                          onInspect: () =>
-                              _showInspectionFlow(context, _listings[index]),
-                        ),
                       ),
-                      const SizedBox(height: 24),
-                      const Text(
-                        'Preview listings are examples only. Live property data, owner contact, '
-                        'and inspection requests will be connected later.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: _muted,
-                          fontSize: 12,
-                          height: 1.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

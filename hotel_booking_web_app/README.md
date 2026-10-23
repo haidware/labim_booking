@@ -4,19 +4,20 @@ Flutter Web guest booking PWA for the Labim Booking OS. Hotel, room, nightly rat
 availability, and payment-instruction data is retrieved from the Flask service;
 this app contains no seeded hotel or room records.
 
-In production, this Flutter app serves the Rooms homepage at `/` and the guest
-booking PWA at `/book-app`. The server-rendered guest booking experience is at
-`/book`, the rental preview is at `/rental`, and the hotel staff portal is at
-`/book.admin`. Installable PWA
-launches open `/`; guests can open `/book-app` for the dedicated Flutter
-booking screen. Add `?hotel=<slug>` to link directly to a hotel. The PWA uses
+In production, this Flutter app serves the hotel search and booking experience
+at `/`, with **Hotels** selected first, **Short Stays** marked coming soon, and
+a **Homes** tab for the rental preview at `/rental`. The old `/book` URL redirects to `/`; `/book-app` also
+opens the hotel booking experience for backward compatibility. The hotel staff
+portal is at `/book.admin`. Installable PWA launches open `/`. Add
+`?hotel=<slug>` to the homepage to link directly to a hotel. The PWA uses
 the current page's origin for the backend by default, so the Render service URL
 does not need to be compiled into the app.
 
-The `/rental` route is currently a mockup with clearly labeled sample
-properties and a simulated inspection-choice flow. It does not connect to
-rental data, send WhatsApp messages, or collect rent or fees. The separate
-house-rental admin and Supabase integration will be connected in a later step.
+The **Homes** tab and `/rental` route are currently a mockup with clearly
+labeled sample properties and a simulated inspection-choice flow. It does not
+connect to rental data, send WhatsApp messages, or collect rent or fees. The
+separate house-rental admin and Supabase integration will be connected in a
+later step.
 
 ## Local development
 
@@ -60,6 +61,5 @@ rooms-management app can link directly to a particular hotel's guest page.
 
 The API is served by the Flask app in the parent repository. Render builds the
 Flutter web assets and packages them with Flask using the repository-root
-`Dockerfile`. Configure the rooms app's Hotel button with the deployed `/book`
-URL to use the reference booking experience, or `/book-app` to open the Flutter
-PWA.
+`Dockerfile`. Configure the rooms app's Hotel button with the deployed root URL.
+`/book` redirects to the root homepage.

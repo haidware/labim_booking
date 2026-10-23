@@ -633,14 +633,18 @@ class MultiHotelFlowTests(unittest.TestCase):
                 self.assertEqual(trailing_slash.status_code, 308)
                 self.assertEqual(
                     trailing_slash.headers["Location"],
-                    "/book?hotel=test-hotel",
+                    "/?hotel=test-hotel",
                 )
 
-                reference_page = client.get("/book")
-                self.assertEqual(reference_page.status_code, 200)
-                self.assertIn(b"Choose a hotel", reference_page.data)
-                self.assertIn(b"Find hotels and rooms", reference_page.data)
-                reference_page.close()
+                hotel_home_redirect = client.get(
+                    "/book?hotel=test-hotel",
+                    follow_redirects=False,
+                )
+                self.assertEqual(hotel_home_redirect.status_code, 308)
+                self.assertEqual(
+                    hotel_home_redirect.headers["Location"],
+                    "/?hotel=test-hotel",
+                )
 
                 app_slash = client.get(
                     "/book-app/?hotel=test-hotel",
@@ -1041,7 +1045,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertIn(b"Other Test Hotel", hotel_directory.data)
         self.assertIn(b"14 Independence Avenue", hotel_directory.data)
         self.assertIn(
-            f"/book?hotel={hotel_two['slug']}".encode(),
+            f"/book-legacy?hotel={hotel_two['slug']}".encode(),
             hotel_directory.data,
         )
         self.assertNotIn(b'<select name="hotel"', hotel_directory.data)

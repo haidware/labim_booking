@@ -2391,7 +2391,7 @@ def public_booking_api_create():
 
 
 @app.route("/book-legacy", methods=["GET", "POST"])
-@app.route("/book", methods=["GET", "POST"])
+@app.post("/book")
 def public_booking():
     today = date.today()
     default_check_in = today + timedelta(days=1)
@@ -2498,10 +2498,11 @@ def public_booking():
     )
 
 
+@app.get("/book")
 @app.get("/book/")
-def public_booking_trailing_slash():
+def public_booking_home_redirect():
     return redirect(
-        url_for("public_booking", **request.args.to_dict(flat=False)),
+        url_for("home", **request.args.to_dict(flat=False)),
         code=308,
     )
 
@@ -2540,7 +2541,7 @@ def flutter_rental_preview():
 def online_booking_confirmation():
     confirmation = session.get("online_booking_confirmation")
     if not confirmation:
-        return redirect(url_for("public_booking"))
+        return redirect(url_for("home"))
     return render_template("online_booking_confirmation.html", confirmation=confirmation)
 
 

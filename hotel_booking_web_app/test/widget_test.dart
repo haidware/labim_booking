@@ -5,7 +5,6 @@ import 'package:flutter/material.dart'
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hotel_booking_web_app/main.dart';
 import 'package:hotel_booking_web_app/rental_preview_page.dart';
-import 'package:hotel_booking_web_app/rooms_home_page.dart';
 import 'package:hotel_booking_web_app/services/booking_api.dart';
 
 class _EmptyBookingApi extends BookingApi {
@@ -93,20 +92,38 @@ class _BookingFlowApi extends _EmptyBookingApi {
 }
 
 void main() {
-  testWidgets('home offers hotel bookings and the rental preview', (
+  testWidgets('hotel booking homepage offers hotel and homes tabs', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      HotelBookingApp(bookingPage: HotelBookingPage(api: _EmptyBookingApi())),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Find your next stay'), findsOneWidget);
+    expect(find.text('Hotels'), findsOneWidget);
+    expect(find.text('Short Stays'), findsOneWidget);
+    expect(find.text('Homes'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('rental preview provides tabs back to hotels', (tester) async {
     tester.view.physicalSize = const Size(360, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const MaterialApp(home: RoomsHomePage()));
+    await tester.pumpWidget(const MaterialApp(home: RentalPreviewPage()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Hotel'), findsOneWidget);
-    expect(find.text('Rent House'), findsNWidgets(2));
-    expect(find.text('Rental listings preview only'), findsOneWidget);
+    expect(find.text('Hotels'), findsOneWidget);
+    expect(find.text('Short Stays'), findsOneWidget);
+    expect(find.text('Homes'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -148,18 +165,21 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Rooms landing page adapts to narrow screens', (tester) async {
+  testWidgets('hotel homepage tabs adapt to narrow screens', (tester) async {
     tester.view.physicalSize = const Size(320, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const MaterialApp(home: RoomsHomePage()));
+    await tester.pumpWidget(
+      HotelBookingApp(bookingPage: HotelBookingPage(api: _EmptyBookingApi())),
+    );
     await tester.pumpAndSettle();
 
-    expect(find.text('What are you looking for?'), findsOneWidget);
-    expect(find.text('Hotel'), findsOneWidget);
-    expect(find.text('Rent House'), findsNWidgets(2));
+    expect(find.text('Find your next stay'), findsOneWidget);
+    expect(find.text('Hotels'), findsOneWidget);
+    expect(find.text('Short Stays'), findsOneWidget);
+    expect(find.text('Homes'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -177,7 +197,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('HAIDWARE'), findsOneWidget);
-    expect(find.text('Choose a hotel'), findsOneWidget);
+    expect(find.text('Find your next stay'), findsOneWidget);
     expect(find.text('Search hotels'), findsOneWidget);
     expect(find.text('No hotels match this search'), findsOneWidget);
     final layoutException = tester.takeException();

@@ -57,7 +57,7 @@
 
       {% elif role == 'manager' and page == 'online-settings' %}
       <h1>Online Booking Setup</h1><p>Maintain guest-facing room photos and descriptions, configure transfer and Reception contact details. Reception controls which rooms are available to guests.</p>
-      <section class="data-panel"><div class="panel-heading"><strong>Guest booking link for {{ hotel_name }}</strong><small>Guests can also browse and select your hotel from the platform booking page.</small></div><p><a href="{{ url_for('flutter_booking_app', hotel=hotel_slug) }}" target="_blank" rel="noopener noreferrer">{{ request.url_root }}book?hotel={{ hotel_slug }}</a></p></section>
+      <section class="data-panel"><div class="panel-heading"><strong>Guest booking link for {{ hotel_name }}</strong><small>Guests can also browse and select your hotel from the platform booking page.</small></div><p><a href="{{ url_for('home', hotel=hotel_slug) }}" target="_blank" rel="noopener noreferrer">{{ request.url_root }}?hotel={{ hotel_slug }}</a></p></section>
       <section class="data-panel">
         <div class="panel-heading"><strong>Payment details and Reception notifications</strong><small>Guests receive the transfer details; Reception receives new booking requests by email.</small></div>
         <form class="online-settings-form" method="post">

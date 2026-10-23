@@ -32,7 +32,7 @@
       <p class="account-error">Your request is held, but the hotel could not be notified by email. Please message Reception on WhatsApp to alert them.</p>
       {% endif %}
       <a class="primary-button" href="{{ confirmation.whatsapp_url }}" target="_blank" rel="noopener noreferrer">Confirm payment on WhatsApp</a>
-      <p><a href="{{ url_for('public_booking', hotel=confirmation.hotel_slug) }}">Return to room search</a></p>
+      <p><a href="{{ url_for('home', hotel=confirmation.hotel_slug) }}">Return to room search</a></p>
     </section>
   </main>
 </body>

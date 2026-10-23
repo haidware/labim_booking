@@ -34,7 +34,7 @@ Existing SQLite databases are cleaned once at startup: the known sample booking 
 7. Run `supabase_reservation_overlap_guard_migration.sql` to serialize reservation writes per room and reject overlapping active stays, including Reception bookings, online requests, edits, extensions, and confirmations.
 8. Run `supabase_hotel_subscriptions_migration.sql` before deploying subscription-enabled code. Existing hotels are backfilled as grandfathered (`legacy`) and retain access. New registrations can start a 30-day trial or select monthly (₦80,000 / 30 days) or annual (₦800,000 / 365 days) access. Trials and paid access are not automatically renewed. When a trial or paid term expires, the hotel is hidden from the public booking directory and new online booking submissions are rejected until renewal; existing reservations are retained.
 9. In Manager **Hotel and Team**, enter the hotel's Nigerian street address, city, and state/FCT. In **Online Booking Setup**, save the bank details, Reception WhatsApp number, and Reception notification email. Managers upload one to three room photos and maintain guest-facing descriptions. Reception controls room status; only rooms marked **Available** and free on the selected dates are shown to guests.
-10. Deploy the service. The Rooms homepage at `/` links guests to hotels and house rentals. The Hotel Manager, Director, and Reception portal is at `/book.admin`; use **Hotel Manager? Register your hotel** there to create a hotel and its team accounts. Hotel staff access is isolated by hotel. Guests can filter the `/book` hotel directory by Nigerian state/FCT, city, stay dates, and room price per night (₦10,000–₦50,000, above ₦50,000–₦100,000, above ₦100,000–₦200,000, or above ₦200,000); results include hotels with listed, Reception-available rooms in that band for those dates. The selected hotel's room list retains the price filter. Guests can also use a hotel's dedicated booking link from Manager **Online Booking Setup**. New guest requests send an email notification to the configured Reception email; Reception still signs into **Online Requests**, verifies payment, and confirms the booking in the app.
+10. Deploy the service. The hotel search and booking experience is the Rooms homepage at `/`; its **Hotels** tab is selected by default, and **Homes** opens the house-rental preview at `/rental`. The old `/book` URL redirects to `/` and is no longer a separate booking page. The Hotel Manager, Director, and Reception portal is at `/book.admin`; use **Hotel Manager? Register your hotel** there to create a hotel and its team accounts. Hotel staff access is isolated by hotel. Guests can filter hotels by Nigerian state/FCT, city, stay dates, and room price per night (₦10,000–₦50,000, above ₦50,000–₦100,000, above ₦100,000–₦200,000, or above ₦200,000); results include hotels with listed, Reception-available rooms in that band for those dates. The selected hotel's room list retains the price filter. Managers can share a hotel's dedicated homepage link from **Online Booking Setup**. New guest requests send an email notification to the configured Reception email; Reception still signs into **Online Requests**, verifies payment, and confirms the booking in the app.
 
 The public Data API must expose the `hotels`, `profiles`, `rooms`, `reservations`, `payments`, `online_room_listings`, `online_booking_settings`, `hotel_subscriptions`, and `hotel_subscription_payments` tables. The schema grants authenticated users hotel- and role-scoped access through RLS; subscription tables have no client policies and are managed server-side only. All role values used by policies are assigned in Supabase Auth `app_metadata` by the server-side Manager account workflow. The service-only Supabase secret must be configured because it powers guest booking, transfer verification, subscription billing, and room-image storage.
 
@@ -61,7 +61,7 @@ locally stored room photos.
    `supabase_reservation_overlap_guard_migration.sql`, and
    `supabase_hotel_subscriptions_migration.sql` in Supabase before deploying.
    Do not use an empty local `supabase_schema.sql` as a schema migration.
-4. Verify `/health`, `/book`, hotel search, a test booking, manager/reception
+4. Verify `/health`, `/`, hotel search, a test booking, manager/reception
    login, and Paystack subscription checkout on Render. Update the Paystack
    webhook URL to `https://<your-render-domain>/billing/paystack/webhook`.
 5. After verifying production behavior, point your custom domain at Render (if
@@ -80,16 +80,16 @@ retained temporarily for rollback.
 
 ## Flutter guest booking web app
 
-The Flutter Rooms homepage is served at `/`, the house-rental preview is at
-`/rental`, and the Hotel Manager, Director, and Reception portal is available
-at `/book.admin`. The rental page is a mockup with clearly labeled sample
+The hotel search and booking experience is served at `/`, with the **Hotels**
+tab selected first. **Short Stays** is marked coming soon; the **Homes** tab
+opens the house-rental preview at `/rental`. The old `/book` URL redirects to
+`/`; hotel-specific links use `/?hotel=<slug>`. The hotel flow includes date and price search, room selection,
+guest details, and payment handoff, submitting into the existing reservation
+and Reception-notification workflow. `/book-app` remains an alias for the
+Flutter hotel booking experience, and `/book-legacy` remains available for the
+older server-rendered booking flow. The Hotel Manager, Director, and Reception
+portal is at `/book.admin`. The rental page remains a mockup with sample
 listings and a simulated inspection-choice flow; it does not read rental data,
 send requests, or collect payments. The separate rental admin and Supabase
-integration will be connected later. The server-rendered guest
-booking flow at `/book` matches the intended hotel
-directory, date/price search, room selection, guest details, and payment
-handoff. It uses the same origin as Flask and submits directly into the existing
-reservation and Reception-notification workflow. A rooms app can link to
-`/book?hotel=<slug>`. `/book-legacy` remains an alias for this flow. The Flutter
-guest booking PWA is available separately at `/book-app`; see
-`hotel_booking_web_app/README.md` for local development details.
+integration will be connected later. See `hotel_booking_web_app/README.md` for
+local Flutter development details.

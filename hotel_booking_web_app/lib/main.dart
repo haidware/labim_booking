@@ -4,7 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'rental_preview_page.dart';
-import 'rooms_home_page.dart';
+import 'rooms_category_tabs.dart';
 import 'services/booking_api.dart';
 
 void main() {
@@ -76,9 +76,8 @@ class HotelBookingApp extends StatelessWidget {
       home:
           bookingPage ??
           switch (Uri.base.path) {
-            '/book-app' => const HotelBookingPage(),
             '/rental' => const RentalPreviewPage(),
-            _ => const RoomsHomePage(),
+            _ => const HotelBookingPage(),
           },
     );
   }
@@ -341,6 +340,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
       body: Column(
         children: [
           _buildHeader(),
+          const RoomsCategoryTabs(activeTab: RoomsCategoryTab.hotels),
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 220),
@@ -453,12 +453,12 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Choose a hotel',
+                  'Find your next stay',
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  'Choose from our hotels to begin your booking.',
+                  'Choose from hotels available for your dates.',
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 22),
