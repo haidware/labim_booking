@@ -41,8 +41,9 @@ The public Data API must expose the `hotels`, `profiles`, `rooms`, `reservations
 ## Deploy to Render
 
 The root `render.yaml` Blueprint builds the Flutter PWA and Flask service from
-the root `Dockerfile`, checks `/health`, and mounts a persistent disk at
-`/app/instance` for SQLite fallback data and locally stored room photos.
+the repository root (`rootDir: .`) and root `Dockerfile`, checks `/health`, and
+mounts a persistent disk at `/app/instance` for SQLite fallback data and
+locally stored room photos.
 
 1. In Render, create a **Blueprint** from this GitHub repository and select the
    branch containing `render.yaml`. The service needs a paid plan for its

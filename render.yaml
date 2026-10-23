@@ -3,6 +3,7 @@ services:
     name: labim-booking
     runtime: docker
     plan: starter
+    rootDir: .
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
