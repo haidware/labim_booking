@@ -391,37 +391,37 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                       width: 40,
                       height: 40,
                       decoration: BoxDecoration(
-                        color: const Color(0xFF244F5D),
-                        borderRadius: BorderRadius.circular(12),
+                        color: const Color(0xFFFFC629),
+                        borderRadius: BorderRadius.circular(10),
                       ),
                       child: const Icon(
-                        Icons.hotel_rounded,
-                        color: Colors.white,
-                        size: 22,
+                        Icons.home_outlined,
+                        color: Color(0xFF082A55),
+                        size: 30,
                       ),
                     ),
                     const SizedBox(width: 12),
-                    const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'HAIDWARE',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 1.2,
+                    Semantics(
+                      label: 'Rooms',
+                      child: ExcludeSemantics(
+                        child: Text.rich(
+                          TextSpan(
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 27,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -1.1,
+                            ),
+                            children: [
+                              TextSpan(text: 'Rooms'),
+                              TextSpan(
+                                text: '.',
+                                style: TextStyle(color: Color(0xFFE53950)),
+                              ),
+                            ],
                           ),
                         ),
-                        Text(
-                          'HOTEL BOOKING',
-                          style: TextStyle(
-                            color: Color(0xFFC1D5D9),
-                            fontSize: 10,
-                            letterSpacing: 1.25,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                     const Spacer(),
                     Tooltip(

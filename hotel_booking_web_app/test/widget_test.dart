@@ -242,7 +242,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('HAIDWARE'), findsOneWidget);
+    expect(find.bySemanticsLabel('Rooms'), findsOneWidget);
+    expect(find.text('HAIDWARE'), findsNothing);
     expect(find.text('Find your next stay'), findsOneWidget);
     expect(find.text('Search hotels'), findsOneWidget);
     expect(find.text('No hotels match this search'), findsOneWidget);
