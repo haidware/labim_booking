@@ -582,7 +582,7 @@ class MultiHotelFlowTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (build_path / "manifest.json").write_text(
-                '{"start_url":"/book-app","scope":"/"}',
+                '{"start_url":"/","scope":"/"}',
                 encoding="utf-8",
             )
             (build_path / "flutter_bootstrap.js").write_text(
@@ -640,7 +640,7 @@ class MultiHotelFlowTests(unittest.TestCase):
 
                 manifest = client.get("/manifest.json")
                 self.assertEqual(manifest.status_code, 200)
-                self.assertIn(b'"start_url":"/book-app"', manifest.data)
+                self.assertIn(b'"start_url":"/"', manifest.data)
                 manifest.close()
 
                 bootstrap = client.get("/flutter_bootstrap.js")

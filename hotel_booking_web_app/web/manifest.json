@@ -1,7 +1,7 @@
 {
     "name": "Rooms",
     "short_name": "Rooms",
-    "start_url": "/book-app",
+    "start_url": "/",
     "scope": "/",
     "display": "standalone",
     "background_color": "#FBFCFC",
