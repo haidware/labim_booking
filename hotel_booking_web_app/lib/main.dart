@@ -98,6 +98,10 @@ class HotelBookingPage extends StatefulWidget {
 class _HotelBookingPageState extends State<HotelBookingPage> {
   late final BookingApi _api;
   final TextEditingController _cityController = TextEditingController();
+  final TextEditingController _guestNameController = TextEditingController();
+  final TextEditingController _guestEmailController = TextEditingController();
+  final TextEditingController _guestPhoneController = TextEditingController();
+  final GlobalKey<FormState> _guestFormKey = GlobalKey<FormState>();
   final DateFormat _dateLabel = DateFormat('d MMM yyyy');
   final NumberFormat _naira = NumberFormat.currency(
     locale: 'en_NG',
@@ -114,6 +118,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   List<Hotel> _hotels = const [];
   List<HotelRoom> _rooms = const [];
   Hotel? _selectedHotel;
+  HotelRoom? _selectedRoom;
   BookingConfirmation? _confirmation;
   bool _loadingHotels = true;
   bool _loadingRooms = false;
@@ -137,6 +142,9 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   void dispose() {
     _api.dispose();
     _cityController.dispose();
+    _guestNameController.dispose();
+    _guestEmailController.dispose();
+    _guestPhoneController.dispose();
     super.dispose();
   }
 
@@ -186,6 +194,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
       _loadingHotels = true;
       _error = null;
       _selectedHotel = null;
+      _selectedRoom = null;
       _rooms = const [];
       _confirmation = null;
     });
@@ -212,6 +221,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   Future<void> _openHotel(Hotel hotel) async {
     setState(() {
       _selectedHotel = hotel;
+      _selectedRoom = null;
       _confirmation = null;
       _loadingRooms = true;
       _error = null;
@@ -238,6 +248,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
     if (hotel == null) return;
     setState(() {
       _loadingRooms = true;
+      _selectedRoom = null;
       _error = null;
     });
     try {
@@ -288,14 +299,11 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
     });
   }
 
-  Future<void> _requestBooking(HotelRoom room) async {
+  Future<void> _requestBooking() async {
     final hotel = _selectedHotel;
-    if (hotel == null) return;
-    final guest = await showDialog<_GuestDetails>(
-      context: context,
-      builder: (context) => const _GuestDetailsDialog(),
-    );
-    if (guest == null) return;
+    final room = _selectedRoom;
+    if (hotel == null || room == null) return;
+    if (!_guestFormKey.currentState!.validate()) return;
     setState(() {
       _submittingBooking = true;
       _error = null;
@@ -306,9 +314,9 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
         room: room,
         checkIn: _checkInIso,
         checkOut: _checkOutIso,
-        guestName: guest.name,
-        email: guest.email,
-        phone: guest.phone,
+        guestName: _guestNameController.text.trim(),
+        email: _guestEmailController.text.trim(),
+        phone: _guestPhoneController.text.trim(),
       );
       if (mounted) setState(() => _confirmation = confirmation);
     } on BookingApiException catch (error) {
@@ -325,6 +333,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   void _backToHotels() {
     setState(() {
       _selectedHotel = null;
+      _selectedRoom = null;
       _rooms = const [];
       _confirmation = null;
       _error = null;
@@ -716,45 +725,157 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                   )
                 else ...[
                   Text(
-                    '${_rooms.length} room${_rooms.length == 1 ? '' : 's'} available',
+                    'Available rooms',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   const SizedBox(height: 16),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final columns = constraints.maxWidth >= 980
-                          ? 3
-                          : constraints.maxWidth >= 640
-                          ? 2
-                          : 1;
-                      return GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: _rooms.length,
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          crossAxisSpacing: 18,
-                          mainAxisSpacing: 18,
-                          childAspectRatio: columns == 1 ? 1.0 : 0.85,
-                        ),
-                        itemBuilder: (context, index) {
-                          final room = _rooms[index];
-                          return _RoomCard(
-                            room: room,
-                            naira: _naira,
-                            nights: _checkOut.difference(_checkIn).inDays,
-                            onBook: _submittingBooking
-                                ? null
-                                : () => _requestBooking(room),
-                          );
-                        },
-                      );
+                  RadioGroup<String>(
+                    groupValue: _selectedRoom?.number,
+                    onChanged: (roomNumber) {
+                      if (roomNumber == null) return;
+                      setState(() {
+                        _selectedRoom = _rooms.firstWhere(
+                          (room) => room.number == roomNumber,
+                        );
+                      });
                     },
+                    child: Column(
+                      children: [
+                        for (final room in _rooms)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            child: _SelectableRoomCard(
+                              room: room,
+                              naira: _naira,
+                              selected: _selectedRoom?.number == room.number,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
+                  const SizedBox(height: 4),
+                  _buildGuestDetailsForm(),
                 ],
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGuestDetailsForm() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE1E8EA)),
+      ),
+      child: Form(
+        key: _guestFormKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Guest details',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 20),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final fieldWidth = constraints.maxWidth >= 700
+                    ? (constraints.maxWidth - 14) / 2
+                    : constraints.maxWidth;
+                return Wrap(
+                  spacing: 14,
+                  runSpacing: 14,
+                  children: [
+                    SizedBox(
+                      width: fieldWidth,
+                      child: TextFormField(
+                        controller: _guestNameController,
+                        maxLength: 160,
+                        decoration: const InputDecoration(
+                          labelText: 'Full name',
+                          counterText: '',
+                        ),
+                        validator: (value) =>
+                            value == null || value.trim().isEmpty
+                            ? 'Enter your full name'
+                            : null,
+                      ),
+                    ),
+                    SizedBox(
+                      width: fieldWidth,
+                      child: TextFormField(
+                        controller: _guestEmailController,
+                        maxLength: 254,
+                        keyboardType: TextInputType.emailAddress,
+                        decoration: const InputDecoration(
+                          labelText: 'Email address',
+                          counterText: '',
+                        ),
+                        validator: (value) {
+                          if (value == null ||
+                              !RegExp(
+                                r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
+                              ).hasMatch(value.trim())) {
+                            return 'Enter a valid email address';
+                          }
+                          return null;
+                        },
+                      ),
+                    ),
+                    SizedBox(
+                      width: fieldWidth,
+                      child: TextFormField(
+                        controller: _guestPhoneController,
+                        maxLength: 40,
+                        keyboardType: TextInputType.phone,
+                        decoration: const InputDecoration(
+                          labelText: 'Phone number',
+                          counterText: '',
+                        ),
+                        validator: (value) =>
+                            value == null || value.trim().isEmpty
+                            ? 'Enter your phone number'
+                            : null,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Your dates will be held for 30 minutes while you transfer payment. Reception confirms your booking after verifying the transfer.',
+              style: TextStyle(fontSize: 13, height: 1.5),
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _selectedRoom == null || _submittingBooking
+                    ? null
+                    : _requestBooking,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF17607A),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: Text(
+                  _submittingBooking
+                      ? 'Submitting booking request…'
+                      : 'Request booking and get payment details',
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1098,124 +1219,84 @@ class _HotelCard extends StatelessWidget {
   }
 }
 
-class _RoomCard extends StatelessWidget {
-  const _RoomCard({
+class _SelectableRoomCard extends StatelessWidget {
+  const _SelectableRoomCard({
     required this.room,
     required this.naira,
-    required this.nights,
-    required this.onBook,
+    required this.selected,
   });
 
   final HotelRoom room;
   final NumberFormat naira;
-  final int nights;
-  final VoidCallback? onBook;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    final total = room.rate * nights;
     return Material(
       color: Colors.white,
-      borderRadius: BorderRadius.circular(17),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(
+          color: selected ? const Color(0xFF17607A) : const Color(0xFFE1E8EA),
+          width: selected ? 2 : 1,
+        ),
+      ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: _PhotoPanel(
-              imageUrl: room.photoUrls.isEmpty ? null : room.photoUrls.first,
-              emptyIcon: Icons.bedroom_parent_rounded,
-              label: 'ROOM ${room.number}',
-              photoCount: room.photoUrls.length,
+          LayoutBuilder(
+            builder: (context, constraints) => AspectRatio(
+              aspectRatio: constraints.maxWidth < 600 ? 1.8 : 5.0,
+              child: room.photoUrls.isNotEmpty
+                  ? Image.network(
+                      room.photoUrls.first,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) =>
+                          _roomPhotoFallback(),
+                    )
+                  : _roomPhotoFallback(),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(17, 15, 17, 16),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   '${room.type} · Room ${room.number}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontSize: 17),
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
-                const SizedBox(height: 7),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 6,
-                  alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.bed_outlined,
-                          color: Color(0xFF71868C),
-                          size: 17,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          '${room.beds} bed${room.beds == 1 ? '' : 's'}',
-                          style: const TextStyle(
-                            color: Color(0xFF71868C),
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                    Text(
-                      '${naira.format(room.rate)}/night',
-                      style: const TextStyle(
-                        color: Color(0xFF153D4C),
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15,
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: 5),
+                Text(
+                  '${room.beds} bed${room.beds == 1 ? '' : 's'} · ${naira.format(room.rate)} per night',
+                  style: const TextStyle(
+                    color: Color(0xFF71868C),
+                    fontSize: 13,
+                  ),
                 ),
                 if (room.description.isNotEmpty) ...[
-                  const SizedBox(height: 9),
+                  const SizedBox(height: 5),
                   Text(
                     room.description,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: Color(0xFF71868C),
-                      fontSize: 12,
-                      height: 1.45,
+                      fontSize: 13,
                     ),
                   ),
                 ],
-                const SizedBox(height: 13),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '$nights night${nights == 1 ? '' : 's'} · ${naira.format(total)} total',
-                        style: const TextStyle(
-                          color: Color(0xFF596B70),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                RadioListTile<String>(
+                  value: room.number,
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text(
+                    'Select this room',
+                    style: TextStyle(
+                      color: Color(0xFF17607A),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
                     ),
-                    FilledButton(
-                      onPressed: onBook,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF17607A),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 17,
-                          vertical: 12,
-                        ),
-                      ),
-                      child: const Text('Book'),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ),
@@ -1224,6 +1305,17 @@ class _RoomCard extends StatelessWidget {
       ),
     );
   }
+
+  Widget _roomPhotoFallback() => Container(
+    color: const Color(0xFFEAF2F3),
+    child: const Center(
+      child: Icon(
+        Icons.bedroom_parent_rounded,
+        size: 54,
+        color: Color(0xFF86A8B0),
+      ),
+    ),
+  );
 }
 
 class _PhotoPanel extends StatelessWidget {
@@ -1231,13 +1323,11 @@ class _PhotoPanel extends StatelessWidget {
     required this.imageUrl,
     required this.emptyIcon,
     required this.label,
-    this.photoCount = 0,
   });
 
   final String? imageUrl;
   final IconData emptyIcon;
   final String label;
-  final int photoCount;
 
   @override
   Widget build(BuildContext context) {
@@ -1272,26 +1362,6 @@ class _PhotoPanel extends StatelessWidget {
             ),
           ),
         ),
-        if (photoCount > 1)
-          Positioned(
-            right: 12,
-            top: 12,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.56),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                '$photoCount photos',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
       ],
     );
   }
@@ -1634,135 +1704,6 @@ class _TrustFooter extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(color: Color(0xFF82959A), fontSize: 12),
           ),
-        ),
-      ],
-    );
-  }
-}
-
-class _GuestDetails {
-  const _GuestDetails({
-    required this.name,
-    required this.email,
-    required this.phone,
-  });
-
-  final String name;
-  final String email;
-  final String phone;
-}
-
-class _GuestDetailsDialog extends StatefulWidget {
-  const _GuestDetailsDialog();
-
-  @override
-  State<_GuestDetailsDialog> createState() => _GuestDetailsDialogState();
-}
-
-class _GuestDetailsDialogState extends State<_GuestDetailsDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final _name = TextEditingController();
-  final _email = TextEditingController();
-  final _phone = TextEditingController();
-
-  @override
-  void dispose() {
-    _name.dispose();
-    _email.dispose();
-    _phone.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Guest details'),
-      content: SizedBox(
-        width: 420,
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: _name,
-                autofocus: true,
-                maxLength: 160,
-                decoration: const InputDecoration(
-                  labelText: 'Full name',
-                  prefixIcon: Icon(Icons.person_outline),
-                  counterText: '',
-                ),
-                validator: (value) => (value == null || value.trim().isEmpty)
-                    ? 'Enter your name'
-                    : null,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _email,
-                maxLength: 254,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
-                  labelText: 'Email address',
-                  prefixIcon: Icon(Icons.mail_outline),
-                  counterText: '',
-                ),
-                validator: (value) {
-                  if (value == null ||
-                      !RegExp(
-                        r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
-                      ).hasMatch(value.trim())) {
-                    return 'Enter a valid email';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _phone,
-                maxLength: 40,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(
-                  labelText: 'Phone number',
-                  prefixIcon: Icon(Icons.phone_outlined),
-                  counterText: '',
-                ),
-                validator: (value) => (value == null || value.trim().isEmpty)
-                    ? 'Enter your phone number'
-                    : null,
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Your dates will be held for 30 minutes while you transfer payment. '
-                'Reception confirms after verifying the transfer.',
-                style: TextStyle(
-                  color: Color(0xFF71868C),
-                  fontSize: 12,
-                  height: 1.5,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () {
-            if (!_formKey.currentState!.validate()) return;
-            Navigator.pop(
-              context,
-              _GuestDetails(
-                name: _name.text.trim(),
-                email: _email.text.trim(),
-                phone: _phone.text.trim(),
-              ),
-            );
-          },
-          child: const Text('Request booking'),
         ),
       ],
     );

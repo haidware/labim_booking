@@ -1,7 +1,7 @@
 import 'dart:ui' show Size;
 
 import 'package:flutter/material.dart'
-    show MaterialApp, Scrollable, TextFormField;
+    show FilledButton, MaterialApp, Scrollable, TextFormField;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hotel_booking_web_app/main.dart';
 import 'package:hotel_booking_web_app/property_category_preview_page.dart';
@@ -272,9 +272,23 @@ void main() {
         find.text('Find your room at Labim Hotel and Suite'),
         findsOneWidget,
       );
-      await tester.ensureVisible(find.text('Book'));
+      expect(find.text('Available rooms'), findsOneWidget);
+      expect(find.text('Guest details'), findsOneWidget);
+      expect(find.text('Select this room'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(
+                FilledButton,
+                'Request booking and get payment details',
+              ),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.ensureVisible(find.text('Select this room'));
       expect(tester.takeException(), isNull);
-      await tester.tap(find.text('Book'));
+      await tester.tap(find.text('Select this room'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
 
@@ -285,7 +299,10 @@ void main() {
       );
       await tester.enterText(find.byType(TextFormField).at(2), '08000000000');
       expect(tester.takeException(), isNull);
-      await tester.tap(find.text('Request booking'));
+      await tester.ensureVisible(
+        find.text('Request booking and get payment details'),
+      );
+      await tester.tap(find.text('Request booking and get payment details'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
 
