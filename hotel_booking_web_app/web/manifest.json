@@ -1,6 +1,6 @@
 {
-    "name": "HAIDWARE Hotel Booking",
-    "short_name": "Hotel Booking",
+    "name": "Rooms",
+    "short_name": "Rooms",
     "start_url": "/book-app",
     "scope": "/",
     "display": "standalone",

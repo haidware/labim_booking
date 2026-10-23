@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'rooms_home_page.dart';
 import 'services/booking_api.dart';
 
 void main() {
@@ -16,10 +17,9 @@ class HotelBookingApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const navy = Color(0xFF153D4C);
     const teal = Color(0xFF17607A);
     return MaterialApp(
-      title: 'HAIDWARE Hotel Booking',
+      title: 'Rooms',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -31,17 +31,23 @@ class HotelBookingApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFFFBFCFC),
         textTheme: const TextTheme(
           headlineLarge: TextStyle(
-            color: navy,
+            color: Color(0xFF153D4C),
             fontWeight: FontWeight.w700,
             letterSpacing: -1.5,
           ),
           headlineMedium: TextStyle(
-            color: navy,
+            color: Color(0xFF153D4C),
             fontWeight: FontWeight.w700,
             letterSpacing: -0.8,
           ),
-          titleLarge: TextStyle(color: navy, fontWeight: FontWeight.w700),
-          titleMedium: TextStyle(color: navy, fontWeight: FontWeight.w600),
+          titleLarge: TextStyle(
+            color: Color(0xFF153D4C),
+            fontWeight: FontWeight.w700,
+          ),
+          titleMedium: TextStyle(
+            color: Color(0xFF153D4C),
+            fontWeight: FontWeight.w600,
+          ),
           bodyMedium: TextStyle(color: Color(0xFF596B70), height: 1.5),
         ),
         inputDecorationTheme: InputDecorationTheme(
@@ -66,7 +72,11 @@ class HotelBookingApp extends StatelessWidget {
           ),
         ),
       ),
-      home: bookingPage ?? const HotelBookingPage(),
+      home:
+          bookingPage ??
+          (Uri.base.path == '/book-app'
+              ? const HotelBookingPage()
+              : const RoomsHomePage()),
     );
   }
 }

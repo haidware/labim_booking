@@ -1,8 +1,9 @@
 import 'dart:ui' show Size;
 
-import 'package:flutter/material.dart' show TextFormField;
+import 'package:flutter/material.dart' show MaterialApp, TextFormField;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hotel_booking_web_app/main.dart';
+import 'package:hotel_booking_web_app/rooms_home_page.dart';
 import 'package:hotel_booking_web_app/services/booking_api.dart';
 
 class _EmptyBookingApi extends BookingApi {
@@ -90,6 +91,21 @@ class _BookingFlowApi extends _EmptyBookingApi {
 }
 
 void main() {
+  testWidgets('Rooms landing page adapts to narrow screens', (tester) async {
+    tester.view.physicalSize = const Size(320, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MaterialApp(home: RoomsHomePage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('What are you looking for?'), findsOneWidget);
+    expect(find.text('Hotel'), findsOneWidget);
+    expect(find.text('Rent House'), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('shows live hotel search and empty results state', (
     tester,
   ) async {

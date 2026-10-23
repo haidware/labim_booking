@@ -596,7 +596,15 @@ class MultiHotelFlowTests(unittest.TestCase):
                 build_path,
             ):
                 landing = client.get("/")
-                self.assertIn(b'href="/book"', landing.data)
+                self.assertEqual(landing.status_code, 200)
+                self.assertIn(b'<base href="/">', landing.data)
+                landing.close()
+
+                admin_landing = client.get("/book.admin")
+                self.assertEqual(admin_landing.status_code, 200)
+                self.assertIn(b"HAIDWARE HOTEL BOOKING PLATFORM", admin_landing.data)
+                self.assertIn(b"Hotel Manager? Register your hotel", admin_landing.data)
+                admin_landing.close()
 
                 trailing_slash = client.get(
                     "/book/?hotel=test-hotel",

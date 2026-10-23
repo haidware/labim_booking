@@ -4,11 +4,13 @@ Flutter Web guest booking PWA for the Labim Booking OS. Hotel, room, nightly rat
 availability, and payment-instruction data is retrieved from the Flask service;
 this app contains no seeded hotel or room records.
 
-In production, the reference server-rendered booking experience is served at
-`/book`, with the Flutter PWA available at `/book-app`. Installable PWA launches
-open `/book-app`; `?hotel=<slug>` can be added to link directly to a hotel. The
-PWA uses the current page's origin for the backend by default, so the Render
-service URL does not need to be compiled into the app.
+In production, this Flutter app serves the Rooms homepage at `/` and the guest
+booking PWA at `/book-app`. The server-rendered guest booking experience is at
+`/book`, and the hotel staff portal is at `/book.admin`. Installable PWA
+launches open `/book-app`;
+`?hotel=<slug>` can be added to link directly to a hotel. The PWA uses the
+current page's origin for the backend by default, so the Render service URL
+does not need to be compiled into the app.
 
 ## Local development
 

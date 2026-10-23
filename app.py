@@ -2611,7 +2611,14 @@ def cancel_online_booking_route(reservation_id):
 
 @app.route("/")
 def home():
-    return render_template("landing.html")
+    if not (FLUTTER_WEB_BUILD_DIRECTORY / "index.html").is_file():
+        return "The Flutter Rooms app has not been built.", 503
+    return send_from_directory(FLUTTER_WEB_BUILD_DIRECTORY, "index.html")
+
+
+@app.get("/book.admin")
+def admin_landing():
+    return render_template("admin_landing.html")
 
 
 @app.get("/health")
@@ -2627,13 +2634,13 @@ def logout():
         except Exception:
             pass
     session.clear()
-    return redirect(url_for("home"))
+    return redirect(url_for("admin_landing"))
 
 
 @app.route("/login/<role>", methods=["GET", "POST"])
 def login(role):
     if role not in {"director", "manager", "reception"}:
-        return redirect(url_for("home"))
+        return redirect(url_for("admin_landing"))
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         submitted_password = request.form.get("password", "")
@@ -3633,7 +3640,7 @@ def reference_workspace(role, page):
         "reception": {"dashboard", "calendar", "new", "checkout", "roomstatus", "payments", "online"},
     }
     if role not in pages or page not in pages[role]:
-        return redirect(url_for("home"))
+        return redirect(url_for("admin_landing"))
     expire_online_booking_holds()
     reference_date = date.today()
     if page == "calendar":
@@ -3766,7 +3773,7 @@ def update_reservation(reservation_id):
     role = request.form.get("role", "reception")
     if action in {"manager_edit", "manager_cancel"}:
         if role != "manager":
-            return redirect(url_for("home"))
+            return redirect(url_for("admin_landing"))
         try:
             if action == "manager_edit":
                 update_manager_reservation(reservation_id, request.form)
@@ -3778,7 +3785,7 @@ def update_reservation(reservation_id):
             flash(str(error) or "Check the booking details and try again.", "error")
         return redirect(url_for("reference_workspace", role="manager", page="bookings"))
     if role != "reception" or action not in {"check_out", "mark_paid", "extend"}:
-        return redirect(url_for("home"))
+        return redirect(url_for("admin_landing"))
     if action == "extend":
         try:
             extra_nights, extension_charge, new_departure = extend_reference_reservation(
