@@ -1957,25 +1957,72 @@ class _TrustFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Icon(
-          Icons.verified_user_outlined,
-          size: 17,
-          color: Color(0xFF82959A),
+    if (isApartmentPreview) {
+      return const Center(
+        child: Text(
+          'Sample apartment listings are shown for design preview only.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Color(0xFF82959A), fontSize: 12, height: 1.5),
         ),
-        const SizedBox(width: 8),
+      );
+    }
+
+    const steps = [
+      'Only onboarded hotels with active staff are listed.',
+      'Explore live available rooms and submit your booking request.',
+      'Pay to the hotel’s approved bank account.',
+      'Confirm your payment with hotel staff on WhatsApp; staff verify payment and approve your booking.',
+      'Hotel staff manage online and physical bookings to keep room availability up to date.',
+    ];
+
+    return Row(
+      children: [
         Expanded(
-          child: Text(
-            isApartmentPreview
-                ? 'Sample apartment listings are shown for design preview only.'
-                : 'Only onboarded hotels with active staff manage online and physical bookings. Explore live room availability, book using the hotel’s approved bank account, then confirm your payment with hotel staff on WhatsApp for booking approval.',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Color(0xFF82959A),
-              fontSize: 12,
-              height: 1.5,
+          child: Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(color: const Color(0xFFE1E8EA)),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'How Rooms works',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                for (final step in steps)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 7),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Padding(
+                          padding: EdgeInsets.only(top: 7, right: 9),
+                          child: Icon(
+                            Icons.circle,
+                            size: 5,
+                            color: Color(0xFF17607A),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            step,
+                            style: const TextStyle(
+                              color: Color(0xFF71868C),
+                              fontSize: 13,
+                              height: 1.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
