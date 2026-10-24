@@ -16,11 +16,12 @@ class RoomsCategoryTabs extends StatelessWidget {
     final path = switch (tab) {
       RoomsCategoryTab.hotels => '/',
       RoomsCategoryTab.apartments => '/apartment',
-      RoomsCategoryTab.homes => '/rental',
+      RoomsCategoryTab.homes => 'https://labim-house-rental.onrender.com/',
       RoomsCategoryTab.landProperties => '/land-properties',
     };
+    final uri = Uri.parse(path);
     final opened = await launchUrl(
-      Uri.base.resolve(path),
+      uri.hasScheme ? uri : Uri.base.resolve(path),
       webOnlyWindowName: '_self',
     );
     if (!opened && context.mounted) {
