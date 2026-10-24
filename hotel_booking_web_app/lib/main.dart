@@ -589,44 +589,86 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   }
 
   Widget _buildWelcomePanel() {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 850),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final compact = constraints.maxWidth < 520;
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Text(
-                    _isApartmentPreview
-                        ? 'Find your apartment. Make your stay your own.'
-                        : 'Your stay. Your choice. All in one place.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: const Color(0xFF153D4C),
-                      fontSize: compact ? 30 : 42,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: compact ? -0.7 : -1.0,
-                      height: 1.2,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  const Divider(height: 1, color: Color(0xFFDDE7E8)),
-                  const SizedBox(height: 22),
-                  RoomsCategoryTabs(
-                    activeTab: _isApartmentPreview
-                        ? RoomsCategoryTab.apartments
-                        : RoomsCategoryTab.hotels,
-                  ),
-                ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 520;
+        return Container(
+          padding: EdgeInsets.all(compact ? 20 : 28),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: const Color(0xFFE1E8EA)),
+            borderRadius: BorderRadius.circular(28),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _isApartmentPreview
+                    ? 'Find your apartment. Make your stay your own.'
+                    : 'Find. Compare. Book.',
+                style: TextStyle(
+                  color: const Color(0xFF153D4C),
+                  fontSize: compact ? 30 : 42,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: compact ? -0.7 : -1.0,
+                  height: 1.2,
+                ),
               ),
-            );
-          },
-        ),
-      ),
+              if (!_isApartmentPreview) ...[
+                const SizedBox(height: 18),
+                Text(
+                  'Your next stay starts here.',
+                  style: TextStyle(
+                    color: const Color(0xFF153D4C),
+                    fontSize: compact ? 21 : 26,
+                    fontWeight: FontWeight.w600,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text.rich(
+                  TextSpan(
+                    style: TextStyle(
+                      color: const Color(0xFF596B70),
+                      fontSize: compact ? 16 : 18,
+                      height: 1.5,
+                    ),
+                    children: const [
+                      TextSpan(text: 'Discover '),
+                      TextSpan(
+                        text: 'live available hotel rooms',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      TextSpan(
+                        text:
+                            ', compare prices and room options, and book your preferred stay. You can also explore apartments, homes for rent and land/properties across Nigeria.',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  'Your stay. Your choice. All in one place.',
+                  style: TextStyle(
+                    color: const Color(0xFF17607A),
+                    fontSize: compact ? 17 : 20,
+                    fontWeight: FontWeight.w700,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 22),
+              const Divider(height: 1, color: Color(0xFFDDE7E8)),
+              const SizedBox(height: 20),
+              RoomsCategoryTabs(
+                activeTab: _isApartmentPreview
+                    ? RoomsCategoryTab.apartments
+                    : RoomsCategoryTab.hotels,
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

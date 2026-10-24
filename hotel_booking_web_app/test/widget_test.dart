@@ -153,6 +153,12 @@ void main() {
       find.text('Your stay. Your choice. All in one place.'),
       findsOneWidget,
     );
+    expect(find.text('Find. Compare. Book.'), findsOneWidget);
+    expect(find.text('Your next stay starts here.'), findsOneWidget);
+    expect(
+      find.textContaining('Discover live available hotel rooms'),
+      findsOneWidget,
+    );
     expect(find.text('Hotels'), findsOneWidget);
     expect(find.text('Apartment'), findsOneWidget);
     expect(find.text('Homes'), findsOneWidget);
@@ -348,6 +354,11 @@ void main() {
       find.text('Your stay. Your choice. All in one place.'),
       findsOneWidget,
     );
+    expect(find.text('Find. Compare. Book.'), findsOneWidget);
+    expect(
+      find.textContaining('land/properties across Nigeria'),
+      findsOneWidget,
+    );
     expect(find.text('Hotels'), findsOneWidget);
     expect(find.text('Apartment'), findsOneWidget);
     expect(find.text('Homes'), findsOneWidget);
@@ -374,6 +385,7 @@ void main() {
       find.text('Your stay. Your choice. All in one place.'),
       findsOneWidget,
     );
+    expect(find.text('Find. Compare. Book.'), findsOneWidget);
     expect(find.text('Search hotels'), findsOneWidget);
     expect(find.text('No hotels match this search'), findsOneWidget);
     final layoutException = tester.takeException();
