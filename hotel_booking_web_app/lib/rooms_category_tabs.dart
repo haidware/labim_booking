@@ -97,33 +97,33 @@ class _CategoryTab extends StatelessWidget {
       selected: selected,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final compact = constraints.maxWidth < 80;
+          final compact = constraints.maxWidth < 120;
           return Material(
             color: selected
                 ? RoomsCategoryTabs._blue
                 : RoomsCategoryTabs._tileBackground,
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(compact ? 14 : 18),
             clipBehavior: Clip.antiAlias,
             child: InkWell(
               onTap: onTap,
               child: SizedBox(
-                height: compact ? 100 : 112,
+                height: compact ? 72 : 88,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 4,
-                    vertical: 12,
+                    horizontal: 2,
+                    vertical: 8,
                   ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
                         icon,
-                        size: compact ? 24 : 29,
+                        size: compact ? 19 : 23,
                         color: selected
                             ? Colors.white
                             : RoomsCategoryTabs._navy,
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 5),
                       Text(
                         label,
                         textAlign: TextAlign.center,
@@ -132,8 +132,8 @@ class _CategoryTab extends StatelessWidget {
                           color: selected
                               ? Colors.white
                               : RoomsCategoryTabs._navy,
-                          fontSize: compact ? 11 : 16,
-                          height: 1.15,
+                          fontSize: compact ? 10 : 14,
+                          height: 1.1,
                           fontWeight: selected
                               ? FontWeight.w600
                               : FontWeight.w500,

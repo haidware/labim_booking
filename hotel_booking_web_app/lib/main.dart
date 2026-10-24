@@ -481,7 +481,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                   children: [
                     Expanded(
                       child: Text(
-                        'Hotels and available rooms',
+                        'Live hotels and live available rooms',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                     ),
