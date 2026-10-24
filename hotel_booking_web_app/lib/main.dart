@@ -545,73 +545,25 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final compact = constraints.maxWidth < 520;
-            return Container(
-              padding: EdgeInsets.symmetric(
-                horizontal: compact ? 18 : 32,
-                vertical: compact ? 22 : 32,
-              ),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(color: const Color(0xFFE2E7E7), width: 1.5),
-                borderRadius: BorderRadius.circular(30),
-              ),
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Text(
-                    'Find. Compare. Book.',
-                    style: TextStyle(
-                      color: const Color(0xFF153D4C),
-                      fontSize: compact ? 30 : 46,
-                      fontWeight: FontWeight.w700,
-                      height: 1.15,
-                      letterSpacing: compact ? -0.7 : -1.2,
-                    ),
-                  ),
-                  SizedBox(height: compact ? 20 : 26),
-                  Text(
-                    'Your next stay starts here.',
-                    style: TextStyle(
-                      color: const Color(0xFF153D4C),
-                      fontSize: compact ? 22 : 30,
-                      height: 1.2,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  SizedBox(height: compact ? 14 : 20),
-                  Text.rich(
-                    TextSpan(
-                      style: TextStyle(
-                        color: const Color(0xFF596B70),
-                        fontSize: compact ? 17 : 22,
-                        height: 1.45,
-                      ),
-                      children: const [
-                        TextSpan(text: 'Discover '),
-                        TextSpan(
-                          text: 'live available hotel rooms',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        TextSpan(
-                          text:
-                              ', compare prices and room options, and book your preferred stay. You can also explore apartments, homes for rent and land/properties across Nigeria.',
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(height: compact ? 18 : 24),
-                  Text(
                     'Your stay. Your choice. All in one place.',
+                    textAlign: TextAlign.center,
                     style: TextStyle(
-                      color: const Color(0xFF17607A),
-                      fontSize: compact ? 19 : 25,
-                      height: 1.25,
+                      color: const Color(0xFF153D4C),
+                      fontSize: compact ? 30 : 42,
                       fontWeight: FontWeight.w700,
+                      letterSpacing: compact ? -0.7 : -1.0,
+                      height: 1.2,
                     ),
                   ),
-                  SizedBox(height: compact ? 22 : 30),
-                  const Divider(height: 1, color: Color(0xFFD6E2E2)),
-                  SizedBox(height: compact ? 18 : 26),
+                  const SizedBox(height: 20),
+                  const Divider(height: 1, color: Color(0xFFDDE7E8)),
+                  const SizedBox(height: 22),
                   const RoomsCategoryTabs(activeTab: RoomsCategoryTab.hotels),
                 ],
               ),
