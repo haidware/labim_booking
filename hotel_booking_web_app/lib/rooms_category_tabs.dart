@@ -8,9 +8,9 @@ class RoomsCategoryTabs extends StatelessWidget {
 
   final RoomsCategoryTab activeTab;
 
-  static const _navy = Color(0xFF173651);
-  static const _blue = Color(0xFF17607A);
-  static const _line = Color(0xFFE3E9EE);
+  static const _navy = Color(0xFF485B60);
+  static const _blue = Color(0xFF1B6578);
+  static const _tileBackground = Color(0xFFF1F6F6);
 
   Future<void> _openTab(BuildContext context, RoomsCategoryTab tab) async {
     final path = switch (tab) {
@@ -32,43 +32,46 @@ class RoomsCategoryTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return SizedBox(
       width: double.infinity,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: _line)),
-      ),
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 10,
-            runSpacing: 8,
-            children: [
-              _CategoryTab(
-                label: 'Hotels',
-                selected: activeTab == RoomsCategoryTab.hotels,
-                onTap: () => _openTab(context, RoomsCategoryTab.hotels),
-              ),
-              _CategoryTab(
-                label: 'Apartment',
-                selected: activeTab == RoomsCategoryTab.apartments,
-                onTap: () => _openTab(context, RoomsCategoryTab.apartments),
-              ),
-              _CategoryTab(
-                label: 'Homes',
-                selected: activeTab == RoomsCategoryTab.homes,
-                onTap: () => _openTab(context, RoomsCategoryTab.homes),
-              ),
-              _CategoryTab(
-                label: 'Land/Properties',
-                selected: activeTab == RoomsCategoryTab.landProperties,
-                onTap: () => _openTab(context, RoomsCategoryTab.landProperties),
-              ),
-            ],
+      child: Row(
+        children: [
+          Expanded(
+            child: _CategoryTab(
+              icon: Icons.bed_outlined,
+              label: 'Hotels',
+              selected: activeTab == RoomsCategoryTab.hotels,
+              onTap: () => _openTab(context, RoomsCategoryTab.hotels),
+            ),
           ),
-        ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _CategoryTab(
+              icon: Icons.apartment_outlined,
+              label: 'Apartment',
+              selected: activeTab == RoomsCategoryTab.apartments,
+              onTap: () => _openTab(context, RoomsCategoryTab.apartments),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _CategoryTab(
+              icon: Icons.home_outlined,
+              label: 'Homes',
+              selected: activeTab == RoomsCategoryTab.homes,
+              onTap: () => _openTab(context, RoomsCategoryTab.homes),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _CategoryTab(
+              icon: Icons.map_outlined,
+              label: 'Land/Properties',
+              selected: activeTab == RoomsCategoryTab.landProperties,
+              onTap: () => _openTab(context, RoomsCategoryTab.landProperties),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -76,11 +79,13 @@ class RoomsCategoryTabs extends StatelessWidget {
 
 class _CategoryTab extends StatelessWidget {
   const _CategoryTab({
+    required this.icon,
     required this.label,
     required this.selected,
     required this.onTap,
   });
 
+  final IconData icon;
   final String label;
   final bool selected;
   final VoidCallback? onTap;
@@ -90,20 +95,57 @@ class _CategoryTab extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      child: FilledButton(
-        onPressed: onTap,
-        style: FilledButton.styleFrom(
-          backgroundColor: selected ? RoomsCategoryTabs._blue : Colors.white,
-          foregroundColor: selected ? Colors.white : RoomsCategoryTabs._navy,
-          side: BorderSide(
-            color: selected ? RoomsCategoryTabs._blue : RoomsCategoryTabs._line,
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-        ),
-        child: Text(label),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 80;
+          return Material(
+            color: selected
+                ? RoomsCategoryTabs._blue
+                : RoomsCategoryTabs._tileBackground,
+            borderRadius: BorderRadius.circular(22),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: onTap,
+              child: SizedBox(
+                height: compact ? 100 : 112,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 12,
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        icon,
+                        size: compact ? 24 : 29,
+                        color: selected
+                            ? Colors.white
+                            : RoomsCategoryTabs._navy,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        label,
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        style: TextStyle(
+                          color: selected
+                              ? Colors.white
+                              : RoomsCategoryTabs._navy,
+                          fontSize: compact ? 11 : 16,
+                          height: 1.15,
+                          fontWeight: selected
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }

@@ -348,23 +348,32 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
 
   @override
   Widget build(BuildContext context) {
+    final page = _confirmation != null
+        ? _buildCategoryFlow(_buildConfirmation(_confirmation!))
+        : _selectedHotel != null
+        ? _buildCategoryFlow(_buildRoomsPage(_selectedHotel!))
+        : _buildHotelsPage();
     return Scaffold(
       body: Column(
         children: [
           _buildHeader(),
-          const RoomsCategoryTabs(activeTab: RoomsCategoryTab.hotels),
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 220),
-              child: _confirmation != null
-                  ? _buildConfirmation(_confirmation!)
-                  : _selectedHotel != null
-                  ? _buildRoomsPage(_selectedHotel!)
-                  : _buildHotelsPage(),
+              child: page,
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildCategoryFlow(Widget page) {
+    return Column(
+      children: [
+        const RoomsCategoryTabs(activeTab: RoomsCategoryTab.hotels),
+        Expanded(child: page),
+      ],
     );
   }
 
@@ -460,20 +469,12 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1240),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 32, 24, 56),
+            padding: const EdgeInsets.fromLTRB(16, 28, 16, 56),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Find your next stay',
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  'Choose from hotels available for your dates.',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 22),
+                _buildWelcomePanel(),
+                const SizedBox(height: 28),
                 _buildSearchPanel(),
                 const SizedBox(height: 28),
                 Row(
@@ -532,6 +533,90 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWelcomePanel() {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 850),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 520;
+            return Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: compact ? 18 : 32,
+                vertical: compact ? 22 : 32,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: const Color(0xFFE2E7E7), width: 1.5),
+                borderRadius: BorderRadius.circular(30),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Find. Compare. Book.',
+                    style: TextStyle(
+                      color: const Color(0xFF153D4C),
+                      fontSize: compact ? 30 : 46,
+                      fontWeight: FontWeight.w700,
+                      height: 1.15,
+                      letterSpacing: compact ? -0.7 : -1.2,
+                    ),
+                  ),
+                  SizedBox(height: compact ? 20 : 26),
+                  Text(
+                    'Your next stay starts here.',
+                    style: TextStyle(
+                      color: const Color(0xFF153D4C),
+                      fontSize: compact ? 22 : 30,
+                      height: 1.2,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(height: compact ? 14 : 20),
+                  Text.rich(
+                    TextSpan(
+                      style: TextStyle(
+                        color: const Color(0xFF596B70),
+                        fontSize: compact ? 17 : 22,
+                        height: 1.45,
+                      ),
+                      children: const [
+                        TextSpan(text: 'Discover '),
+                        TextSpan(
+                          text: 'live available hotel rooms',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        TextSpan(
+                          text:
+                              ', compare prices and room options, and book your preferred stay. You can also explore apartments, homes for rent and land/properties across Nigeria.',
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: compact ? 18 : 24),
+                  Text(
+                    'Your stay. Your choice. All in one place.',
+                    style: TextStyle(
+                      color: const Color(0xFF17607A),
+                      fontSize: compact ? 19 : 25,
+                      height: 1.25,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  SizedBox(height: compact ? 22 : 30),
+                  const Divider(height: 1, color: Color(0xFFD6E2E2)),
+                  SizedBox(height: compact ? 18 : 26),
+                  const RoomsCategoryTabs(activeTab: RoomsCategoryTab.hotels),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );
