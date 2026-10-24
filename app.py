@@ -2523,6 +2523,25 @@ def flutter_rental_preview_trailing_slash():
     )
 
 
+@app.get("/apartment/")
+def flutter_apartment_preview_trailing_slash():
+    return redirect(
+        url_for("flutter_apartment_preview", **request.args.to_dict(flat=False)),
+        code=308,
+    )
+
+
+@app.get("/land-properties/")
+def flutter_land_properties_preview_trailing_slash():
+    return redirect(
+        url_for(
+            "flutter_land_properties_preview",
+            **request.args.to_dict(flat=False),
+        ),
+        code=308,
+    )
+
+
 @app.get("/book-app")
 def flutter_booking_app():
     if not (FLUTTER_WEB_BUILD_DIRECTORY / "index.html").is_file():
@@ -2534,6 +2553,20 @@ def flutter_booking_app():
 def flutter_rental_preview():
     if not (FLUTTER_WEB_BUILD_DIRECTORY / "index.html").is_file():
         return "The Flutter rental preview has not been built.", 503
+    return send_from_directory(FLUTTER_WEB_BUILD_DIRECTORY, "index.html")
+
+
+@app.get("/apartment")
+def flutter_apartment_preview():
+    if not (FLUTTER_WEB_BUILD_DIRECTORY / "index.html").is_file():
+        return "The Flutter apartment preview has not been built.", 503
+    return send_from_directory(FLUTTER_WEB_BUILD_DIRECTORY, "index.html")
+
+
+@app.get("/land-properties")
+def flutter_land_properties_preview():
+    if not (FLUTTER_WEB_BUILD_DIRECTORY / "index.html").is_file():
+        return "The Flutter land and properties preview has not been built.", 503
     return send_from_directory(FLUTTER_WEB_BUILD_DIRECTORY, "index.html")
 
 
