@@ -17,7 +17,19 @@ from urllib.request import Request as UrlRequest, urlopen
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from flask import Flask, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from flask import (
+    Flask,
+    Response,
+    flash,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    session,
+    url_for,
+)
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -37,6 +49,11 @@ FLUTTER_WEB_BUILD_DIRECTORY = Path(os.getenv(
     "FLUTTER_WEB_BUILD_DIRECTORY",
     str(BASE_DIR / "hotel_booking_web_app" / "build" / "web"),
 ))
+RENTAL_SERVICE_URL = os.getenv(
+    "RENTAL_SERVICE_URL",
+    "https://labim-house-rental.onrender.com",
+).rstrip("/")
+RENTAL_PROXY_PREFIX = "/rentals"
 ROOM_PHOTO_BUCKET = "room-photos"
 ONLINE_HOLD_MINUTES = 30
 TRIAL_DAYS = 30
@@ -2568,6 +2585,170 @@ def flutter_land_properties_preview():
     if not (FLUTTER_WEB_BUILD_DIRECTORY / "index.html").is_file():
         return "The Flutter land and properties preview has not been built.", 503
     return send_from_directory(FLUTTER_WEB_BUILD_DIRECTORY, "index.html")
+
+
+def _rewrite_rental_html(body):
+    def rewrite_attribute(match):
+        value = match.group("url")
+        if (
+            value.startswith("//")
+            or value == RENTAL_PROXY_PREFIX
+            or value.startswith(f"{RENTAL_PROXY_PREFIX}/")
+        ):
+            return match.group(0)
+        return f'{match.group("attribute")}{match.group("quote")}{RENTAL_PROXY_PREFIX}{value}{match.group("quote")}'
+
+    text = body.decode("utf-8")
+    base_tag = re.search(r"<base\b[^>]*>", text, flags=re.IGNORECASE)
+    if base_tag:
+        base = re.sub(
+            r'(?i)(\bhref\s*=\s*)(["\'])[^"\']*\2',
+            rf'\1"/rentals/"',
+            base_tag.group(0),
+            count=1,
+        )
+        text = f"{text[:base_tag.start()]}{base}{text[base_tag.end():]}"
+    else:
+        text = re.sub(
+            r"(?i)(<head\b[^>]*>)",
+            r'\1<base href="/rentals/">',
+            text,
+            count=1,
+        )
+    text = re.sub(
+        r'(?P<attribute>\b(?:href|src|action|formaction)\s*=\s*)(?P<quote>["\'])(?P<url>/(?!/)[^"\']*)(?P=quote)',
+        rewrite_attribute,
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text.encode("utf-8")
+
+
+def _rental_proxy_response(rental_path):
+    upstream_path = f"/{rental_path}" if rental_path else "/"
+    upstream_url = f"{RENTAL_SERVICE_URL}{upstream_path}"
+    if request.query_string:
+        upstream_url = f"{upstream_url}?{request.query_string.decode('latin-1')}"
+
+    forwarded_headers = {
+        name: request.headers[name]
+        for name in ("Accept", "Accept-Language", "Content-Type", "X-CSRFToken")
+        if name in request.headers
+    }
+    rental_cookies = [
+        f"{name}={request.cookies[name]}"
+        for name in ("csrftoken", "sessionid", "messages")
+        if name in request.cookies
+    ]
+    if rental_cookies:
+        forwarded_headers["Cookie"] = "; ".join(rental_cookies)
+    request_origin = f"{request.scheme}://{request.host}"
+    incoming_origin = request.headers.get("Origin")
+    if incoming_origin:
+        forwarded_headers["Origin"] = (
+            RENTAL_SERVICE_URL
+            if incoming_origin == request_origin
+            else incoming_origin
+        )
+    incoming_referer = request.headers.get("Referer")
+    if incoming_referer:
+        referer = urlparse(incoming_referer)
+        referer_path = referer.path
+        if (
+            f"{referer.scheme}://{referer.netloc}" == request_origin
+            and (
+                referer_path == RENTAL_PROXY_PREFIX
+                or referer_path.startswith(f"{RENTAL_PROXY_PREFIX}/")
+            )
+        ):
+            referer_path = referer_path[len(RENTAL_PROXY_PREFIX):] or "/"
+            forwarded_headers["Referer"] = (
+                f"{RENTAL_SERVICE_URL}{referer_path}"
+                f"{f'?{referer.query}' if referer.query else ''}"
+            )
+        else:
+            forwarded_headers["Referer"] = incoming_referer
+
+    upstream_request = UrlRequest(
+        upstream_url,
+        data=request.get_data() or None,
+        headers=forwarded_headers,
+        method=request.method,
+    )
+    try:
+        upstream = urlopen(upstream_request, timeout=90)
+    except HTTPError as error:
+        upstream = error
+    except URLError:
+        app.logger.exception("Could not proxy request to the rental service.")
+        return "The rental service is temporarily unavailable.", 502
+
+    with upstream:
+        body = upstream.read()
+        content_type = upstream.headers.get("Content-Type", "")
+        if "text/html" in content_type.lower():
+            body = _rewrite_rental_html(body)
+        status = getattr(upstream, "status", None) or getattr(
+            upstream, "code", 200
+        )
+        response = Response(body, status=status)
+        for header_name in (
+            "Content-Type",
+            "Cache-Control",
+            "ETag",
+            "Last-Modified",
+            "Expires",
+            "Vary",
+            "Content-Disposition",
+            "Content-Security-Policy",
+            "Service-Worker-Allowed",
+            "X-Content-Type-Options",
+            "X-Frame-Options",
+        ):
+            header_value = upstream.headers.get(header_name)
+            if header_value:
+                response.headers[header_name] = header_value
+        for cookie in upstream.headers.get_all("Set-Cookie", []):
+            cookie = re.sub(
+                r"(?i)(;\s*path=)/?(?=;|$)",
+                rf"\1{RENTAL_PROXY_PREFIX}",
+                cookie,
+            )
+            response.headers.add("Set-Cookie", cookie)
+        location = upstream.headers.get("Location")
+        if location:
+            parsed_location = urlparse(location)
+            upstream_origin = urlparse(RENTAL_SERVICE_URL)
+            if (
+                not parsed_location.scheme
+                and location.startswith("/")
+                and not location.startswith(f"{RENTAL_PROXY_PREFIX}/")
+            ):
+                location = f"{RENTAL_PROXY_PREFIX}{location}"
+            elif (
+                parsed_location.scheme in {"http", "https"}
+                and parsed_location.netloc == upstream_origin.netloc
+            ):
+                parsed_location = parsed_location._replace(
+                    path=f"{RENTAL_PROXY_PREFIX}{parsed_location.path}"
+                )
+                location = parsed_location.geturl()
+            response.headers["Location"] = location
+        return response
+
+
+@app.route(
+    "/rentals",
+    defaults={"rental_path": ""},
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    strict_slashes=False,
+)
+@app.route(
+    "/rentals/<path:rental_path>",
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
+def rental_marketplace_proxy(rental_path):
+    return _rental_proxy_response(rental_path)
 
 
 @app.get("/booking/confirmation")

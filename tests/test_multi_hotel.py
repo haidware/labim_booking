@@ -1,4 +1,5 @@
 import importlib.util
+from email.message import Message
 from io import BytesIO
 import json
 import sqlite3
@@ -6,7 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -116,6 +117,158 @@ class MultiHotelFlowTests(unittest.TestCase):
                             trailing_slash.headers["Location"],
                             path,
                         )
+
+    def test_rental_proxy_keeps_marketplace_routes_on_rooms_origin(self):
+        response_from_rental = Mock()
+        response_from_rental.status = 200
+        response_from_rental.headers = Message()
+        response_from_rental.headers["Content-Type"] = "text/html; charset=utf-8"
+        response_from_rental.read.return_value = (
+            b'<base href="/"><script src="/flutter_bootstrap.js"></script>'
+        )
+        response_from_rental.__enter__ = Mock(return_value=response_from_rental)
+        response_from_rental.__exit__ = Mock(return_value=False)
+
+        with patch.object(
+            self.app_module, "urlopen", return_value=response_from_rental
+        ) as open_upstream:
+            response = self.app_module.app.test_client().get(
+                "/rentals/land?transaction_type=sale"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'<base href="/rentals/">', response.data)
+        self.assertIn(b'src="/rentals/flutter_bootstrap.js"', response.data)
+        upstream_request = open_upstream.call_args.args[0]
+        self.assertEqual(
+            upstream_request.full_url,
+            "https://labim-house-rental.onrender.com/land?transaction_type=sale",
+        )
+
+    def test_rental_home_route_proxies_to_rental_homepage(self):
+        upstream_response = Mock()
+        upstream_response.status = 200
+        upstream_response.headers = Message()
+        upstream_response.headers["Content-Type"] = "text/html; charset=utf-8"
+        upstream_response.read.return_value = b"<html><head></head></html>"
+        upstream_response.__enter__ = Mock(return_value=upstream_response)
+        upstream_response.__exit__ = Mock(return_value=False)
+
+        with patch.object(
+            self.app_module, "urlopen", return_value=upstream_response
+        ) as open_upstream:
+            response = self.app_module.app.test_client().get("/rentals")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'<base href="/rentals/">', response.data)
+        self.assertEqual(
+            open_upstream.call_args.args[0].full_url,
+            "https://labim-house-rental.onrender.com/",
+        )
+
+    def test_rental_proxy_mounts_admin_pages_and_static_paths(self):
+        upstream_response = Mock()
+        upstream_response.status = 200
+        upstream_response.headers = Message()
+        upstream_response.headers["Content-Type"] = "text/html; charset=utf-8"
+        upstream_response.read.return_value = (
+            b'<html><head><link href="/static/admin.css"></head>'
+            b'<body><form action="/accounts/login/"></form></body></html>'
+        )
+        upstream_response.__enter__ = Mock(return_value=upstream_response)
+        upstream_response.__exit__ = Mock(return_value=False)
+
+        with patch.object(self.app_module, "urlopen", return_value=upstream_response):
+            response = self.app_module.app.test_client().get(
+                "/rentals/accounts/login/"
+            )
+
+        self.assertIn(b'<base href="/rentals/">', response.data)
+        self.assertIn(b'href="/rentals/static/admin.css"', response.data)
+        self.assertIn(b'action="/rentals/accounts/login/"', response.data)
+
+    def test_rental_proxy_forwards_only_rental_cookies_and_rewrites_csrf_origin(self):
+        response_from_rental = Mock()
+        response_from_rental.status = 201
+        response_from_rental.headers = Message()
+        response_from_rental.headers["Content-Type"] = "application/json"
+        response_from_rental.headers.add_header(
+            "Set-Cookie",
+            "csrftoken=new-token; Path=/; SameSite=Lax",
+        )
+        response_from_rental.read.return_value = b'{"saved":true}'
+        response_from_rental.__enter__ = Mock(return_value=response_from_rental)
+        response_from_rental.__exit__ = Mock(return_value=False)
+
+        client = self.app_module.app.test_client()
+        client.set_cookie(
+            "session",
+            "hotel-session",
+            domain="rooms-uamy.onrender.com",
+        )
+        client.set_cookie(
+            "csrftoken",
+            "rental-token",
+            domain="rooms-uamy.onrender.com",
+        )
+        client.set_cookie(
+            "sessionid",
+            "rental-session",
+            domain="rooms-uamy.onrender.com",
+        )
+        with patch.object(
+            self.app_module, "urlopen", return_value=response_from_rental
+        ) as open_upstream:
+            response = client.post(
+                "/rentals/api/public/property-requests/",
+                json={"name": "Guest"},
+                base_url="https://rooms-uamy.onrender.com",
+                headers={
+                    "Origin": "https://rooms-uamy.onrender.com",
+                    "Referer": "https://rooms-uamy.onrender.com/rentals/",
+                    "X-CSRFToken": "rental-token",
+                },
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertIn("Path=/rentals;", response.headers["Set-Cookie"])
+        upstream_request = open_upstream.call_args.args[0]
+        self.assertEqual(
+            upstream_request.get_header("Origin"),
+            "https://labim-house-rental.onrender.com",
+        )
+        self.assertEqual(
+            upstream_request.get_header("Cookie"),
+            "csrftoken=rental-token; sessionid=rental-session",
+        )
+        self.assertEqual(
+            upstream_request.get_header("Referer"),
+            "https://labim-house-rental.onrender.com/",
+        )
+
+    def test_rental_proxy_does_not_trust_an_unrelated_origin(self):
+        upstream_response = Mock()
+        upstream_response.status = 200
+        upstream_response.headers = Message()
+        upstream_response.read.return_value = b"{}"
+        upstream_response.__enter__ = Mock(return_value=upstream_response)
+        upstream_response.__exit__ = Mock(return_value=False)
+
+        with patch.object(
+            self.app_module, "urlopen", return_value=upstream_response
+        ) as open_upstream:
+            self.app_module.app.test_client().post(
+                "/rentals/api/public/property-requests/",
+                data="{}",
+                base_url="https://rooms-uamy.onrender.com",
+                headers={"Origin": "https://attacker.example"},
+            )
+
+        upstream_request = open_upstream.call_args.args[0]
+        self.assertEqual(
+            upstream_request.get_header("Origin"),
+            "https://attacker.example",
+        )
 
     def test_calendar_shows_booked_and_approved_online_stays(self):
         week_start = date.today() - timedelta(days=date.today().weekday())
