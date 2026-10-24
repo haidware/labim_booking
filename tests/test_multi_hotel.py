@@ -166,6 +166,57 @@ class MultiHotelFlowTests(unittest.TestCase):
             "https://labim-house-rental.onrender.com/",
         )
 
+    def test_rental_home_route_retries_transient_gateway_errors(self):
+        gateway_error = self.app_module.HTTPError(
+            "https://labim-house-rental.onrender.com/",
+            502,
+            "Bad Gateway",
+            Message(),
+            BytesIO(b"temporary gateway error"),
+        )
+        upstream_response = Mock()
+        upstream_response.status = 200
+        upstream_response.headers = Message()
+        upstream_response.headers["Content-Type"] = "text/html; charset=utf-8"
+        upstream_response.read.return_value = b"<html><head></head></html>"
+        upstream_response.__enter__ = Mock(return_value=upstream_response)
+        upstream_response.__exit__ = Mock(return_value=False)
+
+        with patch.object(
+            self.app_module,
+            "urlopen",
+            side_effect=[gateway_error, upstream_response],
+        ) as open_upstream, patch.object(self.app_module.time, "sleep") as sleep:
+            response = self.app_module.app.test_client().get("/rentals")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(open_upstream.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    def test_rental_proxy_does_not_retry_state_changing_requests(self):
+        gateway_error = self.app_module.HTTPError(
+            "https://labim-house-rental.onrender.com/api/public/property-requests/",
+            502,
+            "Bad Gateway",
+            Message(),
+            BytesIO(b"temporary gateway error"),
+        )
+
+        with patch.object(
+            self.app_module,
+            "urlopen",
+            side_effect=gateway_error,
+        ) as open_upstream, patch.object(self.app_module.time, "sleep") as sleep:
+            response = self.app_module.app.test_client().post(
+                "/rentals/api/public/property-requests/",
+                data=b'{"name":"Guest"}',
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 502)
+        open_upstream.assert_called_once()
+        sleep.assert_not_called()
+
     def test_rental_proxy_mounts_admin_pages_and_static_paths(self):
         upstream_response = Mock()
         upstream_response.status = 200

@@ -11,6 +11,7 @@ import secrets
 import sqlite3
 import smtplib
 import ssl
+import time
 from urllib.parse import quote, urlencode, urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest, urlopen
@@ -54,6 +55,8 @@ RENTAL_SERVICE_URL = os.getenv(
     "https://labim-house-rental.onrender.com",
 ).rstrip("/")
 RENTAL_PROXY_PREFIX = "/rentals"
+RENTAL_PROXY_RETRYABLE_STATUS_CODES = {502, 503, 504}
+RENTAL_PROXY_GET_ATTEMPTS = 3
 ROOM_PHOTO_BUCKET = "room-photos"
 ONLINE_HOLD_MINUTES = 30
 TRIAL_DAYS = 30
@@ -2624,6 +2627,26 @@ def _rewrite_rental_html(body):
     return text.encode("utf-8")
 
 
+def _open_rental_upstream(upstream_request):
+    retry_safe = request.method in {"GET", "HEAD"}
+    attempts = RENTAL_PROXY_GET_ATTEMPTS if retry_safe else 1
+    for attempt in range(attempts):
+        try:
+            return urlopen(upstream_request, timeout=90)
+        except HTTPError as error:
+            if (
+                not retry_safe
+                or error.code not in RENTAL_PROXY_RETRYABLE_STATUS_CODES
+                or attempt == attempts - 1
+            ):
+                return error
+            error.close()
+        except URLError:
+            if attempt == attempts - 1:
+                raise
+        time.sleep(attempt + 1)
+
+
 def _rental_proxy_response(rental_path):
     upstream_path = f"/{rental_path}" if rental_path else "/"
     upstream_url = f"{RENTAL_SERVICE_URL}{upstream_path}"
@@ -2676,9 +2699,7 @@ def _rental_proxy_response(rental_path):
         method=request.method,
     )
     try:
-        upstream = urlopen(upstream_request, timeout=90)
-    except HTTPError as error:
-        upstream = error
+        upstream = _open_rental_upstream(upstream_request)
     except URLError:
         app.logger.exception("Could not proxy request to the rental service.")
         return "The rental service is temporarily unavailable.", 502
