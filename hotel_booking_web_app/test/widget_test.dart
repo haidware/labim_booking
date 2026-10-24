@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hotel_booking_web_app/main.dart';
 import 'package:hotel_booking_web_app/property_category_preview_page.dart';
 import 'package:hotel_booking_web_app/rental_preview_page.dart';
+import 'package:hotel_booking_web_app/services/apartment_preview_api.dart';
 import 'package:hotel_booking_web_app/services/booking_api.dart';
 
 class _EmptyBookingApi extends BookingApi {
@@ -117,6 +118,24 @@ void main() {
     expect(hotel.displayAddress, '12 Palm Avenue, Abuja, FCT');
   });
 
+  test('apartment preview applies city, state, and price filters', () async {
+    final api = ApartmentPreviewApi();
+    addTearDown(api.dispose);
+
+    final lagosApartments = await api.searchHotels(
+      checkIn: '2026-10-22',
+      checkOut: '2026-10-23',
+      city: 'lagos',
+      state: 'Lagos',
+      priceRange: '50000-100000',
+    );
+
+    expect(lagosApartments.map((apartment) => apartment.name), [
+      'Serviced city apartment',
+      'Modern studio apartment',
+    ]);
+  });
+
   testWidgets('hotel booking homepage offers hotel and homes tabs', (
     tester,
   ) async {
@@ -158,7 +177,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('apartment tab preview shows short-stay sample listings', (
+  testWidgets('apartment page follows the hotel search design with samples', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -166,16 +185,24 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(const MaterialApp(home: ApartmentPreviewPage()));
+    await tester.pumpWidget(
+      const HotelBookingApp(
+        bookingPage: HotelBookingPage(apartmentPreview: true),
+      ),
+    );
     await tester.pumpAndSettle();
 
-    expect(find.text('Short-stay apartments'), findsOneWidget);
-    expect(find.text('Serviced city apartment'), findsOneWidget);
     expect(
-      find.textContaining('PREVIEW — sample listings only'),
+      find.text('Find your apartment. Make your stay your own.'),
       findsOneWidget,
     );
-    expect(find.byTooltip('Back to Rooms home'), findsOneWidget);
+    expect(find.text('Serviced city apartment'), findsOneWidget);
+    expect(
+      find.textContaining('PREVIEW — sample apartments only'),
+      findsOneWidget,
+    );
+    expect(find.text('Search apartments'), findsOneWidget);
+    expect(find.text('Sample apartments for your stay'), findsOneWidget);
     expect(find.text('Land/Properties'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -202,18 +229,13 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('apartment and property previews return to the previous page', (
-    tester,
-  ) async {
+  testWidgets('property preview returns to the previous page', (tester) async {
     final navigatorKey = GlobalKey<NavigatorState>();
     await tester.pumpWidget(
       MaterialApp(navigatorKey: navigatorKey, home: const Text('Rooms home')),
     );
 
-    for (final page in [
-      const ApartmentPreviewPage(),
-      const LandPropertiesPreviewPage(),
-    ]) {
+    for (final page in [const LandPropertiesPreviewPage()]) {
       navigatorKey.currentState!.push(
         MaterialPageRoute<void>(builder: (_) => page),
       );
@@ -225,6 +247,51 @@ void main() {
       expect(find.text('Rooms home'), findsOneWidget);
     }
 
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('apartment preview completes a local sample booking flow', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      const HotelBookingApp(
+        bookingPage: HotelBookingPage(apartmentPreview: true),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('View apartment').first);
+    await tester.tap(find.text('View apartment').first);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Find your apartment at Serviced city apartment'),
+      findsOneWidget,
+    );
+    expect(find.text('Available apartments'), findsOneWidget);
+    expect(find.text('Select this apartment'), findsOneWidget);
+    await tester.ensureVisible(find.text('Select this apartment'));
+    await tester.tap(find.text('Select this apartment'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Sample Guest');
+    await tester.enterText(
+      find.byType(TextFormField).at(1),
+      'guest@example.com',
+    );
+    await tester.enterText(find.byType(TextFormField).at(2), '08000000000');
+    await tester.ensureVisible(find.text('Preview booking request'));
+    await tester.tap(find.text('Preview booking request'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Apartment booking preview'), findsOneWidget);
+    expect(find.text('Sample stay'), findsOneWidget);
+    expect(find.textContaining('No booking was saved'), findsOneWidget);
+    expect(find.text('Back to apartments'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

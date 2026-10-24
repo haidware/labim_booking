@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'property_category_preview_page.dart';
 import 'rental_preview_page.dart';
 import 'rooms_category_tabs.dart';
+import 'services/apartment_preview_api.dart';
 import 'services/booking_api.dart';
 
 void main() {
@@ -77,7 +78,7 @@ class HotelBookingApp extends StatelessWidget {
       home:
           bookingPage ??
           switch (Uri.base.path) {
-            '/apartment' => const ApartmentPreviewPage(),
+            '/apartment' => const HotelBookingPage(apartmentPreview: true),
             '/rental' => const RentalPreviewPage(),
             '/land-properties' => const LandPropertiesPreviewPage(),
             _ => const HotelBookingPage(),
@@ -87,9 +88,10 @@ class HotelBookingApp extends StatelessWidget {
 }
 
 class HotelBookingPage extends StatefulWidget {
-  const HotelBookingPage({super.key, this.api});
+  const HotelBookingPage({super.key, this.api, this.apartmentPreview = false});
 
   final BookingApi? api;
+  final bool apartmentPreview;
 
   @override
   State<HotelBookingPage> createState() => _HotelBookingPageState();
@@ -123,7 +125,14 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   bool _loadingHotels = true;
   bool _loadingRooms = false;
   bool _submittingBooking = false;
+  bool _previewBookingComplete = false;
   String? _error;
+
+  bool get _isApartmentPreview => widget.apartmentPreview;
+  String get _propertyName => _isApartmentPreview ? 'apartment' : 'hotel';
+  String get _propertyPlural => _isApartmentPreview ? 'apartments' : 'hotels';
+  String get _unitPlural => _isApartmentPreview ? 'apartments' : 'rooms';
+  String get _unitName => _isApartmentPreview ? 'apartment' : 'room';
 
   String get _checkInIso => _isoDate(_checkIn);
   String get _checkOutIso => _isoDate(_checkOut);
@@ -131,7 +140,9 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   @override
   void initState() {
     super.initState();
-    _api = widget.api ?? BookingApi();
+    _api =
+        widget.api ??
+        (_isApartmentPreview ? ApartmentPreviewApi() : BookingApi());
     final today = DateTime.now();
     _checkIn = DateTime(today.year, today.month, today.day + 1);
     _checkOut = DateTime(today.year, today.month, today.day + 2);
@@ -183,7 +194,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
       if (mounted) {
         setState(() {
           _loadingHotels = false;
-          _error = 'Could not connect to the hotel booking service.';
+          _error = 'Could not connect to the $_propertyName booking service.';
         });
       }
     }
@@ -197,6 +208,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
       _selectedRoom = null;
       _rooms = const [];
       _confirmation = null;
+      _previewBookingComplete = false;
     });
     try {
       final hotels = await _api.searchHotels(
@@ -211,7 +223,9 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {
       if (mounted) {
-        setState(() => _error = 'Could not load hotels. Please retry.');
+        setState(
+          () => _error = 'Could not load $_propertyPlural. Please retry.',
+        );
       }
     } finally {
       if (mounted) setState(() => _loadingHotels = false);
@@ -237,7 +251,9 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
     } on BookingApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {
-      if (mounted) setState(() => _error = 'Could not load available rooms.');
+      if (mounted) {
+        setState(() => _error = 'Could not load available $_unitPlural.');
+      }
     } finally {
       if (mounted) setState(() => _loadingRooms = false);
     }
@@ -262,7 +278,9 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
     } on BookingApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {
-      if (mounted) setState(() => _error = 'Could not search available rooms.');
+      if (mounted) {
+        setState(() => _error = 'Could not search available $_unitPlural.');
+      }
     } finally {
       if (mounted) setState(() => _loadingRooms = false);
     }
@@ -304,6 +322,13 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
     final room = _selectedRoom;
     if (hotel == null || room == null) return;
     if (!_guestFormKey.currentState!.validate()) return;
+    if (_isApartmentPreview) {
+      setState(() {
+        _previewBookingComplete = true;
+        _error = null;
+      });
+      return;
+    }
     setState(() {
       _submittingBooking = true;
       _error = null;
@@ -336,6 +361,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
       _selectedRoom = null;
       _rooms = const [];
       _confirmation = null;
+      _previewBookingComplete = false;
       _error = null;
     });
     _loadHotels();
@@ -348,7 +374,9 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
 
   @override
   Widget build(BuildContext context) {
-    final page = _confirmation != null
+    final page = _previewBookingComplete
+        ? _buildApartmentPreviewConfirmation()
+        : _confirmation != null
         ? _buildCategoryFlow(_buildConfirmation(_confirmation!))
         : _selectedHotel != null
         ? _buildCategoryFlow(_buildRoomsPage(_selectedHotel!))
@@ -371,7 +399,11 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   Widget _buildCategoryFlow(Widget page) {
     return Column(
       children: [
-        const RoomsCategoryTabs(activeTab: RoomsCategoryTab.hotels),
+        RoomsCategoryTabs(
+          activeTab: _isApartmentPreview
+              ? RoomsCategoryTab.apartments
+              : RoomsCategoryTab.hotels,
+        ),
         Expanded(child: page),
       ],
     );
@@ -434,7 +466,9 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                     ),
                     const Spacer(),
                     Tooltip(
-                      message: 'Secure guest booking',
+                      message: _isApartmentPreview
+                          ? 'Apartment booking preview'
+                          : 'Secure guest booking',
                       child: const Icon(
                         Icons.lock_outline,
                         size: 16,
@@ -443,9 +477,11 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                     ),
                     if (!compact) ...[
                       const SizedBox(width: 7),
-                      const Text(
-                        'Secure guest booking',
-                        style: TextStyle(
+                      Text(
+                        _isApartmentPreview
+                            ? 'Apartment booking preview'
+                            : 'Secure guest booking',
+                        style: const TextStyle(
                           color: Color(0xFFC1D5D9),
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
@@ -464,7 +500,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
 
   Widget _buildHotelsPage() {
     return SingleChildScrollView(
-      key: const ValueKey('hotels'),
+      key: ValueKey(_propertyPlural),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1240),
@@ -475,28 +511,41 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
               children: [
                 _buildWelcomePanel(),
                 const SizedBox(height: 28),
+                if (_isApartmentPreview) ...[
+                  _buildApartmentPreviewNotice(),
+                  const SizedBox(height: 20),
+                ],
                 _buildSearchPanel(),
                 const SizedBox(height: 28),
                 Row(
                   children: [
                     Expanded(
                       child: Text(
-                        'Live hotels and live available rooms',
+                        _isApartmentPreview
+                            ? 'Sample apartments for your stay'
+                            : 'Live hotels and live available rooms',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                     ),
                     if (!_loadingHotels && _hotels.isNotEmpty)
-                      _ResultCount(count: _hotels.length),
+                      _ResultCount(
+                        count: _hotels.length,
+                        label: _propertyPlural,
+                      ),
                   ],
                 ),
                 const SizedBox(height: 16),
                 if (_error != null) _ErrorBanner(message: _error!),
                 if (_loadingHotels)
-                  const _LoadingPanel(label: 'Finding available hotels…')
+                  _LoadingPanel(
+                    label: _isApartmentPreview
+                        ? 'Loading sample apartments…'
+                        : 'Finding available hotels…',
+                  )
                 else if (_hotels.isEmpty)
-                  const _EmptyPanel(
+                  _EmptyPanel(
                     icon: Icons.search_off_rounded,
-                    title: 'No hotels match this search',
+                    title: 'No $_propertyPlural match this search',
                     detail: 'Try different dates or clear one of the filters.',
                   )
                 else
@@ -522,6 +571,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                           return _HotelCard(
                             hotel: hotel,
                             naira: _naira,
+                            isApartmentPreview: _isApartmentPreview,
                             onTap: () => _openHotel(hotel),
                           );
                         },
@@ -529,7 +579,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                     },
                   ),
                 const SizedBox(height: 38),
-                const _TrustFooter(),
+                _TrustFooter(isApartmentPreview: _isApartmentPreview),
               ],
             ),
           ),
@@ -551,7 +601,9 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Text(
-                    'Your stay. Your choice. All in one place.',
+                    _isApartmentPreview
+                        ? 'Find your apartment. Make your stay your own.'
+                        : 'Your stay. Your choice. All in one place.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: const Color(0xFF153D4C),
@@ -564,11 +616,35 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                   const SizedBox(height: 20),
                   const Divider(height: 1, color: Color(0xFFDDE7E8)),
                   const SizedBox(height: 22),
-                  const RoomsCategoryTabs(activeTab: RoomsCategoryTab.hotels),
+                  RoomsCategoryTabs(
+                    activeTab: _isApartmentPreview
+                        ? RoomsCategoryTab.apartments
+                        : RoomsCategoryTab.hotels,
+                  ),
                 ],
               ),
             );
           },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildApartmentPreviewNotice() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF5E5),
+        border: Border.all(color: const Color(0xFFE9B45F)),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: const Text(
+        'PREVIEW — sample apartments only. Continue through the booking flow to preview the design; no booking or payment is sent or collected.',
+        style: TextStyle(
+          color: Color(0xFF173651),
+          fontWeight: FontWeight.w600,
+          height: 1.45,
         ),
       ),
     );
@@ -683,7 +759,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                 child: FilledButton.icon(
                   onPressed: _loadingHotels ? null : _loadHotels,
                   icon: const Icon(Icons.search_rounded),
-                  label: const Text('Search hotels'),
+                  label: Text('Search $_propertyPlural'),
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFF17607A),
                     foregroundColor: Colors.white,
@@ -714,12 +790,16 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                 TextButton.icon(
                   onPressed: _backToHotels,
                   icon: const Icon(Icons.arrow_back_rounded),
-                  label: const Text('Choose a different hotel'),
+                  label: Text('Choose a different $_propertyName'),
                   style: TextButton.styleFrom(
                     foregroundColor: const Color(0xFF17607A),
                   ),
                 ),
                 const SizedBox(height: 12),
+                if (_isApartmentPreview) ...[
+                  _buildApartmentPreviewNotice(),
+                  const SizedBox(height: 18),
+                ],
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -728,12 +808,12 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Find your room at ${hotel.name}',
+                            'Find your $_unitName at ${hotel.name}',
                             style: Theme.of(context).textTheme.headlineMedium,
                           ),
                           const SizedBox(height: 7),
                           Text(
-                            'Select your dates to see the rooms listed and available.'
+                            'Select your dates to see the $_unitPlural listed and available.'
                             '${hotel.displayAddress.isEmpty ? '' : ' ${hotel.displayAddress}'}',
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
@@ -743,7 +823,10 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                     if (hotel.availableRoomCount > 0)
                       _ResultCount(
                         count: hotel.availableRoomCount,
-                        label: 'rooms',
+                        label:
+                            _isApartmentPreview && hotel.availableRoomCount == 1
+                            ? 'apartment'
+                            : _unitPlural,
                       ),
                   ],
                 ),
@@ -752,17 +835,21 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                 const SizedBox(height: 22),
                 if (_error != null) _ErrorBanner(message: _error!),
                 if (_loadingRooms)
-                  const _LoadingPanel(label: 'Checking room availability…')
+                  _LoadingPanel(
+                    label: _isApartmentPreview
+                        ? 'Loading sample apartment details…'
+                        : 'Checking room availability…',
+                  )
                 else if (_rooms.isEmpty)
-                  const _EmptyPanel(
+                  _EmptyPanel(
                     icon: Icons.bedroom_parent_outlined,
-                    title: 'No listed rooms available',
+                    title: 'No listed $_unitPlural available',
                     detail:
                         'Try other dates or choose a different price range.',
                   )
                 else ...[
                   Text(
-                    'Available rooms',
+                    'Available $_unitPlural',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   const SizedBox(height: 16),
@@ -785,6 +872,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                               room: room,
                               naira: _naira,
                               selected: _selectedRoom?.number == room.number,
+                              isApartmentPreview: _isApartmentPreview,
                             ),
                           ),
                       ],
@@ -886,9 +974,11 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
               },
             ),
             const SizedBox(height: 10),
-            const Text(
-              'Your dates will be held for 30 minutes while you transfer payment. Reception confirms your booking after verifying the transfer.',
-              style: TextStyle(fontSize: 13, height: 1.5),
+            Text(
+              _isApartmentPreview
+                  ? 'This is a sample booking preview. No reservation or payment will be created.'
+                  : 'Your dates will be held for 30 minutes while you transfer payment. Reception confirms your booking after verifying the transfer.',
+              style: const TextStyle(fontSize: 13, height: 1.5),
             ),
             const SizedBox(height: 18),
             SizedBox(
@@ -908,6 +998,8 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                 child: Text(
                   _submittingBooking
                       ? 'Submitting booking request…'
+                      : _isApartmentPreview
+                      ? 'Preview booking request'
                       : 'Request booking and get payment details',
                 ),
               ),
@@ -964,6 +1056,91 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildApartmentPreviewConfirmation() {
+    final apartment = _selectedHotel!;
+    final unit = _selectedRoom!;
+    final nights = _checkOut.difference(_checkIn).inDays;
+    return SingleChildScrollView(
+      key: const ValueKey('apartment-preview-confirmation'),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 46),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEAF3F4),
+                    borderRadius: BorderRadius.circular(36),
+                  ),
+                  child: const Icon(
+                    Icons.visibility_outlined,
+                    size: 38,
+                    color: Color(0xFF17607A),
+                  ),
+                ),
+                const SizedBox(height: 22),
+                Text(
+                  'Apartment booking preview',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'This preview shows the final step of the apartment flow. No booking was saved, and no payment or message was sent.',
+                  style: TextStyle(color: Color(0xFF596B70), height: 1.5),
+                ),
+                const SizedBox(height: 20),
+                _ConfirmationCard(
+                  title: 'Sample stay',
+                  child: Column(
+                    children: [
+                      _DetailRow(label: 'Apartment', value: apartment.name),
+                      _DetailRow(
+                        label: 'Unit',
+                        value: '${unit.type} · ${unit.number}',
+                      ),
+                      _DetailRow(
+                        label: 'Stay',
+                        value:
+                            '${_dateLabel.format(_checkIn)} – ${_dateLabel.format(_checkOut)}',
+                      ),
+                      _DetailRow(
+                        label: 'Length of stay',
+                        value: '$nights night${nights == 1 ? '' : 's'}',
+                      ),
+                      _DetailRow(
+                        label: 'Sample total',
+                        value: _naira.format(unit.rate * nights),
+                        emphasized: true,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildApartmentPreviewNotice(),
+                const SizedBox(height: 20),
+                FilledButton.icon(
+                  onPressed: _backToHotels,
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  label: const Text('Back to apartments'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF17607A),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1116,11 +1293,13 @@ class _HotelCard extends StatelessWidget {
   const _HotelCard({
     required this.hotel,
     required this.naira,
+    required this.isApartmentPreview,
     required this.onTap,
   });
 
   final Hotel hotel;
   final NumberFormat naira;
+  final bool isApartmentPreview;
   final VoidCallback onTap;
 
   @override
@@ -1139,7 +1318,9 @@ class _HotelCard extends StatelessWidget {
                 imageUrl: hotel.coverPhotoUrl,
                 emptyIcon: Icons.apartment_rounded,
                 label: hotel.state.isEmpty
-                    ? 'HOTEL'
+                    ? isApartmentPreview
+                          ? 'APARTMENT'
+                          : 'HOTEL'
                     : hotel.state.toUpperCase(),
               ),
             ),
@@ -1184,7 +1365,7 @@ class _HotelCard extends StatelessWidget {
                       if (hotel.availableRoomCount > 0)
                         Expanded(
                           child: Text(
-                            '${hotel.availableRoomCount} room${hotel.availableRoomCount == 1 ? '' : 's'} available',
+                            '${hotel.availableRoomCount} ${isApartmentPreview ? 'apartment' : 'room'}${hotel.availableRoomCount == 1 ? '' : 's'} available',
                             style: const TextStyle(
                               color: Color(0xFF596B70),
                               fontSize: 12,
@@ -1220,9 +1401,9 @@ class _HotelCard extends StatelessWidget {
                   const SizedBox(height: 13),
                   Row(
                     children: [
-                      const Text(
-                        'View rooms',
-                        style: TextStyle(
+                      Text(
+                        isApartmentPreview ? 'View apartment' : 'View rooms',
+                        style: const TextStyle(
                           color: Color(0xFF17607A),
                           fontWeight: FontWeight.w700,
                           fontSize: 13,
@@ -1259,11 +1440,13 @@ class _SelectableRoomCard extends StatelessWidget {
     required this.room,
     required this.naira,
     required this.selected,
+    required this.isApartmentPreview,
   });
 
   final HotelRoom room;
   final NumberFormat naira;
   final bool selected;
+  final bool isApartmentPreview;
 
   @override
   Widget build(BuildContext context) {
@@ -1299,7 +1482,7 @@ class _SelectableRoomCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${room.type} · Room ${room.number}',
+                  '${room.type} · ${isApartmentPreview ? 'Unit' : 'Room'} ${room.number}',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 5),
@@ -1324,9 +1507,11 @@ class _SelectableRoomCard extends StatelessWidget {
                   value: room.number,
                   contentPadding: EdgeInsets.zero,
                   dense: true,
-                  title: const Text(
-                    'Select this room',
-                    style: TextStyle(
+                  title: Text(
+                    isApartmentPreview
+                        ? 'Select this apartment'
+                        : 'Select this room',
+                    style: const TextStyle(
                       color: Color(0xFF17607A),
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -1724,20 +1909,28 @@ class _InfoNote extends StatelessWidget {
 }
 
 class _TrustFooter extends StatelessWidget {
-  const _TrustFooter();
+  const _TrustFooter({this.isApartmentPreview = false});
+
+  final bool isApartmentPreview;
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
+    return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Icon(Icons.verified_user_outlined, size: 17, color: Color(0xFF82959A)),
-        SizedBox(width: 8),
+        const Icon(
+          Icons.verified_user_outlined,
+          size: 17,
+          color: Color(0xFF82959A),
+        ),
+        const SizedBox(width: 8),
         Expanded(
           child: Text(
-            'Room availability is checked live before every booking request.',
+            isApartmentPreview
+                ? 'Sample apartment listings are shown for design preview only.'
+                : 'Room availability is checked live before every booking request.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0xFF82959A), fontSize: 12),
+            style: const TextStyle(color: Color(0xFF82959A), fontSize: 12),
           ),
         ),
       ],

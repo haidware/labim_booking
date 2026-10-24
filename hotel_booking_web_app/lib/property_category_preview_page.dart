@@ -4,47 +4,6 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'rooms_category_tabs.dart';
 
-class ApartmentPreviewPage extends StatelessWidget {
-  const ApartmentPreviewPage({super.key});
-
-  static const _listings = [
-    _PreviewListing(
-      title: 'Serviced city apartment',
-      location: 'Victoria Island, Lagos',
-      price: 95000,
-      priceSuffix: 'per night',
-      description:
-          'Sample short stay with a kitchen, Wi-Fi and secure parking.',
-      icon: Icons.apartment_rounded,
-    ),
-    _PreviewListing(
-      title: 'Bright one-bedroom apartment',
-      location: 'Wuse 2, Abuja',
-      price: 68000,
-      priceSuffix: 'per night',
-      description: 'Sample furnished apartment close to shops and restaurants.',
-      icon: Icons.bedroom_parent_rounded,
-    ),
-    _PreviewListing(
-      title: 'Modern studio apartment',
-      location: 'Ikeja GRA, Lagos',
-      price: 52000,
-      priceSuffix: 'per night',
-      description: 'Sample studio for a comfortable short stay.',
-      icon: Icons.weekend_rounded,
-    ),
-  ];
-
-  @override
-  Widget build(BuildContext context) => const _PropertyCategoryPreviewPage(
-    activeTab: RoomsCategoryTab.apartments,
-    title: 'Short-stay apartments',
-    subtitle: 'Explore furnished apartments for a night or a short visit.',
-    listings: _listings,
-    priceLabel: 'Nightly rate',
-  );
-}
-
 class LandPropertiesPreviewPage extends StatelessWidget {
   const LandPropertiesPreviewPage({super.key});
 
