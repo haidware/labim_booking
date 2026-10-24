@@ -159,6 +159,16 @@ void main() {
       find.textContaining('Discover live available hotel rooms'),
       findsOneWidget,
     );
+    expect(
+      find.textContaining(
+        'Only onboarded hotels with active staff manage online and physical bookings.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('confirm your payment with hotel staff on WhatsApp'),
+      findsOneWidget,
+    );
     expect(find.text('Hotels'), findsOneWidget);
     expect(find.text('Apartment'), findsOneWidget);
     expect(find.text('Homes'), findsOneWidget);

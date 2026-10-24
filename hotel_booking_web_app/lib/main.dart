@@ -1970,9 +1970,13 @@ class _TrustFooter extends StatelessWidget {
           child: Text(
             isApartmentPreview
                 ? 'Sample apartment listings are shown for design preview only.'
-                : 'Room availability is checked live before every booking request.',
+                : 'Only onboarded hotels with active staff manage online and physical bookings. Explore live room availability, book using the hotel’s approved bank account, then confirm your payment with hotel staff on WhatsApp for booking approval.',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFF82959A), fontSize: 12),
+            style: const TextStyle(
+              color: Color(0xFF82959A),
+              fontSize: 12,
+              height: 1.5,
+            ),
           ),
         ),
       ],
