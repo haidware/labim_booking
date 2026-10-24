@@ -782,7 +782,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                           const SizedBox(height: 7),
                           Text(
                             'Select your dates to see the rooms listed and available.'
-                            '${hotel.location.isEmpty ? '' : ' ${hotel.location}'}',
+                            '${hotel.displayAddress.isEmpty ? '' : ' ${hotel.displayAddress}'}',
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
                         ],
@@ -1215,9 +1215,7 @@ class _HotelCard extends StatelessWidget {
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
-                          hotel.location.isEmpty
-                              ? hotel.address
-                              : hotel.location,
+                          hotel.displayAddress,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(

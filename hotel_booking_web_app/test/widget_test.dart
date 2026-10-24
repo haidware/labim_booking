@@ -1,7 +1,15 @@
 import 'dart:ui' show Size;
 
 import 'package:flutter/material.dart'
-    show FilledButton, MaterialApp, Scrollable, TextFormField;
+    show
+        FilledButton,
+        GlobalKey,
+        MaterialApp,
+        MaterialPageRoute,
+        NavigatorState,
+        Scrollable,
+        Text,
+        TextFormField;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hotel_booking_web_app/main.dart';
 import 'package:hotel_booking_web_app/property_category_preview_page.dart';
@@ -32,7 +40,7 @@ class _BookingFlowApi extends _EmptyBookingApi {
     id: '1',
     slug: 'labim-hotel',
     name: 'Labim Hotel and Suite',
-    address: '',
+    address: '12 Palm Avenue',
     city: 'Abuja',
     state: 'FCT',
     availableRoomCount: 1,
@@ -93,6 +101,22 @@ class _BookingFlowApi extends _EmptyBookingApi {
 }
 
 void main() {
+  test('hotel display address includes address, city, and state once', () {
+    const hotel = Hotel(
+      id: '1',
+      slug: 'test-hotel',
+      name: 'Test Hotel',
+      address: '12 Palm Avenue, Abuja',
+      city: 'Abuja',
+      state: 'FCT',
+      availableRoomCount: 0,
+      lowestRate: null,
+      coverPhotoUrl: null,
+    );
+
+    expect(hotel.displayAddress, '12 Palm Avenue, Abuja, FCT');
+  });
+
   testWidgets('hotel booking homepage offers hotel and homes tabs', (
     tester,
   ) async {
@@ -157,6 +181,7 @@ void main() {
       find.textContaining('PREVIEW — sample listings only'),
       findsOneWidget,
     );
+    expect(find.byTooltip('Back to Rooms home'), findsOneWidget);
     expect(find.text('Land/Properties'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -179,6 +204,33 @@ void main() {
     expect(find.text('Commercial land'), findsOneWidget);
     expect(find.textContaining('for sale'), findsWidgets);
     expect(find.textContaining('per year'), findsOneWidget);
+    expect(find.byTooltip('Back to Rooms home'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('apartment and property previews return to the previous page', (
+    tester,
+  ) async {
+    final navigatorKey = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(navigatorKey: navigatorKey, home: const Text('Rooms home')),
+    );
+
+    for (final page in [
+      const ApartmentPreviewPage(),
+      const LandPropertiesPreviewPage(),
+    ]) {
+      navigatorKey.currentState!.push(
+        MaterialPageRoute<void>(builder: (_) => page),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Back to Rooms home'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Back to Rooms home'));
+      await tester.pumpAndSettle();
+      expect(find.text('Rooms home'), findsOneWidget);
+    }
+
     expect(tester.takeException(), isNull);
   });
 
@@ -283,6 +335,7 @@ void main() {
         find.text('Find your room at Labim Hotel and Suite'),
         findsOneWidget,
       );
+      expect(find.textContaining('12 Palm Avenue, Abuja, FCT'), findsOneWidget);
       expect(find.text('Available rooms'), findsOneWidget);
       expect(find.text('Guest details'), findsOneWidget);
       expect(find.text('Select this room'), findsOneWidget);

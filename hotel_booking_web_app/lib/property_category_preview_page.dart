@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'rooms_category_tabs.dart';
 
@@ -108,6 +109,26 @@ class _PropertyCategoryPreviewPage extends StatelessWidget {
     decimalDigits: 0,
   );
 
+  Future<void> _goBack(BuildContext context) async {
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop();
+      return;
+    }
+
+    final opened = await launchUrl(
+      Uri.base.resolve('/'),
+      webOnlyWindowName: '_self',
+    );
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to return to the Rooms homepage.'),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -115,6 +136,11 @@ class _PropertyCategoryPreviewPage extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: Colors.white,
         foregroundColor: _navy,
+        leading: IconButton(
+          tooltip: 'Back to Rooms home',
+          onPressed: () => _goBack(context),
+          icon: const Icon(Icons.arrow_back),
+        ),
         title: const Text(
           'Rooms',
           style: TextStyle(fontWeight: FontWeight.w700),

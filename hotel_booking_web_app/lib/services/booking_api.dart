@@ -52,6 +52,23 @@ class Hotel {
 
   String get location =>
       [city, state].where((part) => part.isNotEmpty).join(', ');
+
+  String get displayAddress {
+    final parts = address
+        .split(',')
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList();
+    final existingParts = parts.map((part) => part.toLowerCase()).toSet();
+    for (final part in [city, state]) {
+      final normalized = part.trim();
+      if (normalized.isNotEmpty &&
+          existingParts.add(normalized.toLowerCase())) {
+        parts.add(normalized);
+      }
+    }
+    return parts.join(', ');
+  }
 }
 
 class HotelRoom {
