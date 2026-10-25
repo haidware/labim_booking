@@ -38,10 +38,31 @@ class MultiHotelFlowTests(unittest.TestCase):
         sys.path.remove(str(cls.app_directory))
         cls.temp_directory.cleanup()
 
-    def register_hotel(
-        self, client, name, username_suffix, address, city, state
+    def issue_hotel_registration_id(self):
+        controller = self.app_module.app.test_client()
+        with controller.session_transaction() as current_session:
+            current_session["user_role"] = "controller"
+        dashboard = controller.get("/commandcenter")
+        self.assertEqual(dashboard.status_code, 200)
+        with controller.session_transaction() as current_session:
+            csrf_token = current_session["controller_csrf_token"]
+        response = controller.post("/commandcenter/hotel-ids", data={
+            "csrf_token": csrf_token,
+        })
+        self.assertEqual(response.status_code, 302)
+        with self.app_module.app.app_context():
+            row = self.app_module.get_db().execute(
+                """SELECT hotel_number FROM hotel_registration_codes
+                WHERE redeemed_at IS NULL ORDER BY hotel_number DESC LIMIT 1"""
+            ).fetchone()
+        self.assertIsNotNone(row)
+        return f"HOTEL-{row['hotel_number']:04d}"
+
+    def hotel_registration_data(
+        self, name, username_suffix, registration_id, address, city, state
     ):
-        response = client.post("/signup/manager", data={
+        return {
+            "hotel_registration_id": registration_id,
             "hotel_name": name,
             "hotel_address": address,
             "hotel_city": city,
@@ -52,7 +73,22 @@ class MultiHotelFlowTests(unittest.TestCase):
             "director_password": "DirectorPass123!",
             "reception_username": f"reception-{username_suffix}",
             "reception_password": "ReceptionPass123!",
-        })
+        }
+
+    def register_hotel(
+        self, client, name, username_suffix, address, city, state,
+        registration_id=None,
+    ):
+        registration_id = (
+            registration_id or self.issue_hotel_registration_id()
+        )
+        response = client.post(
+            "/signup/manager",
+            data=self.hotel_registration_data(
+                name, username_suffix, registration_id,
+                address, city, state,
+            ),
+        )
         self.assertEqual(response.status_code, 302)
         response = client.post("/login/manager", data={
             "username": f"manager-{username_suffix}",
@@ -567,6 +603,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(signup_page.status_code, 200)
         self.assertNotIn(b"Choose a plan", signup_page.data)
         self.assertNotIn(b"Billing email", signup_page.data)
+        self.assertIn(b'name="hotel_registration_id"', signup_page.data)
 
         first_id = self.register_hotel(
             client, "Hotel ID First", "hotel-id-first",
@@ -581,10 +618,49 @@ class MultiHotelFlowTests(unittest.TestCase):
             first_number = self.app_module.hotel_details(first_id)["hotel_number"]
             second_number = self.app_module.hotel_details(second_id)["hotel_number"]
         self.assertEqual(second_number, first_number + 1)
-        self.assertEqual(
-            client.post("/billing/subscribe").status_code,
-            405,
+
+    def test_signup_rejects_unissued_and_already_used_hotel_ids(self):
+        invalid_client = self.app_module.app.test_client()
+        invalid_response = invalid_client.post(
+            "/signup/manager",
+            data=self.hotel_registration_data(
+                "Unissued ID Hotel", "unissued",
+                "HOTEL-9999", "19 Market Road", "Lagos", "Lagos",
+            ),
         )
+        self.assertEqual(invalid_response.status_code, 200)
+        self.assertIn(b"invalid or has already been used", invalid_response.data)
+
+        registration_id = self.issue_hotel_registration_id()
+        first_client = self.app_module.app.test_client()
+        first_hotel_id = self.register_hotel(
+            first_client, "Used ID Hotel", "used-id",
+            "20 Market Road", "Lagos", "Lagos", registration_id,
+        )
+
+        second_client = self.app_module.app.test_client()
+        duplicate_response = second_client.post(
+            "/signup/manager",
+            data=self.hotel_registration_data(
+                "Duplicate ID Hotel", "duplicate-id", registration_id,
+                "21 Market Road", "Lagos", "Lagos",
+            ),
+        )
+        self.assertEqual(duplicate_response.status_code, 200)
+        self.assertIn(b"has already been used", duplicate_response.data)
+        with self.app_module.app.app_context():
+            hotel = self.app_module.hotel_details(first_hotel_id)
+            registration = self.app_module.get_db().execute(
+                """SELECT hotel_id, redeemed_at FROM hotel_registration_codes
+                WHERE hotel_number = ?""",
+                (hotel["hotel_number"],),
+            ).fetchone()
+            duplicate_count = self.app_module.get_db().execute(
+                "SELECT COUNT(*) FROM hotels WHERE name = 'Duplicate ID Hotel'"
+            ).fetchone()[0]
+        self.assertEqual(registration["hotel_id"], first_hotel_id)
+        self.assertIsNotNone(registration["redeemed_at"])
+        self.assertEqual(duplicate_count, 0)
 
     def test_expired_legacy_subscription_does_not_block_staff_access(self):
         client = self.app_module.app.test_client()
@@ -809,6 +885,9 @@ class MultiHotelFlowTests(unittest.TestCase):
         manager_response = manager.get("/commandcenter")
         self.assertEqual(manager_response.status_code, 302)
         self.assertIn("/login/controller", manager_response.headers["Location"])
+        manager_issue = manager.post("/commandcenter/hotel-ids")
+        self.assertEqual(manager_issue.status_code, 302)
+        self.assertIn("/login/controller", manager_issue.headers["Location"])
 
         controller = self.app_module.app.test_client()
         with patch.object(

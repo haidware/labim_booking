@@ -24,11 +24,41 @@
   <div class="reference-layout">
     <main class="reference-main">
       <h1>Haidware Command Center</h1>
-      <p>Registered hotels and WhatsApp payment-confirmation handoffs.</p>
+      <p>Issue registration IDs, review registered hotels, and track WhatsApp payment-confirmation handoffs.</p>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+        <div class="{{ 'account-error' if category == 'error' else 'account-intro' }}">{{ message }}</div>
+        {% endfor %}
+      {% endwith %}
+      <section class="data-panel">
+        <div class="panel-heading">
+          <strong>Hotel registration IDs</strong>
+          <small>Issue an ID and give it to the hotel Manager to use during signup. Each ID works once.</small>
+        </div>
+        <form method="post" action="{{ url_for('issue_hotel_id') }}">
+          <input type="hidden" name="csrf_token" value="{{ controller_csrf_token }}">
+          <button class="primary-button" type="submit">Generate hotel ID</button>
+        </form>
+        {% if issued_hotel_ids %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>Hotel ID</th><th>Issued</th><th>Status</th><th>Hotel</th></tr></thead>
+          <tbody>{% for issued_id in issued_hotel_ids %}
+          <tr>
+            <td>{{ issued_id.hotel_code }}</td>
+            <td>{{ issued_id.issued_at }}</td>
+            <td>{{ 'Used' if issued_id.redeemed_at else 'Ready to use' }}</td>
+            <td>{{ issued_id.hotel_name or '—' }}</td>
+          </tr>
+          {% endfor %}</tbody>
+        </table></div>
+        {% else %}
+        <p class="empty-state">No hotel IDs have been issued yet.</p>
+        {% endif %}
+      </section>
       <section class="data-panel">
         <div class="panel-heading">
           <strong>Registered hotels</strong>
-          <small>Sequential hotel IDs are assigned when a hotel registers.</small>
+          <small>Hotels registered using a Controller-issued ID.</small>
         </div>
         {% if hotels %}
         <div class="table-wrap"><table>

@@ -209,6 +209,50 @@ def command_center_hotels():
     return [dict(row) for row in rows]
 
 
+def command_center_hotel_ids():
+    if SUPABASE_ENABLED:
+        codes = get_supabase_admin().table(
+            "hotel_registration_codes"
+        ).select(
+            "hotel_number, issued_at, redeemed_at, hotel_id"
+        ).order("hotel_number", desc=True).execute().data
+        hotel_names = {
+            hotel["id"]: hotel["name"]
+            for hotel in get_supabase_admin().table("hotels").select(
+                "id, name"
+            ).execute().data
+        }
+    else:
+        codes = [
+            dict(row) for row in get_db().execute(
+                """SELECT hotel_number, issued_at, redeemed_at, hotel_id
+                FROM hotel_registration_codes ORDER BY hotel_number DESC"""
+            ).fetchall()
+        ]
+        hotel_names = {
+            hotel["id"]: hotel["name"]
+            for hotel in get_db().execute(
+                "SELECT id, name FROM hotels"
+            ).fetchall()
+        }
+    return [
+        {
+            **code,
+            "hotel_code": f"HOTEL-{int(code['hotel_number']):04d}",
+            "hotel_name": hotel_names.get(code.get("hotel_id"), ""),
+        }
+        for code in codes
+    ]
+
+
+def parse_hotel_registration_id(value):
+    match = re.fullmatch(r"HOTEL-(\d{4,})", form_text(value).upper())
+    if not match or len(match.group(1)) > 10:
+        return None
+    number = int(match.group(1))
+    return number if 0 < number <= 2_147_483_647 else None
+
+
 def public_hotels():
     if SUPABASE_ENABLED:
         hotels = get_supabase_admin().table("hotels").select(
@@ -627,6 +671,12 @@ def init_db():
             state TEXT NOT NULL DEFAULT '',
             is_active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS hotel_registration_codes (
+            hotel_number INTEGER PRIMARY KEY,
+            issued_at TEXT NOT NULL,
+            redeemed_at TEXT,
+            hotel_id TEXT UNIQUE REFERENCES hotels(id)
         );
         CREATE TABLE IF NOT EXISTS rooms (
             number TEXT NOT NULL,
@@ -2333,7 +2383,7 @@ def require_workspace_login():
         "billing",
     }:
         return None
-    if endpoint == "command_center":
+    if endpoint in {"command_center", "issue_hotel_id"}:
         if session.get("user_role") != "controller":
             return redirect(url_for("login", role="controller"))
         required_role = None
@@ -2883,7 +2933,53 @@ def command_center():
         "command_center.html",
         handoff_events=recent_whatsapp_handoffs(),
         hotels=hotels,
+        issued_hotel_ids=command_center_hotel_ids(),
+        controller_csrf_token=session.setdefault(
+            "controller_csrf_token", secrets.token_urlsafe(32)
+        ),
     )
+
+
+@app.post("/commandcenter/hotel-ids")
+def issue_hotel_id():
+    csrf_token = session.get("controller_csrf_token", "")
+    if not csrf_token or not hmac.compare_digest(
+        csrf_token, request.form.get("csrf_token", "")
+    ):
+        flash("This form expired. Refresh the page and try again.", "error")
+        return redirect(url_for("command_center"))
+
+    try:
+        if SUPABASE_ENABLED:
+            result = get_supabase_admin().rpc(
+                "issue_hotel_registration_id", {}
+            ).execute()
+            hotel_number = result.data
+        else:
+            db = get_db()
+            db.execute("BEGIN IMMEDIATE")
+            hotel_number = db.execute(
+                """SELECT MAX(hotel_number) + 1 FROM (
+                SELECT hotel_number FROM hotels
+                UNION ALL
+                SELECT hotel_number FROM hotel_registration_codes)"""
+            ).fetchone()[0]
+            db.execute(
+                """INSERT INTO hotel_registration_codes
+                (hotel_number, issued_at) VALUES (?, ?)""",
+                (hotel_number, now_iso()),
+            )
+            db.commit()
+    except Exception:
+        if not SUPABASE_ENABLED:
+            get_db().rollback()
+        app.logger.exception("Failed to issue a hotel registration ID")
+        flash("Could not issue a hotel ID. Please try again.", "error")
+        return redirect(url_for("command_center"))
+
+    hotel_code = f"HOTEL-{int(hotel_number):04d}"
+    flash(f"Hotel ID {hotel_code} is ready to give to the Manager.", "success")
+    return redirect(url_for("command_center"))
 
 
 @app.get("/room-photos/<path:photo_path>")
@@ -3106,6 +3202,7 @@ def hotel_slug_from_name(name, hotel_id):
 def manager_signup():
     editing = session.get("user_role") == "manager" and bool(session.get("hotel_id"))
     hotel_id = current_hotel_id() if editing else None
+    registration_id = ""
     if SUPABASE_ENABLED:
         supabase_admin = get_supabase_admin()
         existing_profiles = (
@@ -3140,11 +3237,19 @@ def manager_signup():
             editing=editing,
             hotel_name=hotel_name,
             hotel_id=hotel_id,
+            registration_id=registration_id,
             hotel_location=hotel_location,
             nigerian_states=NIGERIAN_STATES,
         )
 
     if request.method == "POST":
+        registration_id = request.form.get(
+            "hotel_registration_id", ""
+        ).strip()
+        hotel_number = (
+            None if editing
+            else parse_hotel_registration_id(registration_id)
+        )
         hotel_name = request.form.get("hotel_name", "").strip()
         hotel_location = {
             "address": request.form.get("hotel_address", "").strip(),
@@ -3167,6 +3272,10 @@ def manager_signup():
             return render_signup_page("Enter a city between 2 and 100 characters.")
         if hotel_location["state"] not in NIGERIAN_STATES:
             return render_signup_page("Choose a valid Nigerian state or the FCT.")
+        if not editing and hotel_number is None:
+            return render_signup_page(
+                "Enter a valid hotel ID issued by Haidware Controller."
+            )
         if any(not username or not password for username, password in fields.values()):
             return render_signup_page("Complete every required hotel team account.")
         if SUPABASE_ENABLED:
@@ -3176,18 +3285,39 @@ def manager_signup():
                 elif existing_profiles:
                     raise ValueError("This hotel already has a Manager account.")
                 else:
-                    saved_hotel_id = str(uuid4())
-                    if not supabase_admin.table("profiles").select(
-                        "id"
-                    ).eq("hotel_id", DEFAULT_HOTEL_ID).limit(1).execute().data:
-                        saved_hotel_id = DEFAULT_HOTEL_ID
-                    supabase_admin.table("hotels").upsert({
-                        "id": saved_hotel_id,
-                        "name": hotel_name,
-                        "slug": hotel_slug_from_name(hotel_name, saved_hotel_id),
-                        **hotel_location,
-                        "is_active": True,
-                    }).execute()
+                    available_id = supabase_admin.table(
+                        "hotel_registration_codes"
+                    ).select("hotel_number").eq(
+                        "hotel_number", hotel_number
+                    ).is_("redeemed_at", "null").limit(1).execute().data
+                    if not available_id:
+                        return render_signup_page(
+                            "That hotel ID is invalid or has already been used. "
+                            "Ask Haidware Controller for an available ID."
+                        )
+                    default_profiles = supabase_admin.table(
+                        "profiles"
+                    ).select("id").eq(
+                        "hotel_id", DEFAULT_HOTEL_ID
+                    ).limit(1).execute().data
+                    saved_hotel_id = (
+                        DEFAULT_HOTEL_ID if not default_profiles
+                        else str(uuid4())
+                    )
+                    supabase_admin.rpc(
+                        "register_hotel_with_code",
+                        {
+                            "p_hotel_number": hotel_number,
+                            "p_hotel_id": saved_hotel_id,
+                            "p_name": hotel_name,
+                            "p_slug": hotel_slug_from_name(
+                                hotel_name, saved_hotel_id
+                            ),
+                            "p_address": hotel_location["address"],
+                            "p_city": hotel_location["city"],
+                            "p_state": hotel_location["state"],
+                        },
+                    ).execute()
                     supabase_admin.table("online_booking_settings").upsert({
                         "hotel_id": saved_hotel_id,
                         "bank_name": "",
@@ -3283,30 +3413,58 @@ def manager_signup():
                         ),
                     )
             else:
-                next_hotel_number = db.execute(
-                    "SELECT COALESCE(MAX(hotel_number), 0) + 1 FROM hotels"
-                ).fetchone()[0]
+                available_id = db.execute(
+                    """SELECT 1 FROM hotel_registration_codes
+                    WHERE hotel_number = ? AND redeemed_at IS NULL""",
+                    (hotel_number,),
+                ).fetchone()
+                if not available_id:
+                    raise ValueError(
+                        "That hotel ID is invalid or has already been used. "
+                        "Ask Haidware Controller for an available ID."
+                    )
                 saved_hotel_id = str(uuid4())
-                if not db.execute(
+                reuse_default_hotel = not db.execute(
                     "SELECT 1 FROM users WHERE hotel_id = ? LIMIT 1",
                     (DEFAULT_HOTEL_ID,),
-                ).fetchone():
+                ).fetchone()
+                if reuse_default_hotel:
                     saved_hotel_id = DEFAULT_HOTEL_ID
+                    db.execute(
+                        """UPDATE hotels SET hotel_number = ?, name = ?,
+                        slug = ?, address = ?, city = ?, state = ?, is_active = 1
+                        WHERE id = ?""",
+                        (
+                            hotel_number, hotel_name,
+                            hotel_slug_from_name(hotel_name, saved_hotel_id),
+                            hotel_location["address"], hotel_location["city"],
+                            hotel_location["state"], saved_hotel_id,
+                        ),
+                    )
+                else:
+                    db.execute(
+                        """INSERT INTO hotels
+                        (id, hotel_number, name, slug, address, city, state,
+                         is_active, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+                        (
+                            saved_hotel_id, hotel_number, hotel_name,
+                            hotel_slug_from_name(hotel_name, saved_hotel_id),
+                            hotel_location["address"], hotel_location["city"],
+                            hotel_location["state"], now_iso(),
+                        ),
+                    )
                 db.execute(
-                    """INSERT INTO hotels
-                    (id, hotel_number, name, slug, address, city, state,
-                     is_active, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
-                    ON CONFLICT(id) DO UPDATE SET name = excluded.name,
-                    slug = excluded.slug, address = excluded.address,
-                    city = excluded.city, state = excluded.state""",
-                    (
-                        saved_hotel_id, next_hotel_number, hotel_name,
-                        hotel_slug_from_name(hotel_name, saved_hotel_id),
-                        hotel_location["address"], hotel_location["city"],
-                        hotel_location["state"], now_iso(),
-                    ),
+                    """UPDATE hotel_registration_codes
+                    SET redeemed_at = ?, hotel_id = ?
+                    WHERE hotel_number = ? AND redeemed_at IS NULL""",
+                    (now_iso(), saved_hotel_id, hotel_number),
                 )
+                if db.execute("SELECT changes()").fetchone()[0] != 1:
+                    raise ValueError(
+                        "That hotel ID is invalid or has already been used. "
+                        "Ask Haidware Controller for an available ID."
+                    )
                 db.execute(
                     """INSERT OR IGNORE INTO online_booking_settings
                     (hotel_id, updated_at) VALUES (?, ?)""",
@@ -3325,6 +3483,9 @@ def manager_signup():
                     ],
                 )
             db.commit()
+        except ValueError as error:
+            db.rollback()
+            return render_signup_page(str(error))
         except sqlite3.IntegrityError:
             db.rollback()
             return render_signup_page("An account or username already exists.")
