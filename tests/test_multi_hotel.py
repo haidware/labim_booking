@@ -897,11 +897,39 @@ class MultiHotelFlowTests(unittest.TestCase):
 
         unauthenticated = self.app_module.app.test_client().get("/commandcenter")
         self.assertEqual(unauthenticated.status_code, 302)
-        self.assertIn("/login/director", unauthenticated.headers["Location"])
-        self.assertEqual(
-            manager.get("/commandcenter").status_code,
-            302,
-        )
+        self.assertIn("/login/controller", unauthenticated.headers["Location"])
+        manager_response = manager.get("/commandcenter")
+        self.assertEqual(manager_response.status_code, 302)
+        self.assertIn("/login/controller", manager_response.headers["Location"])
+
+        controller = self.app_module.app.test_client()
+        with patch.object(
+            self.app_module, "HAIDWARE_CONTROLLER_USERNAME", "haidware-admin"
+        ), patch.object(
+            self.app_module, "HAIDWARE_CONTROLLER_PASSWORD", "ControllerPass123!"
+        ):
+            invalid_login = controller.post("/login/controller", data={
+                "username": "haidware-admin",
+                "password": "wrong-password",
+            })
+            self.assertEqual(invalid_login.status_code, 200)
+            self.assertIn(b"Invalid login details", invalid_login.data)
+
+            controller_login = controller.post("/login/controller", data={
+                "username": "haidware-admin",
+                "password": "ControllerPass123!",
+            })
+            self.assertEqual(controller_login.status_code, 302)
+            self.assertIn("/commandcenter", controller_login.headers["Location"])
+            controller_center = controller.get("/commandcenter")
+            self.assertEqual(controller_center.status_code, 200)
+            self.assertIn(b"across all hotels", controller_center.data)
+            self.assertIn(b"Handoff Test Hotel", controller_center.data)
+            self.assertIn(b"Other Hotel", controller_center.data)
+            self.assertIn(b"private other message", controller_center.data)
+            with controller.session_transaction() as controller_session:
+                self.assertEqual(controller_session["user_role"], "controller")
+                self.assertNotIn("hotel_id", controller_session)
 
     def test_reference_booking_flow_is_at_book_and_flutter_pwa_at_book_app(self):
         with tempfile.TemporaryDirectory() as build_directory:
@@ -933,6 +961,8 @@ class MultiHotelFlowTests(unittest.TestCase):
                 self.assertEqual(admin_landing.status_code, 200)
                 self.assertIn(b"HAIDWARE HOTEL BOOKING PLATFORM", admin_landing.data)
                 self.assertIn(b"Hotel Manager? Register your hotel", admin_landing.data)
+                self.assertIn(b"Haidware Controller", admin_landing.data)
+                self.assertIn(b"Hotel Director", admin_landing.data)
                 admin_landing.close()
 
                 trailing_slash = client.get(

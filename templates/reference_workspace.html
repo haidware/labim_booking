@@ -14,7 +14,7 @@
 <body class="reference-app">
   {% include '_icons.html' %}
   <header class="reference-header">
-    <div><strong><span class="brand-prefix">HAIDWARE</span> <span class="brand-title">HOTEL BOOKING PLATFORM</span></strong><span>{{ hotel_name }}</span><small>{{ 'Receptionist' if role == 'reception' else role|capitalize }}</small></div>
+    <div><strong><span class="brand-prefix">HAIDWARE</span> <span class="brand-title">HOTEL BOOKING PLATFORM</span></strong><span>{{ hotel_name }}</span><small>{{ 'Haidware Controller' if role == 'controller' else 'Receptionist' if role == 'reception' else role|capitalize }}</small></div>
     {% include '_workspace_nav.html' %}
   </header>
   <div class="reference-layout">
@@ -33,17 +33,18 @@
       <section class="data-panel"><div class="panel-heading"><strong>Live Room Status</strong><small>Today’s calendar stays • Reception can update room status</small></div>{% include 'reference_rooms.html' %}</section>
       <div class="split-panels"><section><h2>Booking Finance</h2><div class="finance-lines"><span>Total Booking Value <b>₦{{ '{:,.0f}'.format(finance.booking_value) }}</b></span><span>Collected <b>₦{{ '{:,.0f}'.format(finance.collected) }}</b></span><span>Outstanding <b>₦{{ '{:,.0f}'.format(finance.outstanding) }}</b></span></div></section><section><h2>Today’s Booking Summary</h2><div class="finance-lines"><span>Booked Rooms <b>{{ room_metrics[2][1] }}</b></span><span>Occupied Rooms <b>{{ room_metrics[3][1] }}</b></span><span>Rooms Cleaning <b>{{ room_metrics[4][1] }}</b></span><span>Available Now <b>{{ room_metrics[1][1] }}</b></span></div></section></div>
 
-      {% elif role == 'director' and page == 'commandcenter' %}
+      {% elif role in ['director', 'controller'] and page == 'commandcenter' %}
       <h1>Haidware Command Center</h1>
-      <p>WhatsApp payment-confirmation handoffs for {{ hotel_name }}. This Director account only sees activity for its hotel.</p>
+      <p>{% if role == 'controller' %}WhatsApp payment-confirmation handoffs across all hotels.{% else %}WhatsApp payment-confirmation handoffs for {{ hotel_name }}. This Hotel Director account only sees activity for its hotel.{% endif %}</p>
       <section class="data-panel">
         <div class="panel-heading"><strong>WhatsApp handoff activity</strong><small>Opening WhatsApp is recorded; message delivery is not verified.</small></div>
         {% if handoff_events %}
         <div class="table-wrap"><table>
-          <thead><tr><th>Requested</th><th>Reference</th><th>Guest</th><th>Status</th><th>Prefilled WhatsApp message</th></tr></thead>
+          <thead><tr><th>Requested</th>{% if role == 'controller' %}<th>Hotel</th>{% endif %}<th>Reference</th><th>Guest</th><th>Status</th><th>Prefilled WhatsApp message</th></tr></thead>
           <tbody>{% for event in handoff_events %}
           <tr>
             <td>{{ event.created_at }}</td>
+            {% if role == 'controller' %}<td>{{ event.hotel_name }}</td>{% endif %}
             <td>{{ event.reservation_id }}</td>
             <td>{{ event.guest_name }}</td>
             <td>WhatsApp handoff requested</td>

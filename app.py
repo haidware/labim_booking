@@ -86,6 +86,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "https://frmekmypefrwvocepjmg.supabase.
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 SUPABASE_ENABLED = bool(SUPABASE_URL and SUPABASE_ANON_KEY and SUPABASE_SECRET_KEY and create_client)
+HAIDWARE_CONTROLLER_USERNAME = os.getenv("HAIDWARE_CONTROLLER_USERNAME", "").strip()
+HAIDWARE_CONTROLLER_PASSWORD = os.getenv("HAIDWARE_CONTROLLER_PASSWORD", "")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
 IS_PRODUCTION = bool(
     os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER")
@@ -1805,23 +1807,28 @@ def record_whatsapp_handoff(confirmation):
     get_db().commit()
 
 
-def recent_whatsapp_handoffs(hotel_id):
+def recent_whatsapp_handoffs(hotel_id=None):
     if SUPABASE_ENABLED:
-        return get_request_supabase().table(
-            "whatsapp_handoff_events"
-        ).select(
+        client = get_supabase_admin() if hotel_id is None else get_request_supabase()
+        query = client.table("whatsapp_handoff_events").select(
             "reservation_id, hotel_name, guest_name, message_text, status, created_at"
-        ).eq(
-            "hotel_id", hotel_id
-        ).order(
-            "created_at", desc=True
-        ).limit(100).execute().data
-    rows = get_db().execute(
-        """SELECT reservation_id, hotel_name, guest_name, message_text,
-        status, created_at FROM whatsapp_handoff_events
-        WHERE hotel_id = ? ORDER BY created_at DESC LIMIT 100""",
-        (hotel_id,),
-    ).fetchall()
+        )
+        if hotel_id is not None:
+            query = query.eq("hotel_id", hotel_id)
+        return query.order("created_at", desc=True).limit(100).execute().data
+    if hotel_id is None:
+        rows = get_db().execute(
+            """SELECT reservation_id, hotel_name, guest_name, message_text,
+            status, created_at FROM whatsapp_handoff_events
+            ORDER BY created_at DESC LIMIT 100"""
+        ).fetchall()
+    else:
+        rows = get_db().execute(
+            """SELECT reservation_id, hotel_name, guest_name, message_text,
+            status, created_at FROM whatsapp_handoff_events
+            WHERE hotel_id = ? ORDER BY created_at DESC LIMIT 100""",
+            (hotel_id,),
+        ).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -2326,7 +2333,12 @@ def require_workspace_login():
     }:
         return None
     if endpoint == "command_center":
-        required_role = "director"
+        role = session.get("user_role")
+        if role not in {"director", "controller"}:
+            return redirect(url_for("login", role="controller"))
+        if role == "director" and not session.get("hotel_id"):
+            return redirect(url_for("login", role="director"))
+        required_role = "director" if role == "director" else None
     elif request.path.startswith("/workspace/"):
         required_role = (request.view_args or {}).get("role")
         if required_role is None:
@@ -2877,13 +2889,15 @@ def online_booking_confirmation():
 
 @app.get("/commandcenter")
 def command_center():
-    hotel = hotel_details(current_hotel_id())
+    is_controller = session.get("user_role") == "controller"
+    hotel_id = None if is_controller else current_hotel_id()
+    hotel = hotel_details(hotel_id) if hotel_id else None
     return render_template(
         "reference_workspace.html",
-        role="director",
+        role="controller" if is_controller else "director",
         page="commandcenter",
-        hotel_name=hotel["name"] if hotel else "Hotel Booking Platform",
-        handoff_events=recent_whatsapp_handoffs(current_hotel_id()),
+        hotel_name=hotel["name"] if hotel else "All Hotels",
+        handoff_events=recent_whatsapp_handoffs(hotel_id),
     )
 
 
@@ -3007,8 +3021,37 @@ def logout():
 
 @app.route("/login/<role>", methods=["GET", "POST"])
 def login(role):
-    if role not in {"director", "manager", "reception"}:
+    if role not in {"controller", "director", "manager", "reception"}:
         return redirect(url_for("admin_landing"))
+    if role == "controller":
+        account_exists = bool(
+            HAIDWARE_CONTROLLER_USERNAME and HAIDWARE_CONTROLLER_PASSWORD
+        )
+        if request.method == "POST":
+            submitted_username = request.form.get("username", "").strip()
+            submitted_password = request.form.get("password", "")
+            username_matches = account_exists and hmac.compare_digest(
+                submitted_username.casefold().encode("utf-8"),
+                HAIDWARE_CONTROLLER_USERNAME.casefold().encode("utf-8"),
+            )
+            password_matches = account_exists and hmac.compare_digest(
+                submitted_password.encode("utf-8"),
+                HAIDWARE_CONTROLLER_PASSWORD.encode("utf-8"),
+            )
+            if username_matches and password_matches:
+                session.clear()
+                session["user_role"] = "controller"
+                session["username"] = HAIDWARE_CONTROLLER_USERNAME
+                return redirect(url_for("command_center"))
+            return render_template(
+                "login.html",
+                role=role,
+                account_exists=account_exists,
+                error="Invalid login details.",
+            )
+        return render_template(
+            "login.html", role=role, account_exists=account_exists
+        )
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         submitted_password = request.form.get("password", "")
