@@ -167,13 +167,16 @@ class MultiHotelFlowTests(unittest.TestCase):
         )
 
     def test_rental_home_route_retries_transient_gateway_errors(self):
-        gateway_error = self.app_module.HTTPError(
-            "https://labim-house-rental.onrender.com/",
-            502,
-            "Bad Gateway",
-            Message(),
-            BytesIO(b"temporary gateway error"),
-        )
+        gateway_errors = [
+            self.app_module.HTTPError(
+                "https://labim-house-rental.onrender.com/",
+                502,
+                "Bad Gateway",
+                Message(),
+                BytesIO(b"temporary gateway error"),
+            )
+            for _ in range(5)
+        ]
         upstream_response = Mock()
         upstream_response.status = 200
         upstream_response.headers = Message()
@@ -185,13 +188,16 @@ class MultiHotelFlowTests(unittest.TestCase):
         with patch.object(
             self.app_module,
             "urlopen",
-            side_effect=[gateway_error, upstream_response],
+            side_effect=[*gateway_errors, upstream_response],
         ) as open_upstream, patch.object(self.app_module.time, "sleep") as sleep:
             response = self.app_module.app.test_client().get("/rentals")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(open_upstream.call_count, 2)
-        sleep.assert_called_once_with(1)
+        self.assertEqual(open_upstream.call_count, 6)
+        self.assertEqual(
+            [call.args[0] for call in sleep.call_args_list],
+            [1, 2, 4, 8, 15],
+        )
 
     def test_rental_proxy_does_not_retry_state_changing_requests(self):
         gateway_error = self.app_module.HTTPError(

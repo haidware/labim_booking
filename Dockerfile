@@ -19,4 +19,4 @@ COPY static/ ./static/
 COPY --from=flutter-build /src/hotel_booking_web_app/build/web ./hotel_booking_web_app/build/web/
 
 EXPOSE 10000
-CMD ["sh", "-c", "exec gunicorn app:app --bind 0.0.0.0:${PORT:-10000}"]
+CMD ["sh", "-c", "exec gunicorn app:app --bind 0.0.0.0:${PORT:-10000} --threads 4 --timeout 120"]

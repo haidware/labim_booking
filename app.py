@@ -56,7 +56,7 @@ RENTAL_SERVICE_URL = os.getenv(
 ).rstrip("/")
 RENTAL_PROXY_PREFIX = "/rentals"
 RENTAL_PROXY_RETRYABLE_STATUS_CODES = {502, 503, 504}
-RENTAL_PROXY_GET_ATTEMPTS = 3
+RENTAL_PROXY_RETRY_DELAYS = (1, 2, 4, 8, 15, 20)
 ROOM_PHOTO_BUCKET = "room-photos"
 ONLINE_HOLD_MINUTES = 30
 TRIAL_DAYS = 30
@@ -2629,7 +2629,7 @@ def _rewrite_rental_html(body):
 
 def _open_rental_upstream(upstream_request):
     retry_safe = request.method in {"GET", "HEAD"}
-    attempts = RENTAL_PROXY_GET_ATTEMPTS if retry_safe else 1
+    attempts = len(RENTAL_PROXY_RETRY_DELAYS) + 1 if retry_safe else 1
     for attempt in range(attempts):
         try:
             return urlopen(upstream_request, timeout=90)
@@ -2644,7 +2644,7 @@ def _open_rental_upstream(upstream_request):
         except URLError:
             if attempt == attempts - 1:
                 raise
-        time.sleep(attempt + 1)
+        time.sleep(RENTAL_PROXY_RETRY_DELAYS[attempt])
 
 
 def _rental_proxy_response(rental_path):
