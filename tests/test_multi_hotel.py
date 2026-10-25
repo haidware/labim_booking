@@ -679,7 +679,7 @@ class MultiHotelFlowTests(unittest.TestCase):
             db.commit()
 
         public_directory = self.app_module.app.test_client().get("/book-legacy")
-        self.assertIn(b"Legacy Expired Hotel", public_directory.data)
+        self.assertNotIn(b"Legacy Expired Hotel", public_directory.data)
         for role in ("manager", "director", "reception"):
             with self.subTest(role=role):
                 with client.session_transaction() as current_session:
@@ -706,11 +706,24 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.configure_online_booking(
             manager, hotel_id, "API Suite", 75000
         )
+        unavailable_manager = self.app_module.app.test_client()
+        unavailable_hotel_id = self.register_hotel(
+            unavailable_manager, "Flutter No Vacancy Hotel",
+            "flutter-no-vacancy", "17 Market Road", "Flutter City", "Lagos",
+        )
+        self.configure_online_booking(
+            unavailable_manager, unavailable_hotel_id, "Unavailable Suite", 68000
+        )
         with self.app_module.app.app_context():
             self.app_module.get_db().execute(
                 """UPDATE rooms SET status = 'available'
                 WHERE hotel_id = ? AND number = '101'""",
                 (hotel_id,),
+            )
+            self.app_module.get_db().execute(
+                """UPDATE rooms SET status = 'unavailable'
+                WHERE hotel_id = ? AND number = '101'""",
+                (unavailable_hotel_id,),
             )
             self.app_module.get_db().commit()
         guest = self.app_module.app.test_client()
@@ -730,6 +743,14 @@ class MultiHotelFlowTests(unittest.TestCase):
 
         check_in = (date.today() + timedelta(days=4)).isoformat()
         check_out = (date.today() + timedelta(days=5)).isoformat()
+        hotel_directory = guest.get("/book-legacy", query_string={
+            "check_in": check_in,
+            "check_out": check_out,
+            "city": "flutter",
+        })
+        self.assertEqual(hotel_directory.status_code, 200)
+        self.assertIn(b"Flutter API Hotel", hotel_directory.data)
+        self.assertNotIn(b"Flutter No Vacancy Hotel", hotel_directory.data)
         hotels_response = guest.get("/api/public/hotels", query_string={
             "check_in": check_in,
             "check_out": check_out,
@@ -739,7 +760,10 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(
             hotels_response.headers["Access-Control-Allow-Origin"], "*"
         )
-        hotel_result = hotels_response.get_json()["hotels"][0]
+        hotels = hotels_response.get_json()["hotels"]
+        self.assertEqual(len(hotels), 1)
+        self.assertEqual(hotels[0]["id"], hotel_id)
+        hotel_result = hotels[0]
         self.assertTrue(hotel_result["slug"].startswith("flutter-api-hotel"))
         self.assertEqual(hotel_result["available_room_count"], 1)
         self.assertIn(hotel_id, hotel_result["cover_photo_url"])
@@ -1164,20 +1188,15 @@ class MultiHotelFlowTests(unittest.TestCase):
         guest = self.app_module.app.test_client()
         hotel_directory = guest.get("/book-legacy")
         self.assertEqual(hotel_directory.status_code, 200)
-        self.assertIn(b"Labim Test Hotel", hotel_directory.data)
-        self.assertIn(b"Other Test Hotel", hotel_directory.data)
-        self.assertIn(b"14 Independence Avenue", hotel_directory.data)
-        self.assertIn(
-            f"/book-legacy?hotel={hotel_two['slug']}".encode(),
-            hotel_directory.data,
-        )
+        self.assertNotIn(b"Labim Test Hotel", hotel_directory.data)
+        self.assertNotIn(b"Other Test Hotel", hotel_directory.data)
         self.assertNotIn(b'<select name="hotel"', hotel_directory.data)
         filtered_directory = guest.get("/book-legacy", query_string={
             "state": "Enugu",
             "city": "enu",
         })
         self.assertEqual(filtered_directory.status_code, 200)
-        self.assertIn(b"Other Test Hotel", filtered_directory.data)
+        self.assertNotIn(b"Other Test Hotel", filtered_directory.data)
         self.assertNotIn(b"Labim Test Hotel", filtered_directory.data)
         search = guest.get("/book-legacy", query_string={
             "hotel": hotel_two["slug"],

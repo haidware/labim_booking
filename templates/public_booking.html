@@ -41,7 +41,7 @@
       {% endfor %}
     </section>
     {% else %}
-    <section class="public-no-rooms"><h2>{{ 'No hotels have rooms in that price range for those dates' if selected_price_range else 'No hotels match those location filters' if selected_state or city_query else 'No hotels are currently listed' }}</h2><p>{% if selected_price_range %}Try another price range or different dates.{% elif selected_state or city_query %}Try another state or city, or clear the filters.{% else %}Please check back later.{% endif %}</p></section>
+    <section class="public-no-rooms"><h2>{{ 'No hotels have available rooms in that price range for those dates' if selected_price_range else 'No hotels with available rooms match those location filters' if selected_state or city_query else 'No hotels currently have rooms available for those dates' }}</h2><p>{% if selected_price_range %}Try another price range or different dates.{% elif selected_state or city_query %}Try another state or city, or clear the filters.{% else %}Please check back later.{% endif %}</p></section>
     {% endif %}
     {% else %}
     <p class="selected-hotel-name">Booking at <strong>{{ selected_hotel.name }}</strong> · <a href="{{ url_for('public_booking') }}">Choose a different hotel</a></p>

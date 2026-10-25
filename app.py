@@ -2594,7 +2594,7 @@ def public_booking_api_hotels():
             check_in, check_out, hotel_id=hotel["id"]
         )
         matching_rooms = filter_rooms_by_price_range(rooms, price_range)
-        if price_range and not matching_rooms:
+        if not matching_rooms:
             continue
         preview_room = matching_rooms[0] if matching_rooms else None
         hotel_results.append({
@@ -2796,8 +2796,8 @@ def public_booking():
             ),
             selected_price_range,
         )
-    hotel_cards = hotels
-    if not selected_hotel and selected_price_range:
+    hotel_cards = []
+    if not selected_hotel:
         matching_hotels = []
         if check_in >= today and check_out > check_in:
             for hotel in hotels:
