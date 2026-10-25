@@ -38,45 +38,29 @@ Existing SQLite databases are cleaned once at startup: the known sample booking 
 
 The public Data API must expose the `hotels`, `profiles`, `rooms`, `reservations`, `payments`, `online_room_listings`, `online_booking_settings`, `hotel_subscriptions`, and `hotel_subscription_payments` tables. The schema grants authenticated users hotel- and role-scoped access through RLS; subscription tables have no client policies and are managed server-side only. All role values used by policies are assigned in Supabase Auth `app_metadata` by the server-side Manager account workflow. The service-only Supabase secret must be configured because it powers guest booking, transfer verification, subscription billing, and room-image storage.
 
-## Deploy to Render
+## Deploy to Railway
 
-The root `render.yaml` Blueprint builds the Flutter PWA and Flask service from
-the repository root (`rootDir: .`) and root `Dockerfile`, checks `/health`, and
-mounts a persistent disk at `/app/instance` for SQLite fallback data and
-locally stored room photos.
+The production Railway service is `labim_booking` on the `main` branch:
+<https://labimbooking-production.up.railway.app>. The root `Dockerfile` builds
+the Flutter PWA and Flask service, and `railway.json` configures `/health` as
+the health check.
 
-1. In Render, create a **Blueprint** from this GitHub repository and select the
-   branch containing `render.yaml`. The service needs a paid plan for its
-   persistent disk.
-2. When prompted, copy the current `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
-   `SUPABASE_SECRET_KEY`, `PAYSTACK_SECRET_KEY`, `SMTP_HOST`, `SMTP_PORT`,
-   `SMTP_FROM_EMAIL`, `SMTP_USERNAME`, and `SMTP_PASSWORD` values from the
-   existing host into Render's private environment variables. Never paste
-   secret values into chat or commit them. Render generates `FLASK_SECRET_KEY`.
-3. On an existing database, ensure the base schema and online-booking migration
-   have been applied, then run `supabase_multihotel_migration.sql`,
-   `supabase_hotel_location_migration.sql`,
-   `supabase_reception_email_migration.sql`,
-   `supabase_reception_room_availability_migration.sql`,
-   `supabase_reservation_overlap_guard_migration.sql`, and
-   `supabase_hotel_subscriptions_migration.sql` in Supabase before deploying.
-   Do not use an empty local `supabase_schema.sql` as a schema migration.
-4. Verify `/health`, `/`, hotel search, a test booking, manager/reception
-   login, and Paystack subscription checkout on Render. Update the Paystack
-   webhook URL to `https://<your-render-domain>/billing/paystack/webhook`.
-5. After verifying production behavior, point your custom domain at Render (if
-   you have one) and update links in any external rooms app. The Railway
-   generated `railway.app` hostname cannot be reused on Render. Keep Railway
-   available until Render has passed verification; then disable its service to
-   avoid duplicate production instances.
-6. After deployment, Managers must save a valid Reception notification email
-   under **Online Booking Setup**. Existing hotels need to save their
-   notification email once after the migration.
+Configure these private service variables in Railway:
+`FLASK_SECRET_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SECRET_KEY`,
+`PAYSTACK_SECRET_KEY`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM_EMAIL`,
+`SMTP_USERNAME`, and `SMTP_PASSWORD`. Never paste secret values into chat or
+commit them. The rental proxy uses the Railway rental service by default.
 
-Supabase remains the production database, so deploying to Render does not move
-or reset hotel records. The persistent disk is for the SQLite fallback and
-local files; keep it attached if either is used. The older `railway.json` is
-retained temporarily for rollback.
+Supabase remains the production database and room-photo store. Deploying to
+Railway does not move or reset hotel records; no Railway database is required.
+The current service does not have a persistent volume. This is safe while
+Supabase is enabled; if the app is switched to its local SQLite fallback or
+local photo storage, attach a Railway volume at `/app/instance` first.
+
+Before retiring the old Render service, verify `/health`, `/`, hotel search,
+manager/reception login, and a test booking. Update the Paystack webhook URL
+to `https://labimbooking-production.up.railway.app/billing/paystack/webhook`.
+Keep Render available as a rollback until these checks pass.
 
 ## Flutter guest booking web app
 
