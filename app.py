@@ -59,11 +59,11 @@ RENTAL_PROXY_RETRYABLE_STATUS_CODES = {502, 503, 504}
 RENTAL_PROXY_RETRY_DELAYS = (1, 2, 4, 8, 15, 20)
 ROOM_PHOTO_BUCKET = "room-photos"
 ONLINE_HOLD_MINUTES = 30
+DEFAULT_HOTEL_ID = "00000000-0000-0000-0000-000000000001"
 TRIAL_DAYS = 30
 MONTHLY_PLAN_AMOUNT = 80_000
 ANNUAL_PLAN_AMOUNT = 800_000
 PAYSTACK_API_BASE = "https://api.paystack.co"
-DEFAULT_HOTEL_ID = "00000000-0000-0000-0000-000000000001"
 MAX_ROOM_PHOTO_BYTES = 5 * 1024 * 1024
 MAX_ROOM_PHOTOS = 3
 ALLOWED_ROOM_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -186,14 +186,27 @@ def hotel_details(hotel_id=None):
     hotel_id = hotel_id or current_hotel_id()
     if SUPABASE_ENABLED:
         result = get_supabase_admin().table("hotels").select(
-            "id, name, slug, address, city, state"
+            "id, hotel_number, name, slug, address, city, state"
         ).eq("id", hotel_id).limit(1).execute().data
         return result[0] if result else None
     row = get_db().execute(
-        "SELECT id, name, slug, address, city, state FROM hotels WHERE id = ?",
+        """SELECT id, hotel_number, name, slug, address, city, state
+        FROM hotels WHERE id = ?""",
         (hotel_id,),
     ).fetchone()
     return dict(row) if row else None
+
+
+def command_center_hotels():
+    if SUPABASE_ENABLED:
+        return get_supabase_admin().table("hotels").select(
+            "hotel_number, name, city, state"
+        ).order("hotel_number").execute().data
+    rows = get_db().execute(
+        """SELECT hotel_number, name, city, state
+        FROM hotels ORDER BY hotel_number"""
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def public_hotels():
@@ -207,33 +220,6 @@ def public_hotels():
                 """SELECT id, name, slug, address, city, state FROM hotels
                 WHERE is_active = 1 ORDER BY name"""
             ).fetchall()
-        ]
-    if hotels:
-        hotel_ids = [hotel["id"] for hotel in hotels]
-        if SUPABASE_ENABLED:
-            subscription_rows = get_supabase_admin().table(
-                "hotel_subscriptions"
-            ).select(
-                "hotel_id, status, trial_ends_at, paid_until"
-            ).in_("hotel_id", hotel_ids).execute().data
-        else:
-            placeholders = ",".join("?" for _ in hotel_ids)
-            subscription_rows = [
-                dict(row) for row in get_db().execute(
-                    f"""SELECT hotel_id, status, trial_ends_at, paid_until
-                    FROM hotel_subscriptions
-                    WHERE hotel_id IN ({placeholders})""",
-                    hotel_ids,
-                ).fetchall()
-            ]
-        subscriptions_by_hotel = {
-            row["hotel_id"]: row for row in subscription_rows
-        }
-        hotels = [
-            hotel for hotel in hotels
-            if subscription_access_for_record(
-                subscriptions_by_hotel.get(hotel["id"])
-            )["allowed"]
         ]
     state_filter = form_text(request.args.get("state", ""))
     city_filter = form_text(request.args.get("city", "")).casefold()
@@ -633,6 +619,7 @@ def init_db():
         """
         CREATE TABLE IF NOT EXISTS hotels (
             id TEXT PRIMARY KEY,
+            hotel_number INTEGER,
             name TEXT NOT NULL,
             slug TEXT NOT NULL UNIQUE,
             address TEXT NOT NULL DEFAULT '',
@@ -750,14 +737,34 @@ def init_db():
     hotel_columns = {
         column["name"] for column in db.execute("PRAGMA table_info(hotels)")
     }
+    if "hotel_number" not in hotel_columns:
+        db.execute("ALTER TABLE hotels ADD COLUMN hotel_number INTEGER")
+    next_hotel_number = db.execute(
+        "SELECT COALESCE(MAX(hotel_number), 0) + 1 FROM hotels"
+    ).fetchone()[0]
+    unnumbered_hotels = db.execute(
+        """SELECT id FROM hotels WHERE hotel_number IS NULL
+        ORDER BY created_at, id"""
+    ).fetchall()
+    for offset, hotel in enumerate(unnumbered_hotels):
+        db.execute(
+            "UPDATE hotels SET hotel_number = ? WHERE id = ?",
+            (next_hotel_number + offset, hotel["id"]),
+        )
+    db.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS hotels_hotel_number_idx
+        ON hotels(hotel_number)"""
+    )
     for column in ("address", "city", "state"):
         if column not in hotel_columns:
             db.execute(
                 f"ALTER TABLE hotels ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
             )
     db.execute(
-        """INSERT OR IGNORE INTO hotels (id, name, slug, is_active, created_at)
-        VALUES (?, 'Labim Hotel and Suite', 'labim-hotel-and-suite', 1, CURRENT_TIMESTAMP)""",
+        """INSERT OR IGNORE INTO hotels
+        (id, hotel_number, name, slug, is_active, created_at)
+        VALUES (?, COALESCE((SELECT MAX(hotel_number) + 1 FROM hotels), 1),
+        'Labim Hotel and Suite', 'labim-hotel-and-suite', 1, CURRENT_TIMESTAMP)""",
         (DEFAULT_HOTEL_ID,),
     )
     for table in ("rooms", "reservations", "payments", "online_room_listings"):
@@ -1610,11 +1617,6 @@ def create_online_booking(form):
     if form_text(form.get("website")):
         raise ValueError("Booking could not be submitted.")
 
-    if not subscription_access(hotel_id)["allowed"]:
-        raise ValueError(
-            "This hotel's online booking is temporarily unavailable because "
-            "its subscription is inactive."
-        )
     hotel = None
     if SUPABASE_ENABLED:
         hotel_rows = get_supabase_admin().table("hotels").select(
@@ -2328,8 +2330,7 @@ def require_workspace_login():
     endpoint = request.endpoint
     if endpoint in {
         "home", "health", "login", "manager_signup", "logout", "static",
-        "billing", "start_subscription_payment", "save_billing_email",
-        "paystack_callback", "paystack_webhook",
+        "billing",
     }:
         return None
     if endpoint == "command_center":
@@ -2360,10 +2361,6 @@ def require_workspace_login():
         session.get("user_role") != required_role or not session.get("hotel_id")
     ):
         return redirect(url_for("login", role=required_role))
-    if required_role and session.get("hotel_id"):
-        access = subscription_access(session["hotel_id"])
-        if not access["allowed"]:
-            return redirect(url_for("billing"))
     return None
 
 
@@ -2556,17 +2553,6 @@ def public_booking():
                 if not selected_hotel or request.form.get(
                     "hotel_id"
                 ) != selected_hotel["id"]:
-                    submitted_hotel_id = request.form.get("hotel_id", "").strip()
-                    if (
-                        submitted_hotel_id
-                        and not subscription_access(
-                            submitted_hotel_id
-                        )["allowed"]
-                    ):
-                        raise ValueError(
-                            "This hotel's online booking is temporarily "
-                            "unavailable because its subscription is inactive."
-                        )
                     raise ValueError("Choose the hotel you want to book.")
                 create_online_booking(request.form)
                 return redirect(url_for("online_booking_confirmation"))
@@ -2886,9 +2872,17 @@ def online_booking_confirmation():
 
 @app.get("/commandcenter")
 def command_center():
+    hotels = [
+        {
+            **hotel,
+            "hotel_code": f"HOTEL-{int(hotel['hotel_number']):04d}",
+        }
+        for hotel in command_center_hotels()
+    ]
     return render_template(
         "command_center.html",
         handoff_events=recent_whatsapp_handoffs(),
+        hotels=hotels,
     )
 
 
@@ -3112,8 +3106,6 @@ def hotel_slug_from_name(name, hotel_id):
 def manager_signup():
     editing = session.get("user_role") == "manager" and bool(session.get("hotel_id"))
     hotel_id = current_hotel_id() if editing else None
-    if editing and not subscription_access(hotel_id)["allowed"]:
-        return redirect(url_for("billing"))
     if SUPABASE_ENABLED:
         supabase_admin = get_supabase_admin()
         existing_profiles = (
@@ -3139,8 +3131,6 @@ def manager_signup():
         "city": current_hotel.get("city", "") if current_hotel else "",
         "state": current_hotel.get("state", "") if current_hotel else "",
     }
-    selected_plan = "trial"
-    billing_email = ""
 
     def render_signup_page(error=None):
         return render_template(
@@ -3152,8 +3142,6 @@ def manager_signup():
             hotel_id=hotel_id,
             hotel_location=hotel_location,
             nigerian_states=NIGERIAN_STATES,
-            selected_plan=selected_plan,
-            billing_email=billing_email,
         )
 
     if request.method == "POST":
@@ -3163,8 +3151,6 @@ def manager_signup():
             "city": request.form.get("hotel_city", "").strip(),
             "state": request.form.get("hotel_state", "").strip(),
         }
-        selected_plan = request.form.get("plan", "trial").strip().lower()
-        billing_email = request.form.get("billing_email", "").strip().lower()
         fields = {
             "director": (request.form.get("director_username", "").strip(), request.form.get("director_password", "")),
             "reception": (request.form.get("reception_username", "").strip(), request.form.get("reception_password", "")),
@@ -3181,13 +3167,6 @@ def manager_signup():
             return render_signup_page("Enter a city between 2 and 100 characters.")
         if hotel_location["state"] not in NIGERIAN_STATES:
             return render_signup_page("Choose a valid Nigerian state or the FCT.")
-        if not editing and selected_plan not in {"trial", "monthly", "annual"}:
-            return render_signup_page("Choose a valid subscription plan.")
-        if not editing and (
-            len(billing_email) > 254
-            or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", billing_email)
-        ):
-            return render_signup_page("Enter a valid billing email address.")
         if any(not username or not password for username, password in fields.values()):
             return render_signup_page("Complete every required hotel team account.")
         if SUPABASE_ENABLED:
@@ -3274,28 +3253,6 @@ def manager_signup():
                                 "created_by": session.get("supabase_user_id"),
                             }
                         ).execute()
-                if not editing:
-                    create_hotel_subscription(
-                        saved_hotel_id, selected_plan, billing_email
-                    )
-                    if selected_plan in {"monthly", "annual"}:
-                        try:
-                            checkout_url = initialize_subscription_payment(
-                                saved_hotel_id, selected_plan
-                            )
-                        except (RuntimeError, ValueError) as error:
-                            app.logger.warning(
-                                "Could not initialize signup subscription checkout: %s",
-                                error,
-                            )
-                            flash(
-                                "Your hotel is registered, but payment checkout "
-                                "could not start. Sign in as Manager and retry from "
-                                "Plan & Billing.",
-                                "error",
-                            )
-                            return redirect(url_for("login", role="manager"))
-                        return redirect(checkout_url, code=303)
                 return redirect(url_for("login", role="manager"))
             except Exception:
                 app.logger.exception("Failed to save hotel team accounts")
@@ -3304,6 +3261,7 @@ def manager_signup():
                 )
         db = get_db()
         try:
+            db.execute("BEGIN IMMEDIATE")
             if editing:
                 saved_hotel_id = hotel_id
                 db.execute(
@@ -3325,6 +3283,9 @@ def manager_signup():
                         ),
                     )
             else:
+                next_hotel_number = db.execute(
+                    "SELECT COALESCE(MAX(hotel_number), 0) + 1 FROM hotels"
+                ).fetchone()[0]
                 saved_hotel_id = str(uuid4())
                 if not db.execute(
                     "SELECT 1 FROM users WHERE hotel_id = ? LIMIT 1",
@@ -3333,13 +3294,14 @@ def manager_signup():
                     saved_hotel_id = DEFAULT_HOTEL_ID
                 db.execute(
                     """INSERT INTO hotels
-                    (id, name, slug, address, city, state, is_active, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+                    (id, hotel_number, name, slug, address, city, state,
+                     is_active, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
                     ON CONFLICT(id) DO UPDATE SET name = excluded.name,
                     slug = excluded.slug, address = excluded.address,
                     city = excluded.city, state = excluded.state""",
                     (
-                        saved_hotel_id, hotel_name,
+                        saved_hotel_id, next_hotel_number, hotel_name,
                         hotel_slug_from_name(hotel_name, saved_hotel_id),
                         hotel_location["address"], hotel_location["city"],
                         hotel_location["state"], now_iso(),
@@ -3362,78 +3324,21 @@ def manager_signup():
                         for account_role, (username, password) in fields.items()
                     ],
                 )
-                if not editing:
-                    now = datetime.now(timezone.utc)
-                    is_trial = selected_plan == "trial"
-                    db.execute(
-                        """INSERT INTO hotel_subscriptions
-                        (hotel_id, plan, status, trial_started_at, trial_ends_at,
-                         billing_email, pending_plan, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            saved_hotel_id,
-                            "trial" if is_trial else selected_plan,
-                            "trial" if is_trial else "pending",
-                            now.isoformat(timespec="seconds") if is_trial else None,
-                            (
-                                (now + timedelta(days=TRIAL_DAYS)).isoformat(
-                                    timespec="seconds"
-                                )
-                                if is_trial else None
-                            ),
-                            billing_email,
-                            None if is_trial else selected_plan,
-                            now.isoformat(timespec="seconds"),
-                        ),
-                    )
             db.commit()
         except sqlite3.IntegrityError:
             db.rollback()
             return render_signup_page("An account or username already exists.")
-        if not editing and selected_plan in {"monthly", "annual"}:
-            try:
-                checkout_url = initialize_subscription_payment(
-                    saved_hotel_id, selected_plan
-                )
-            except (RuntimeError, ValueError) as error:
-                app.logger.warning(
-                    "Could not initialize signup subscription checkout: %s",
-                    error,
-                )
-                flash(
-                    "Your hotel is registered, but payment checkout could not "
-                    "start. Sign in as Manager and retry from Plan & Billing.",
-                    "error",
-                )
-                return redirect(url_for("login", role="manager"))
-            return redirect(checkout_url, code=303)
         return redirect(url_for("login", role="manager"))
     return render_signup_page()
 
 
 @app.route("/billing")
 def billing():
-    hotel_id = session.get("hotel_id")
-    if not hotel_id or session.get("user_role") not in {
-        "manager", "director", "reception"
-    }:
-        return redirect(url_for("login", role="manager"))
-    ensure_legacy_subscription(hotel_id)
-    record = subscription_record(hotel_id)
-    access = subscription_access(hotel_id)
-    csrf_token = session.setdefault("billing_csrf_token", secrets.token_urlsafe(32))
-    return render_template(
-        "billing.html",
-        role=session["user_role"],
-        page="billing",
-        record=record,
-        access=access,
-        csrf_token=csrf_token,
-        is_manager=session["user_role"] == "manager",
-        trial_days=TRIAL_DAYS,
-        monthly_amount=MONTHLY_PLAN_AMOUNT,
-        annual_amount=ANNUAL_PLAN_AMOUNT,
-    )
+    if session.get("user_role") == "manager" and session.get("hotel_id"):
+        return redirect(url_for(
+            "reference_workspace", role="manager", page="dashboard"
+        ))
+    return redirect(url_for("login", role="manager"))
 
 
 def billing_manager_required():
@@ -3452,7 +3357,6 @@ def valid_billing_csrf():
     )
 
 
-@app.route("/billing/email", methods=["POST"])
 def save_billing_email():
     denied = billing_manager_required()
     if denied:
@@ -3482,7 +3386,6 @@ def save_billing_email():
     return redirect(url_for("billing"))
 
 
-@app.route("/billing/subscribe", methods=["POST"])
 def start_subscription_payment():
     denied = billing_manager_required()
     if denied:
@@ -3520,7 +3423,6 @@ def verify_paystack_subscription(reference):
     )
 
 
-@app.route("/billing/paystack/callback")
 def paystack_callback():
     reference = request.args.get("reference") or request.args.get("trxref")
     try:
@@ -3538,7 +3440,6 @@ def paystack_callback():
     return redirect(url_for("login", role="manager"))
 
 
-@app.route("/billing/paystack/webhook", methods=["POST"])
 def paystack_webhook():
     try:
         secret = paystack_secret_key()

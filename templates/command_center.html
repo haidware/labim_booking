@@ -24,7 +24,28 @@
   <div class="reference-layout">
     <main class="reference-main">
       <h1>Haidware Command Center</h1>
-      <p>WhatsApp payment-confirmation handoffs across all hotels.</p>
+      <p>Registered hotels and WhatsApp payment-confirmation handoffs.</p>
+      <section class="data-panel">
+        <div class="panel-heading">
+          <strong>Registered hotels</strong>
+          <small>Sequential hotel IDs are assigned when a hotel registers.</small>
+        </div>
+        {% if hotels %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>Hotel ID</th><th>Hotel</th><th>City</th><th>State</th></tr></thead>
+          <tbody>{% for hotel in hotels %}
+          <tr>
+            <td>{{ hotel.hotel_code }}</td>
+            <td>{{ hotel.name }}</td>
+            <td>{{ hotel.city or '—' }}</td>
+            <td>{{ hotel.state or '—' }}</td>
+          </tr>
+          {% endfor %}</tbody>
+        </table></div>
+        {% else %}
+        <p class="empty-state">No hotels have been registered yet.</p>
+        {% endif %}
+      </section>
       <section class="data-panel">
         <div class="panel-heading">
           <strong>WhatsApp handoff activity</strong>

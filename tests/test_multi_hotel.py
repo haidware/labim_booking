@@ -39,15 +39,13 @@ class MultiHotelFlowTests(unittest.TestCase):
         cls.temp_directory.cleanup()
 
     def register_hotel(
-        self, client, name, username_suffix, address, city, state, plan="trial"
+        self, client, name, username_suffix, address, city, state
     ):
         response = client.post("/signup/manager", data={
             "hotel_name": name,
             "hotel_address": address,
             "hotel_city": city,
             "hotel_state": state,
-            "billing_email": f"billing-{username_suffix}@example.com",
-            "plan": plan,
             "manager_username": f"manager-{username_suffix}",
             "manager_password": "ManagerPass123!",
             "director_username": f"director-{username_suffix}",
@@ -563,158 +561,65 @@ class MultiHotelFlowTests(unittest.TestCase):
                     expected,
                 )
 
-    def test_expired_trial_blocks_manager_director_and_reception(self):
+    def test_signup_assigns_sequential_hotel_ids_without_subscription_fields(self):
         client = self.app_module.app.test_client()
-        hotel_id = self.register_hotel(
-            client, "Trial Expiry Hotel", "trial-expiry",
-            "8 Market Road", "Lagos", "Lagos",
+        signup_page = client.get("/signup/manager")
+        self.assertEqual(signup_page.status_code, 200)
+        self.assertNotIn(b"Choose a plan", signup_page.data)
+        self.assertNotIn(b"Billing email", signup_page.data)
+
+        first_id = self.register_hotel(
+            client, "Hotel ID First", "hotel-id-first",
+            "16 Market Road", "Lagos", "Lagos",
+        )
+        second_client = self.app_module.app.test_client()
+        second_id = self.register_hotel(
+            second_client, "Hotel ID Second", "hotel-id-second",
+            "17 Market Road", "Abuja", "Federal Capital Territory",
         )
         with self.app_module.app.app_context():
-            expired_at = (
-                self.app_module.datetime.now(
-                    self.app_module.timezone.utc
-                ) - timedelta(seconds=1)
-            ).isoformat()
-            self.app_module.get_db().execute(
-                "UPDATE hotel_subscriptions SET trial_ends_at = ? WHERE hotel_id = ?",
-                (expired_at, hotel_id),
-            )
-            self.app_module.get_db().commit()
-            self.assertFalse(
-                self.app_module.subscription_access(hotel_id)["allowed"]
-            )
+            first_number = self.app_module.hotel_details(first_id)["hotel_number"]
+            second_number = self.app_module.hotel_details(second_id)["hotel_number"]
+        self.assertEqual(second_number, first_number + 1)
+        self.assertEqual(
+            client.post("/billing/subscribe").status_code,
+            405,
+        )
 
+    def test_expired_legacy_subscription_does_not_block_staff_access(self):
+        client = self.app_module.app.test_client()
+        hotel_id = self.register_hotel(
+            client, "Legacy Expired Hotel", "legacy-expired",
+            "18 Market Road", "Lagos", "Lagos",
+        )
+        with self.app_module.app.app_context():
+            db = self.app_module.get_db()
+            db.execute(
+                """INSERT INTO hotel_subscriptions
+                (hotel_id, plan, status, trial_ends_at, updated_at)
+                VALUES (?, 'trial', 'expired', '2000-01-01T00:00:00+00:00', ?)""",
+                (hotel_id, self.app_module.now_iso()),
+            )
+            db.commit()
+
+        public_directory = self.app_module.app.test_client().get("/book-legacy")
+        self.assertIn(b"Legacy Expired Hotel", public_directory.data)
         for role in ("manager", "director", "reception"):
             with self.subTest(role=role):
                 with client.session_transaction() as current_session:
                     current_session["user_role"] = role
                     current_session["hotel_id"] = hotel_id
                 response = client.get(f"/workspace/{role}/dashboard")
-                self.assertEqual(
-                    response.status_code, 302,
-                    f"{role}: expected billing redirect, got {response.status_code} "
-                    f"at {response.request.path} -> {response.headers.get('Location')}",
-                )
-                self.assertEqual(response.headers["Location"], "/billing")
+                self.assertEqual(response.status_code, 200)
 
-        response = client.get("/billing")
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Subscription required", response.data)
         with client.session_transaction() as current_session:
             current_session["user_role"] = "manager"
-        response = client.get("/signup/manager")
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.headers["Location"], "/billing")
-
-    def test_existing_hotel_manager_can_opt_in_from_plan_and_billing(self):
-        client = self.app_module.app.test_client()
-        hotel_id = self.register_hotel(
-            client, "Existing Account Hotel", "existing-account",
-            "12 Market Road", "Lagos", "Lagos",
-        )
-        with self.app_module.app.app_context():
-            self.app_module.get_db().execute(
-                "DELETE FROM hotel_subscriptions WHERE hotel_id = ?",
-                (hotel_id,),
-            )
-            self.app_module.get_db().commit()
-
-        response = client.get("/billing")
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(b"grandfathered", response.data)
-        self.assertIn(b"Pay monthly with Paystack", response.data)
-        self.assertIn(b"Pay annually with Paystack", response.data)
-        with self.app_module.app.app_context():
-            subscription = self.app_module.subscription_record(hotel_id)
-        self.assertEqual(subscription["status"], "legacy")
-        self.assertEqual(subscription["billing_email"], "")
-
-    def test_expired_hotel_is_hidden_and_public_booking_is_rejected(self):
-        manager = self.app_module.app.test_client()
-        hotel_id = self.register_hotel(
-            manager, "Expired Online Hotel", "expired-online",
-            "13 Market Road", "Lagos", "Lagos",
-        )
-        self.configure_online_booking(
-            manager, hotel_id, "Expired Listing", 50000
-        )
-        with self.app_module.app.app_context():
-            hotel = self.app_module.hotel_details(hotel_id)
-            expired_at = (
-                self.app_module.datetime.now(
-                    self.app_module.timezone.utc
-                ) - timedelta(seconds=1)
-            ).isoformat()
-            self.app_module.get_db().execute(
-                """UPDATE hotel_subscriptions SET trial_ends_at = ?
-                WHERE hotel_id = ?""",
-                (expired_at, hotel_id),
-            )
-            self.app_module.get_db().commit()
-
-        guest = self.app_module.app.test_client()
-        directory = guest.get("/book-legacy")
-        self.assertEqual(directory.status_code, 200)
-        self.assertNotIn(b"Expired Online Hotel", directory.data)
-        direct_hotel_page = guest.get(
-            "/book-legacy", query_string={"hotel": hotel["slug"]}
-        )
-        self.assertEqual(direct_hotel_page.status_code, 200)
-        self.assertNotIn(b"Expired Listing", direct_hotel_page.data)
-
-        api_rooms = guest.get(
-            f"/api/public/hotels/{hotel['slug']}/rooms",
-            query_string={
-                "check_in": (date.today() + timedelta(days=3)).isoformat(),
-                "check_out": (date.today() + timedelta(days=4)).isoformat(),
-            },
-        )
-        self.assertEqual(api_rooms.status_code, 404)
-
-        with guest.session_transaction() as guest_session:
-            csrf_token = guest_session["public_booking_csrf"]
-        check_in = (date.today() + timedelta(days=3)).isoformat()
-        check_out = (date.today() + timedelta(days=4)).isoformat()
-        response = guest.post("/book-legacy", data={
-            "csrf_token": csrf_token,
-            "hotel_id": hotel_id,
-            "hotel_slug": hotel["slug"],
-            "room_number": "101",
-            "check_in": check_in,
-            "check_out": check_out,
-            "guest_name": "Blocked Guest",
-            "email": "blocked@example.com",
-            "phone": "08000000000",
-        })
-        self.assertEqual(response.status_code, 200)
+        billing_redirect = client.get("/billing")
+        self.assertEqual(billing_redirect.status_code, 302)
         self.assertIn(
-            b"online booking is temporarily unavailable",
-            response.data,
+            "/workspace/manager/dashboard",
+            billing_redirect.headers["Location"],
         )
-        api_booking = guest.post(
-            "/api/public/bookings",
-            json={
-                "hotel_id": hotel_id,
-                "hotel_slug": hotel["slug"],
-                "room_number": "101",
-                "check_in": check_in,
-                "check_out": check_out,
-                "guest_name": "Blocked API Guest",
-                "email": "blocked-api@example.com",
-                "phone": "08000000000",
-            },
-        )
-        self.assertEqual(api_booking.status_code, 400)
-        self.assertIn(
-            "subscription is inactive",
-            api_booking.get_json()["error"],
-        )
-        with self.app_module.app.app_context():
-            reservation_count = self.app_module.get_db().execute(
-                "SELECT COUNT(*) FROM reservations WHERE hotel_id = ?",
-                (hotel_id,),
-            ).fetchone()[0]
-        self.assertEqual(reservation_count, 0)
 
     def test_flutter_public_api_search_room_and_booking_flow(self):
         manager = self.app_module.app.test_client()
@@ -819,6 +724,9 @@ class MultiHotelFlowTests(unittest.TestCase):
             manager, hotel_id, "Handoff Suite", 75000
         )
         with self.app_module.app.app_context():
+            hotel_number = self.app_module.hotel_details(hotel_id)[
+                "hotel_number"
+            ]
             self.app_module.get_db().execute(
                 """UPDATE rooms SET status = 'available'
                 WHERE hotel_id = ? AND number = '101'""",
@@ -924,7 +832,10 @@ class MultiHotelFlowTests(unittest.TestCase):
             controller_center = controller.get("/commandcenter")
             self.assertEqual(controller_center.status_code, 200)
             self.assertIn(b"<title>Haidware Command Center</title>", controller_center.data)
-            self.assertIn(b"across all hotels", controller_center.data)
+            self.assertIn(b"Registered hotels", controller_center.data)
+            self.assertIn(
+                f"HOTEL-{hotel_number:04d}".encode(), controller_center.data
+            )
             self.assertIn(b"Handoff Test Hotel", controller_center.data)
             self.assertIn(message.encode(), controller_center.data)
             self.assertIn(b"Other Hotel", controller_center.data)
@@ -1017,300 +928,6 @@ class MultiHotelFlowTests(unittest.TestCase):
 
         legacy_page = client.get("/book-legacy")
         self.assertEqual(legacy_page.status_code, 200)
-
-    def test_monthly_subscription_activates_only_after_paystack_verification(self):
-        client = self.app_module.app.test_client()
-        hotel_id = self.register_hotel(
-            client, "Paid Plan Hotel", "paid-plan",
-            "9 Market Road", "Lagos", "Lagos",
-        )
-        with self.app_module.app.app_context():
-            self.app_module.get_db().execute(
-                """UPDATE hotel_subscriptions SET plan = 'monthly',
-                status = 'pending', pending_plan = 'monthly' WHERE hotel_id = ?""",
-                (hotel_id,),
-            )
-            self.app_module.get_db().commit()
-        self.assertEqual(client.get("/billing").status_code, 200)
-        with client.session_transaction() as current_session:
-            csrf_token = current_session["billing_csrf_token"]
-        verification_amount = {"value": None}
-
-        def paystack_mock(path, method="GET", payload=None):
-            if path == "/transaction/initialize":
-                self.assertEqual(payload["amount"], 8_000_000)
-                self.assertEqual(payload["currency"], "NGN")
-                return {"authorization_url": "https://checkout.paystack.com/example"}
-            reference = path.rsplit("/", 1)[-1]
-            with self.app_module.app.app_context():
-                payment = self.app_module.get_db().execute(
-                    "SELECT * FROM hotel_subscription_payments WHERE reference = ?",
-                    (reference,),
-                ).fetchone()
-            return {
-                "status": "success",
-                "reference": reference,
-                "amount": verification_amount["value"] or payment["amount"],
-                "currency": "NGN",
-                "id": 987654,
-            }
-
-        with patch.object(self.app_module, "paystack_request", side_effect=paystack_mock):
-            response = client.post("/billing/subscribe", data={
-                "csrf_token": csrf_token,
-                "plan": "monthly",
-            })
-            self.assertEqual(response.status_code, 303)
-            self.assertEqual(
-                response.headers["Location"],
-                "https://checkout.paystack.com/example",
-            )
-            with self.app_module.app.app_context():
-                payment = self.app_module.get_db().execute(
-                    """SELECT * FROM hotel_subscription_payments
-                    WHERE hotel_id = ?""",
-                    (hotel_id,),
-                ).fetchone()
-            self.assertEqual(payment["status"], "pending")
-            reference = payment["reference"]
-            verification_amount["value"] = payment["amount"] - 1
-            rejected_callback = client.get(
-                "/billing/paystack/callback?reference=" + reference
-            )
-            self.assertEqual(rejected_callback.status_code, 302)
-            with self.app_module.app.app_context():
-                payment = self.app_module.get_db().execute(
-                    "SELECT status FROM hotel_subscription_payments WHERE reference = ?",
-                    (reference,),
-                ).fetchone()
-            self.assertEqual(payment["status"], "pending")
-            verification_amount["value"] = None
-            callback = client.get(
-                "/billing/paystack/callback?reference=" + reference
-            )
-
-        self.assertEqual(callback.status_code, 302)
-        with self.app_module.app.app_context():
-            payment = self.app_module.get_db().execute(
-                "SELECT status FROM hotel_subscription_payments WHERE reference = ?",
-                (reference,),
-            ).fetchone()
-            subscription = self.app_module.subscription_record(hotel_id)
-            self.assertTrue(
-                self.app_module.subscription_access(hotel_id)["allowed"]
-            )
-        self.assertEqual(payment["status"], "paid")
-        self.assertEqual(subscription["status"], "active")
-
-    def test_annual_subscription_uses_annual_price_and_term(self):
-        client = self.app_module.app.test_client()
-        hotel_id = self.register_hotel(
-            client, "Annual Plan Hotel", "annual-plan",
-            "10 Market Road", "Lagos", "Lagos",
-        )
-        with self.app_module.app.app_context():
-            self.app_module.get_db().execute(
-                """UPDATE hotel_subscriptions SET plan = 'annual',
-                status = 'pending', pending_plan = 'annual' WHERE hotel_id = ?""",
-                (hotel_id,),
-            )
-            self.app_module.get_db().commit()
-        self.assertEqual(client.get("/billing").status_code, 200)
-        with client.session_transaction() as current_session:
-            csrf_token = current_session["billing_csrf_token"]
-
-        def paystack_mock(path, method="GET", payload=None):
-            if path == "/transaction/initialize":
-                self.assertEqual(payload["amount"], 80_000_000)
-                return {"authorization_url": "https://checkout.paystack.com/annual"}
-            reference = path.rsplit("/", 1)[-1]
-            with self.app_module.app.app_context():
-                payment = self.app_module.get_db().execute(
-                    "SELECT amount FROM hotel_subscription_payments WHERE reference = ?",
-                    (reference,),
-                ).fetchone()
-            return {
-                "status": "success",
-                "reference": reference,
-                "amount": payment["amount"],
-                "currency": "NGN",
-                "id": 987655,
-            }
-
-        with patch.object(self.app_module, "paystack_request", side_effect=paystack_mock):
-            response = client.post("/billing/subscribe", data={
-                "csrf_token": csrf_token,
-                "plan": "annual",
-            })
-            self.assertEqual(response.status_code, 303)
-            with self.app_module.app.app_context():
-                reference = self.app_module.get_db().execute(
-                    """SELECT reference FROM hotel_subscription_payments
-                    WHERE hotel_id = ?""",
-                    (hotel_id,),
-                ).fetchone()["reference"]
-            response = client.get(
-                "/billing/paystack/callback?reference=" + reference
-            )
-        self.assertEqual(response.status_code, 302)
-        with self.app_module.app.app_context():
-            subscription = self.app_module.subscription_record(hotel_id)
-            paid_until = self.app_module.datetime.fromisoformat(
-                subscription["paid_until"]
-            )
-            now = self.app_module.datetime.now(self.app_module.timezone.utc)
-            self.assertGreaterEqual((paid_until - now).days, 364)
-            self.assertLessEqual((paid_until - now).days, 365)
-
-    def test_paystack_webhook_requires_valid_signature(self):
-        client = self.app_module.app.test_client()
-        payload = b'{"event":"verification.ping","data":{}}'
-        with patch.dict(
-            self.app_module.os.environ,
-            {"PAYSTACK_SECRET_KEY": "webhook-test-secret"},
-        ):
-            response = client.post(
-                "/billing/paystack/webhook",
-                data=payload,
-                headers={"x-paystack-signature": "invalid"},
-            )
-            self.assertEqual(response.status_code, 401)
-            signature = self.app_module.hmac.new(
-                b"webhook-test-secret",
-                payload,
-                self.app_module.hashlib.sha512,
-            ).hexdigest()
-            response = client.post(
-                "/billing/paystack/webhook",
-                data=payload,
-                headers={"x-paystack-signature": signature},
-            )
-        self.assertEqual(response.status_code, 200)
-
-    def test_paystack_http_errors_include_provider_message(self):
-        error = self.app_module.HTTPError(
-            "https://api.paystack.co/transaction/initialize",
-            403,
-            "Forbidden",
-            {},
-            BytesIO(json.dumps({
-                "status": False,
-                "message": "Payment initialization is not permitted.",
-                "code": "forbidden",
-            }).encode("utf-8")),
-        )
-        with patch.dict(
-            self.app_module.os.environ,
-            {"PAYSTACK_SECRET_KEY": "sk_live_diagnostic"},
-        ), patch.object(
-            self.app_module, "urlopen", side_effect=error
-        ) as mocked_urlopen:
-            with self.assertRaisesRegex(
-                ValueError,
-                "Payment initialization is not permitted",
-            ):
-                self.app_module.paystack_request(
-                    "/transaction/initialize",
-                    "POST",
-                    {"email": "manager@example.com"},
-                )
-        request_headers = {
-            name.lower(): value
-            for name, value in mocked_urlopen.call_args.args[0].header_items()
-        }
-        self.assertEqual(
-            request_headers["user-agent"],
-            "HAIDWARE-LabimBookingOS/1.0 "
-            "(Paystack API client; Labim Booking OS)",
-        )
-
-    def test_paystack_cloudflare_block_error_is_reported(self):
-        cloudflare_error = self.app_module.HTTPError(
-            "https://api.paystack.co/transaction/initialize",
-            403,
-            "Forbidden",
-            {},
-            BytesIO(json.dumps({
-                "type": "https://developers.cloudflare.com/support/",
-                "title": "Error 1010: Access denied",
-                "status": 403,
-                "detail": "The site owner has blocked access based on your browser's signature.",
-                "error_code": 1010,
-                "error_name": "browser_signature_banned",
-            }).encode("utf-8")),
-        )
-        with patch.dict(
-            self.app_module.os.environ,
-            {"PAYSTACK_SECRET_KEY": "sk_live_diagnostic"},
-        ), patch.object(
-            self.app_module, "urlopen", side_effect=cloudflare_error
-        ):
-            with self.assertRaisesRegex(
-                ValueError,
-                "1010.*browser_signature_banned",
-            ):
-                self.app_module.paystack_request(
-                    "/transaction/initialize",
-                    "POST",
-                    {"email": "manager@example.com"},
-                )
-
-    def test_paid_signup_redirects_to_matching_paystack_checkout(self):
-        for plan, amount in (("monthly", 8_000_000), ("annual", 80_000_000)):
-            with self.subTest(plan=plan):
-                client = self.app_module.app.test_client()
-                suffix = f"signup-{plan}"
-
-                def paystack_mock(path, method="GET", payload=None):
-                    self.assertEqual(path, "/transaction/initialize")
-                    self.assertEqual(payload["amount"], amount)
-                    self.assertEqual(payload["email"], f"billing-{suffix}@example.com")
-                    return {
-                        "authorization_url":
-                            f"https://checkout.paystack.com/{plan}"
-                    }
-
-                form_data = {
-                    "hotel_name": f"Signup {plan.title()} Hotel",
-                    "hotel_address": "11 Market Road",
-                    "hotel_city": "Lagos",
-                    "hotel_state": "Lagos",
-                    "billing_email": f"billing-{suffix}@example.com",
-                    "plan": plan,
-                    "manager_username": f"manager-{suffix}",
-                    "manager_password": "ManagerPass123!",
-                    "director_username": f"director-{suffix}",
-                    "director_password": "DirectorPass123!",
-                    "reception_username": f"reception-{suffix}",
-                    "reception_password": "ReceptionPass123!",
-                }
-                with patch.object(
-                    self.app_module, "paystack_request",
-                    side_effect=paystack_mock,
-                ):
-                    response = client.post("/signup/manager", data=form_data)
-                self.assertEqual(response.status_code, 303)
-                self.assertEqual(
-                    response.headers["Location"],
-                    f"https://checkout.paystack.com/{plan}",
-                )
-                with self.app_module.app.app_context():
-                    subscription = self.app_module.get_db().execute(
-                        """SELECT status, pending_plan, pending_reference
-                        FROM hotel_subscriptions
-                        WHERE billing_email = ?""",
-                        (form_data["billing_email"],),
-                    ).fetchone()
-                    payment = self.app_module.get_db().execute(
-                        """SELECT plan, amount, status
-                        FROM hotel_subscription_payments WHERE reference = ?""",
-                        (subscription["pending_reference"],),
-                    ).fetchone()
-                self.assertEqual(subscription["status"], "pending")
-                self.assertEqual(subscription["pending_plan"], plan)
-                self.assertEqual(payment["plan"], plan)
-                self.assertEqual(payment["amount"], amount)
-                self.assertEqual(payment["status"], "pending")
 
     def test_signup_guest_selection_booking_and_staff_isolation(self):
         hotel_one_manager = self.app_module.app.test_client()
