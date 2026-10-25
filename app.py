@@ -2333,12 +2333,9 @@ def require_workspace_login():
     }:
         return None
     if endpoint == "command_center":
-        role = session.get("user_role")
-        if role not in {"director", "controller"}:
+        if session.get("user_role") != "controller":
             return redirect(url_for("login", role="controller"))
-        if role == "director" and not session.get("hotel_id"):
-            return redirect(url_for("login", role="director"))
-        required_role = "director" if role == "director" else None
+        required_role = None
     elif request.path.startswith("/workspace/"):
         required_role = (request.view_args or {}).get("role")
         if required_role is None:
@@ -2889,15 +2886,9 @@ def online_booking_confirmation():
 
 @app.get("/commandcenter")
 def command_center():
-    is_controller = session.get("user_role") == "controller"
-    hotel_id = None if is_controller else current_hotel_id()
-    hotel = hotel_details(hotel_id) if hotel_id else None
     return render_template(
-        "reference_workspace.html",
-        role="controller" if is_controller else "director",
-        page="commandcenter",
-        hotel_name=hotel["name"] if hotel else "All Hotels",
-        handoff_events=recent_whatsapp_handoffs(hotel_id),
+        "command_center.html",
+        handoff_events=recent_whatsapp_handoffs(),
     )
 
 

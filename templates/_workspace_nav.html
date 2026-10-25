@@ -1,9 +1,6 @@
 <nav class="header-nav">
-  {% if role == 'controller' %}
-    <a href="{{ url_for('command_center') }}" aria-current="page"><svg class="header-icon" aria-hidden="true"><use href="#icon-online"></use></svg>Haidware Command Center</a>
-  {% elif role == 'director' %}
+  {% if role == 'director' %}
     <a href="{{ url_for('reference_workspace', role=role, page='dashboard') }}" {% if page == 'dashboard' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-hotel"></use></svg>Dashboard</a>
-    <a href="{{ url_for('command_center') }}" {% if page == 'commandcenter' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-online"></use></svg>Haidware Command Center</a>
     <a href="{{ url_for('reference_workspace', role=role, page='rooms') }}" {% if page == 'rooms' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-rooms"></use></svg>Rooms</a>
     <a href="{{ url_for('reference_workspace', role=role, page='finance') }}" {% if page == 'finance' %}aria-current="page"{% endif %}><svg class="header-icon" aria-hidden="true"><use href="#icon-finance"></use></svg>Finance</a>
   {% elif role == 'manager' %}

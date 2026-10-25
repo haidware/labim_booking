@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Haidware Command Center</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='icons.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='workspace_nav.css') }}">
+</head>
+<body class="reference-app">
+  {% include '_icons.html' %}
+  <header class="reference-header">
+    <div>
+      <strong><span class="brand-prefix">HAIDWARE</span> <span class="brand-title">COMMAND CENTER</span></strong>
+      <span>Platform Operations</span>
+      <small>Haidware Controller</small>
+    </div>
+    <nav class="header-nav">
+      <a href="{{ url_for('logout') }}"><svg class="header-icon" aria-hidden="true"><use href="#icon-logout"></use></svg>Log Out</a>
+    </nav>
+  </header>
+  <div class="reference-layout">
+    <main class="reference-main">
+      <h1>Haidware Command Center</h1>
+      <p>WhatsApp payment-confirmation handoffs across all hotels.</p>
+      <section class="data-panel">
+        <div class="panel-heading">
+          <strong>WhatsApp handoff activity</strong>
+          <small>Opening WhatsApp is recorded; message delivery is not verified.</small>
+        </div>
+        {% if handoff_events %}
+        <div class="table-wrap"><table>
+          <thead><tr><th>Requested</th><th>Hotel</th><th>Reference</th><th>Guest</th><th>Status</th><th>Prefilled WhatsApp message</th></tr></thead>
+          <tbody>{% for event in handoff_events %}
+          <tr>
+            <td>{{ event.created_at }}</td>
+            <td>{{ event.hotel_name }}</td>
+            <td>{{ event.reservation_id }}</td>
+            <td>{{ event.guest_name }}</td>
+            <td>WhatsApp handoff requested</td>
+            <td><pre class="whatsapp-handoff-message">{{ event.message_text }}</pre></td>
+          </tr>
+          {% endfor %}</tbody>
+        </table></div>
+        {% else %}
+        <p class="empty-state">No WhatsApp handoffs have been recorded yet.</p>
+        {% endif %}
+      </section>
+    </main>
+  </div>
+</body>
+</html>

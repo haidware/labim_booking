@@ -809,7 +809,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertIn("attach receipt", whatsapp_message)
         send_reception_email.assert_called_once()
 
-    def test_whatsapp_handoff_logs_message_and_is_director_scoped(self):
+    def test_whatsapp_handoff_command_center_is_controller_only(self):
         manager = self.app_module.app.test_client()
         hotel_id = self.register_hotel(
             manager, "Handoff Test Hotel", "handoff",
@@ -889,11 +889,11 @@ class MultiHotelFlowTests(unittest.TestCase):
         })
         self.assertEqual(login_response.status_code, 302)
         command_center = director.get("/commandcenter")
-        self.assertEqual(command_center.status_code, 200)
-        self.assertIn(b"Haidware Command Center", command_center.data)
-        self.assertIn(b"WhatsApp handoff requested", command_center.data)
-        self.assertIn(message.encode(), command_center.data)
-        self.assertNotIn(b"private other message", command_center.data)
+        self.assertEqual(command_center.status_code, 302)
+        self.assertIn("/login/controller", command_center.headers["Location"])
+        director_dashboard = director.get("/workspace/director/dashboard")
+        self.assertEqual(director_dashboard.status_code, 200)
+        self.assertNotIn(b"Haidware Command Center", director_dashboard.data)
 
         unauthenticated = self.app_module.app.test_client().get("/commandcenter")
         self.assertEqual(unauthenticated.status_code, 302)
@@ -923,10 +923,14 @@ class MultiHotelFlowTests(unittest.TestCase):
             self.assertIn("/commandcenter", controller_login.headers["Location"])
             controller_center = controller.get("/commandcenter")
             self.assertEqual(controller_center.status_code, 200)
+            self.assertIn(b"<title>Haidware Command Center</title>", controller_center.data)
             self.assertIn(b"across all hotels", controller_center.data)
             self.assertIn(b"Handoff Test Hotel", controller_center.data)
+            self.assertIn(message.encode(), controller_center.data)
             self.assertIn(b"Other Hotel", controller_center.data)
             self.assertIn(b"private other message", controller_center.data)
+            self.assertNotIn(b"Operational Overview", controller_center.data)
+            self.assertNotIn(b"Director Dashboard", controller_center.data)
             with controller.session_transaction() as controller_session:
                 self.assertEqual(controller_session["user_role"], "controller")
                 self.assertNotIn("hotel_id", controller_session)
