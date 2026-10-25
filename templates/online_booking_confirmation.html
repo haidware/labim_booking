@@ -6,6 +6,7 @@
   <title>Payment Instructions · {{ confirmation.hotel_name }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='reference.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='hotel-location.css') }}">
 </head>
 <body class="public-booking-page">
   <header class="public-booking-header"><a href="{{ url_for('home') }}">HAIDWARE HOTEL BOOKING</a><span>{{ confirmation.hotel_name }} · Booking request</span></header>
@@ -25,14 +26,19 @@
         <dt>Account name</dt><dd>{{ confirmation.account_name }}</dd>
         <dt>Account number</dt><dd>{{ confirmation.account_number }}</dd>
       </dl>
-      <p>After you transfer, message Reception on WhatsApp with the booking reference and payment information. Reception will verify the transfer before confirming your reservation.</p>
+      <p>After transferring, enter the name and account number of the bank account you paid from. The confirmation will be recorded for the hotel and included in your WhatsApp message.</p>
       {% if confirmation.email_notification_sent %}
       <p>A booking notification has been emailed to the hotel’s Reception team.</p>
       {% else %}
       <p class="account-error">Your request is held, but the hotel could not be notified by email. Please message Reception on WhatsApp to alert them.</p>
       {% endif %}
-      <p>Opening WhatsApp will log this message in the Haidware Command Center. WhatsApp does not tell us whether you press Send.</p>
-      <a class="primary-button" href="{{ confirmation.whatsapp_handoff_url }}" target="_blank" rel="noopener noreferrer">Confirm payment on WhatsApp</a>
+      {% if handoff_error %}<p class="account-error">{{ handoff_error }}</p>{% endif %}
+      <form class="public-guest-details" method="post" action="{{ confirmation.whatsapp_handoff_url }}" target="_blank">
+        <label>Sender’s bank account name<input name="payer_account_name" maxlength="160" autocomplete="name" required></label>
+        <label>Sender’s bank account number<input name="payer_account_number" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" autocomplete="off" required></label>
+        <p>Clicking Confirm payment records your report in the Haidware Command Center and opens WhatsApp. The hotel must still reconcile it against its bank statement; WhatsApp does not confirm message delivery.</p>
+        <button class="primary-button" type="submit">Confirm payment on WhatsApp</button>
+      </form>
       <p><a href="{{ url_for('home', hotel=confirmation.hotel_slug) }}">Return to room search</a></p>
     </section>
   </main>

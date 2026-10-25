@@ -272,5 +272,28 @@ class BookingApi {
     );
   }
 
+  Future<String> reportPayment({
+    required BookingConfirmation confirmation,
+    required String payerAccountName,
+    required String payerAccountNumber,
+  }) async {
+    final response = await _client.post(
+      Uri.parse(confirmation.whatsappHandoffUrl),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'payer_account_name': payerAccountName,
+        'payer_account_number': payerAccountNumber,
+      }),
+    );
+    final result = _decode(response);
+    final whatsappUrl = result['whatsapp_url']?.toString() ?? '';
+    if (whatsappUrl.isEmpty) {
+      throw const BookingApiException(
+        'The payment report was recorded, but the WhatsApp link is unavailable.',
+      );
+    }
+    return whatsappUrl;
+  }
+
   void dispose() => _client.close();
 }

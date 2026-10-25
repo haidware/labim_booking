@@ -777,17 +777,44 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(booking_result["hotel_name"], "Flutter API Hotel")
         self.assertEqual(booking_result["amount"], 75000)
         self.assertEqual(booking_result["bank_name"], "API Suite Bank")
-        self.assertTrue(booking_result["whatsapp_url"].startswith("https://wa.me/"))
-        whatsapp_message = parse_qs(
-            urlparse(booking_result["whatsapp_url"]).query
-        )["text"][0]
+        self.assertIn(
+            "/api/public/whatsapp-handoff?token=",
+            booking_result["whatsapp_handoff_url"],
+        )
+        self.assertNotIn("whatsapp_url", booking_result)
+        handoff_url = urlparse(booking_result["whatsapp_handoff_url"])
+        handoff_response = guest.post(
+            handoff_url.path + "?" + handoff_url.query,
+            json={
+                "payer_account_name": "Flutter Sender",
+                "payer_account_number": "1234567890",
+            },
+        )
+        self.assertEqual(handoff_response.status_code, 200)
+        whatsapp_url = handoff_response.get_json()["whatsapp_url"]
+        self.assertTrue(whatsapp_url.startswith("https://wa.me/"))
+        whatsapp_message = parse_qs(urlparse(whatsapp_url).query)["text"][0]
         self.assertIn("Booking reference:", whatsapp_message)
         self.assertIn("Flutter API Hotel", whatsapp_message)
         self.assertIn("Flutter Guest", whatsapp_message)
         self.assertIn("API Suite (", whatsapp_message)
-        self.assertIn("Amount transferred: NGN 75,000", whatsapp_message)
-        self.assertIn("verify the payment and confirm my booking", whatsapp_message)
-        self.assertIn("attach receipt", whatsapp_message)
+        self.assertIn("Sender account name: Flutter Sender", whatsapp_message)
+        self.assertIn("Sender account number: 1234567890", whatsapp_message)
+        self.assertIn("Amount reported paid: NGN 75,000", whatsapp_message)
+        self.assertIn("verify the payment against the bank statement", whatsapp_message)
+        with self.app_module.app.app_context():
+            event = self.app_module.get_db().execute(
+                """SELECT hotel_id, payer_account_name, payer_account_number,
+                amount, status, message_text FROM whatsapp_handoff_events
+                WHERE reservation_id = ?""",
+                (booking_result["reference"],),
+            ).fetchone()
+            self.assertEqual(event["hotel_id"], hotel_id)
+            self.assertEqual(event["payer_account_name"], "Flutter Sender")
+            self.assertEqual(event["payer_account_number"], "1234567890")
+            self.assertEqual(event["amount"], 75000)
+            self.assertEqual(event["status"], "payment_reported")
+            self.assertEqual(event["message_text"], whatsapp_message)
         send_reception_email.assert_called_once()
 
     def test_whatsapp_handoff_command_center_is_controller_only(self):
@@ -835,27 +862,70 @@ class MultiHotelFlowTests(unittest.TestCase):
         )
         handoff_url = urlparse(booking["whatsapp_handoff_url"])
 
-        invalid_response = guest.get(
-            handoff_url.path + "?token=invalid-token"
+        invalid_response = guest.post(
+            handoff_url.path + "?token=invalid-token",
+            json={
+                "payer_account_name": "Handoff Sender",
+                "payer_account_number": "1234567890",
+            },
         )
         self.assertEqual(invalid_response.status_code, 403)
         with self.app_module.app.app_context():
             self.assertEqual(
                 self.app_module.get_db().execute(
-                    "SELECT COUNT(*) FROM whatsapp_handoff_events"
+                    """SELECT COUNT(*) FROM whatsapp_handoff_events
+                    WHERE reservation_id = ?""",
+                    (booking["reference"],),
                 ).fetchone()[0],
                 0,
             )
 
-        handoff_response = guest.get(
-            handoff_url.path + "?" + handoff_url.query
+        missing_details = guest.post(
+            handoff_url.path + "?" + handoff_url.query,
+            json={
+                "payer_account_name": "",
+                "payer_account_number": "1234567890",
+            },
         )
-        self.assertEqual(handoff_response.status_code, 302)
-        self.assertEqual(
-            handoff_response.headers["Location"], booking["whatsapp_url"]
+        self.assertEqual(missing_details.status_code, 400)
+        invalid_account_number = guest.post(
+            handoff_url.path + "?" + handoff_url.query,
+            json={
+                "payer_account_name": "Handoff Sender",
+                "payer_account_number": "12345",
+            },
         )
-        message = parse_qs(urlparse(booking["whatsapp_url"]).query)["text"][0]
+        self.assertEqual(invalid_account_number.status_code, 400)
         with self.app_module.app.app_context():
+            self.assertEqual(
+                self.app_module.get_db().execute(
+                    """SELECT COUNT(*) FROM whatsapp_handoff_events
+                    WHERE reservation_id = ?""",
+                    (booking["reference"],),
+                ).fetchone()[0],
+                0,
+            )
+        handoff_response = guest.post(
+            handoff_url.path + "?" + handoff_url.query,
+            json={
+                "payer_account_name": "Handoff Sender",
+                "payer_account_number": "1234567890",
+            },
+        )
+        self.assertEqual(handoff_response.status_code, 200)
+        whatsapp_url = handoff_response.get_json()["whatsapp_url"]
+        self.assertTrue(whatsapp_url.startswith("https://wa.me/"))
+        message = parse_qs(urlparse(whatsapp_url).query)["text"][0]
+        self.assertIn("Sender account name: Handoff Sender", message)
+        with self.app_module.app.app_context():
+            event = self.app_module.get_db().execute(
+                """SELECT hotel_id, amount, status FROM whatsapp_handoff_events
+                WHERE reservation_id = ?""",
+                (booking["reference"],),
+            ).fetchone()
+            self.assertEqual(event["hotel_id"], hotel_id)
+            self.assertEqual(event["amount"], 75000)
+            self.assertEqual(event["status"], "payment_reported")
             self.app_module.get_db().execute(
                 """INSERT INTO whatsapp_handoff_events
                 (hotel_id, reservation_id, hotel_name, guest_name, message_text,
@@ -917,8 +987,22 @@ class MultiHotelFlowTests(unittest.TestCase):
             )
             self.assertIn(b"Handoff Test Hotel", controller_center.data)
             self.assertIn(message.encode(), controller_center.data)
+            self.assertIn(b"Sender account name", controller_center.data)
+            self.assertIn(b"Payment reported", controller_center.data)
             self.assertIn(b"Other Hotel", controller_center.data)
             self.assertIn(b"private other message", controller_center.data)
+            self.assertIn(
+                b"/commandcenter/payment-reports.csv?month=",
+                controller_center.data,
+            )
+            monthly_export = controller.get(
+                "/commandcenter/payment-reports.csv",
+                query_string={"month": date.today().strftime("%Y-%m")},
+            )
+            self.assertEqual(monthly_export.status_code, 200)
+            self.assertIn(b"Sender account name", monthly_export.data)
+            self.assertIn(b"Handoff Sender", monthly_export.data)
+            self.assertIn(b"75000", monthly_export.data)
             self.assertNotIn(b"Operational Overview", controller_center.data)
             self.assertNotIn(b"Director Dashboard", controller_center.data)
             with controller.session_transaction() as controller_session:
@@ -1176,6 +1260,31 @@ class MultiHotelFlowTests(unittest.TestCase):
             b"/api/public/whatsapp-handoff?token=",
             confirmation.data,
         )
+        self.assertIn(b"payer_account_name", confirmation.data)
+        self.assertIn(b"payer_account_number", confirmation.data)
+        self.assertIn(b"required", confirmation.data)
+        with guest.session_transaction() as guest_session:
+            payment_handoff_url = urlparse(
+                guest_session["online_booking_confirmation"][
+                    "whatsapp_handoff_url"
+                ]
+            )
+        payment_report = guest.post(
+            payment_handoff_url.path + "?" + payment_handoff_url.query,
+            data={
+                "payer_account_name": "Guest Two Sender",
+                "payer_account_number": "0987654321",
+            },
+        )
+        self.assertEqual(payment_report.status_code, 302)
+        self.assertTrue(
+            payment_report.headers["Location"].startswith("https://wa.me/")
+        )
+        payment_message = parse_qs(
+            urlparse(payment_report.headers["Location"]).query
+        )["text"][0]
+        self.assertIn("Sender account name: Guest Two Sender", payment_message)
+        self.assertIn("Sender account number: 0987654321", payment_message)
 
         with self.app_module.app.app_context():
             booking = self.app_module.get_db().execute(
@@ -1190,6 +1299,17 @@ class MultiHotelFlowTests(unittest.TestCase):
                 ).fetchone()["hotel_id"],
                 hotel_two_id,
             )
+            report = self.app_module.get_db().execute(
+                """SELECT hotel_id, payer_account_name, payer_account_number,
+                amount, status FROM whatsapp_handoff_events
+                WHERE reservation_id = ?""",
+                (booking["id"],),
+            ).fetchone()
+            self.assertEqual(report["hotel_id"], hotel_two_id)
+            self.assertEqual(report["payer_account_name"], "Guest Two Sender")
+            self.assertEqual(report["payer_account_number"], "0987654321")
+            self.assertEqual(report["amount"], 90000)
+            self.assertEqual(report["status"], "payment_reported")
 
         response = reception.post(
             f"/online-bookings/{booking['id']}/confirm"

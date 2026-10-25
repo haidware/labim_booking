@@ -103,7 +103,12 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   final TextEditingController _guestNameController = TextEditingController();
   final TextEditingController _guestEmailController = TextEditingController();
   final TextEditingController _guestPhoneController = TextEditingController();
+  final TextEditingController _payerAccountNameController =
+      TextEditingController();
+  final TextEditingController _payerAccountNumberController =
+      TextEditingController();
   final GlobalKey<FormState> _guestFormKey = GlobalKey<FormState>();
+  final GlobalKey<FormState> _paymentFormKey = GlobalKey<FormState>();
   final DateFormat _dateLabel = DateFormat('d MMM yyyy');
   final NumberFormat _naira = NumberFormat.currency(
     locale: 'en_NG',
@@ -125,7 +130,9 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   bool _loadingHotels = true;
   bool _loadingRooms = false;
   bool _submittingBooking = false;
+  bool _submittingPaymentReport = false;
   bool _previewBookingComplete = false;
+  String? _paymentWhatsappUrl;
   String? _error;
 
   bool get _isApartmentPreview => widget.apartmentPreview;
@@ -156,6 +163,8 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
     _guestNameController.dispose();
     _guestEmailController.dispose();
     _guestPhoneController.dispose();
+    _payerAccountNameController.dispose();
+    _payerAccountNumberController.dispose();
     super.dispose();
   }
 
@@ -356,15 +365,56 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   }
 
   void _backToHotels() {
+    _payerAccountNameController.clear();
+    _payerAccountNumberController.clear();
     setState(() {
       _selectedHotel = null;
       _selectedRoom = null;
       _rooms = const [];
       _confirmation = null;
       _previewBookingComplete = false;
+      _paymentWhatsappUrl = null;
       _error = null;
     });
     _loadHotels();
+  }
+
+  Future<void> _confirmPayment(BookingConfirmation confirmation) async {
+    if (_paymentWhatsappUrl == null &&
+        !_paymentFormKey.currentState!.validate()) {
+      return;
+    }
+    setState(() {
+      _submittingPaymentReport = true;
+      _error = null;
+    });
+    try {
+      _paymentWhatsappUrl ??= await _api.reportPayment(
+        confirmation: confirmation,
+        payerAccountName: _payerAccountNameController.text.trim(),
+        payerAccountNumber: _payerAccountNumberController.text.trim(),
+      );
+      final uri = Uri.tryParse(_paymentWhatsappUrl!);
+      if (uri == null ||
+          !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        if (mounted) {
+          setState(() {
+            _error =
+                'Your payment report is recorded. WhatsApp could not be opened; tap again to retry.';
+          });
+        }
+      }
+    } on BookingApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _error = 'Could not record the payment report. Please retry.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submittingPaymentReport = false);
+    }
   }
 
   String _isoDate(DateTime date) =>
@@ -1298,25 +1348,67 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                 const _InfoNote(
                   icon: Icons.info_outline_rounded,
                   text:
-                      'Opening WhatsApp logs the prefilled message in the hotel’s Haidware Command Center. '
-                      'WhatsApp does not confirm whether you send it.',
+                      'Enter the name and account number of the bank account you paid from. '
+                      'Your payment report will be saved for the hotel before WhatsApp opens.',
                 ),
                 const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: () async {
-                    final uri = Uri.tryParse(confirmation.whatsappHandoffUrl);
-                    if (uri == null || !await launchUrl(uri)) {
-                      if (mounted) {
-                        setState(() => _error = 'Could not open WhatsApp. Please retry.');
-                      }
-                    }
-                  },
-                  icon: const Icon(Icons.chat_rounded),
-                  label: const Text('Confirm payment on WhatsApp'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF208A62),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 15),
+                Form(
+                  key: _paymentFormKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextFormField(
+                        controller: _payerAccountNameController,
+                        maxLength: 160,
+                        textCapitalization: TextCapitalization.words,
+                        decoration: const InputDecoration(
+                          labelText: 'Sender’s bank account name',
+                          counterText: '',
+                        ),
+                        validator: (value) =>
+                            value == null || value.trim().isEmpty
+                            ? 'Enter the sender’s bank account name'
+                            : null,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _payerAccountNumberController,
+                        maxLength: 10,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(10),
+                        ],
+                        decoration: const InputDecoration(
+                          labelText: 'Sender’s bank account number',
+                          counterText: '',
+                        ),
+                        validator: (value) =>
+                            value == null ||
+                                !RegExp(r'^\d{10}$').hasMatch(value.trim())
+                            ? 'Enter the sender account number as 10 digits'
+                            : null,
+                      ),
+                      const SizedBox(height: 16),
+                      if (_error != null) _ErrorBanner(message: _error!),
+                      const SizedBox(height: 8),
+                      FilledButton.icon(
+                        onPressed: _submittingPaymentReport
+                            ? null
+                            : () => _confirmPayment(confirmation),
+                        icon: const Icon(Icons.chat_rounded),
+                        label: Text(
+                          _submittingPaymentReport
+                              ? 'Recording payment report…'
+                              : 'Confirm payment on WhatsApp',
+                        ),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFF208A62),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 10),

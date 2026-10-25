@@ -78,25 +78,35 @@
       </section>
       <section class="data-panel">
         <div class="panel-heading">
-          <strong>WhatsApp handoff activity</strong>
-          <small>Opening WhatsApp is recorded; message delivery is not verified.</small>
+          <div>
+            <strong>Guest payment reports</strong>
+            <small>Guest-reported payments are not bank-verified. Reconcile sender details, amount, and date against each hotel statement.</small>
+          </div>
+          <form method="get" action="{{ url_for('command_center') }}">
+            <label>Month <input type="month" name="month" value="{{ reporting_month }}" required></label>
+            <button class="secondary-button" type="submit">View month</button>
+            <a class="primary-button" href="{{ url_for('command_center_payment_reports', month=reporting_month) }}">Download CSV</a>
+          </form>
         </div>
         {% if handoff_events %}
         <div class="table-wrap"><table>
-          <thead><tr><th>Requested</th><th>Hotel</th><th>Reference</th><th>Guest</th><th>Status</th><th>Prefilled WhatsApp message</th></tr></thead>
+          <thead><tr><th>Reported at</th><th>Hotel</th><th>Reference</th><th>Guest</th><th>Sender account name</th><th>Sender account number</th><th>Amount reported paid</th><th>Status</th><th>WhatsApp message</th></tr></thead>
           <tbody>{% for event in handoff_events %}
           <tr>
             <td>{{ event.created_at }}</td>
             <td>{{ event.hotel_name }}</td>
             <td>{{ event.reservation_id }}</td>
             <td>{{ event.guest_name }}</td>
-            <td>WhatsApp handoff requested</td>
+            <td>{{ event.payer_account_name }}</td>
+            <td>{{ event.payer_account_number }}</td>
+            <td>₦{{ '{:,.0f}'.format(event.amount) }}</td>
+            <td>{{ 'Payment reported · reconcile with bank' if event.status == 'payment_reported' else 'Legacy WhatsApp handoff' }}</td>
             <td><pre class="whatsapp-handoff-message">{{ event.message_text }}</pre></td>
           </tr>
           {% endfor %}</tbody>
         </table></div>
         {% else %}
-        <p class="empty-state">No WhatsApp handoffs have been recorded yet.</p>
+        <p class="empty-state">No guest payment reports were recorded for {{ reporting_month }}.</p>
         {% endif %}
       </section>
     </main>

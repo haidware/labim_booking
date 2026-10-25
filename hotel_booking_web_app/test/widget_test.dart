@@ -96,7 +96,8 @@ class _BookingFlowApi extends _EmptyBookingApi {
     accountName: 'Labim Hotel',
     accountNumber: '0123456789',
     holdExpiresAt: '2026-10-22T14:30:00',
-    whatsappHandoffUrl: 'https://example.com/api/public/whatsapp-handoff?token=test',
+    whatsappHandoffUrl:
+        'https://example.com/api/public/whatsapp-handoff?token=test',
     emailNotificationSent: true,
   );
 }
@@ -474,10 +475,16 @@ void main() {
 
       expect(find.text('Bank transfer details'), findsOneWidget);
       expect(
-        find.textContaining('After paying, tap the WhatsApp button'),
+        find.textContaining('Your payment report will be saved'),
         findsOneWidget,
       );
+      expect(find.text('Sender’s bank account name'), findsOneWidget);
+      expect(find.text('Sender’s bank account number'), findsOneWidget);
       expect(find.text('Confirm payment on WhatsApp'), findsOneWidget);
+      await tester.ensureVisible(find.text('Confirm payment on WhatsApp'));
+      await tester.tap(find.text('Confirm payment on WhatsApp'));
+      await tester.pumpAndSettle();
+      expect(find.text('Enter the sender’s bank account name'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

@@ -1,8 +1,10 @@
+import csv
 from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from functools import lru_cache
 import hmac
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -12,7 +14,7 @@ import sqlite3
 import smtplib
 import ssl
 import time
-from urllib.parse import parse_qs, quote, urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest, urlopen
 from uuid import uuid4
@@ -31,6 +33,7 @@ from flask import (
     session,
     url_for,
 )
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -751,8 +754,11 @@ def init_db():
             reservation_id TEXT NOT NULL,
             hotel_name TEXT NOT NULL,
             guest_name TEXT NOT NULL,
+            payer_account_name TEXT NOT NULL DEFAULT '',
+            payer_account_number TEXT NOT NULL DEFAULT '',
+            amount INTEGER NOT NULL DEFAULT 0,
             message_text TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'handoff_requested',
+            status TEXT NOT NULL DEFAULT 'payment_reported',
             created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS hotel_subscriptions (
@@ -925,6 +931,20 @@ def init_db():
         db.execute(
             "ALTER TABLE online_booking_settings ADD COLUMN reception_email TEXT NOT NULL DEFAULT ''"
         )
+    handoff_columns = {
+        column[1] for column in db.execute(
+            "PRAGMA table_info(whatsapp_handoff_events)"
+        )
+    }
+    for column, definition in (
+        ("payer_account_name", "TEXT NOT NULL DEFAULT ''"),
+        ("payer_account_number", "TEXT NOT NULL DEFAULT ''"),
+        ("amount", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if column not in handoff_columns:
+            db.execute(
+                f"ALTER TABLE whatsapp_handoff_events ADD COLUMN {column} {definition}"
+            )
     db.execute(
         """INSERT OR IGNORE INTO online_booking_settings (hotel_id, updated_at)
         VALUES (?, CURRENT_TIMESTAMP)""",
@@ -1783,19 +1803,12 @@ def create_online_booking(form):
             reservation_id, hotel_id,
         )
         email_notification_sent = False
-    message = (
-        "Hello, I have made the bank transfer for my online booking.\n"
-        f"Booking reference: {reservation_id}\n"
-        f"Hotel: {hotel['name']}\n"
-        f"Guest: {guest_name}\n"
-        f"Room: {room['type']} ({room_number})\n"
-        f"Stay: {check_in.isoformat()} to {check_out.isoformat()}\n"
-        f"Amount transferred: NGN {amount:,.0f}\n"
-        "Please verify the payment and confirm my booking.\n"
-        "Transfer reference: [add your transfer reference or attach receipt]"
-    )
-    wa_number = re.sub(r"\D", "", settings["reception_whatsapp"])
-    handoff_token = secrets.token_urlsafe(32)
+    handoff_token = URLSafeTimedSerializer(
+        app.config["SECRET_KEY"], salt="public-payment-confirmation"
+    ).dumps({
+        "reservation_id": str(reservation_id),
+        "hotel_id": hotel_id,
+    })
     session["online_booking_confirmation"] = {
         "reference": str(reservation_id),
         "hotel_id": hotel_id,
@@ -1812,32 +1825,92 @@ def create_online_booking(form):
         "account_number": settings["account_number"],
         "hold_expires_at": hold_expires_at,
         "email_notification_sent": email_notification_sent,
-        "whatsapp_url": f"https://wa.me/{wa_number}?{urlencode({'text': message})}",
         "whatsapp_handoff_url": url_for(
             "public_whatsapp_handoff", token=handoff_token, _external=True
         ),
-        "whatsapp_handoff_token": handoff_token,
-        "whatsapp_message": message,
     }
     return reservation_id
 
 
-def record_whatsapp_handoff(confirmation):
-    message_text = confirmation.get("whatsapp_message", "")
-    if not message_text:
-        message_text = parse_qs(
-            urlparse(confirmation.get("whatsapp_url", "")).query
-        ).get("text", [""])[0]
-    if not message_text:
-        raise ValueError("The WhatsApp confirmation message is unavailable.")
+def online_booking_handoff_details(reservation_id, hotel_id):
+    if SUPABASE_ENABLED:
+        client = get_supabase_admin()
+        reservations = client.table("reservations").select(
+            "id, hotel_id, guest_name, room_number, check_in, check_out, amount"
+        ).eq("id", reservation_id).eq(
+            "hotel_id", hotel_id
+        ).eq("booking_source", "online").limit(1).execute().data
+        reservation = reservations[0] if reservations else None
+        hotel_rows = client.table("hotels").select("name").eq(
+            "id", hotel_id
+        ).limit(1).execute().data
+        room_rows = client.table("rooms").select("name").eq(
+            "hotel_id", hotel_id
+        ).eq("number", reservation["room_number"] if reservation else "").limit(
+            1
+        ).execute().data
+        hotel = hotel_rows[0] if hotel_rows else None
+        room = room_rows[0] if room_rows else None
+    else:
+        row = get_db().execute(
+            """SELECT r.id, r.hotel_id, r.guest_name, r.room_number,
+            r.check_in, r.check_out, r.amount, h.name AS hotel_name,
+            rm.name AS room_type
+            FROM reservations r
+            JOIN hotels h ON h.id = r.hotel_id
+            JOIN rooms rm ON rm.hotel_id = r.hotel_id
+                AND rm.number = r.room_number
+            WHERE r.id = ? AND r.hotel_id = ? AND r.booking_source = 'online'""",
+            (reservation_id, hotel_id),
+        ).fetchone()
+        reservation = dict(row) if row else None
+        hotel = {"name": reservation["hotel_name"]} if reservation else None
+        room = {"name": reservation["room_type"]} if reservation else None
+    if not reservation or not hotel or not room:
+        raise ValueError("The booking confirmation link is invalid or expired.")
+    settings = online_booking_settings(public=True, hotel_id=hotel_id)
+    if not settings.get("reception_whatsapp"):
+        raise ValueError("The hotel WhatsApp contact is unavailable.")
+    return {
+        "reference": str(reservation["id"]),
+        "hotel_id": str(reservation["hotel_id"]),
+        "hotel_name": hotel["name"],
+        "guest_name": reservation["guest_name"],
+        "room_number": reservation["room_number"],
+        "room_type": room["name"],
+        "check_in": str(reservation["check_in"]),
+        "check_out": str(reservation["check_out"]),
+        "amount": int(reservation["amount"]),
+        "reception_whatsapp": settings["reception_whatsapp"],
+    }
 
+
+def build_payment_confirmation_message(booking, payer_account_name, payer_account_number):
+    return (
+        "Hello, I have made the bank transfer for my online booking.\n"
+        f"Booking reference: {booking['reference']}\n"
+        f"Hotel: {booking['hotel_name']}\n"
+        f"Guest: {booking['guest_name']}\n"
+        f"Room: {booking['room_type']} ({booking['room_number']})\n"
+        f"Stay: {booking['check_in']} to {booking['check_out']}\n"
+        f"Sender account name: {payer_account_name}\n"
+        f"Sender account number: {payer_account_number}\n"
+        f"Amount reported paid: NGN {booking['amount']:,.0f}\n"
+        "Please verify the payment against the bank statement and confirm my booking."
+    )
+
+
+def record_whatsapp_handoff(booking, payer_account_name, payer_account_number, message_text):
     event = {
-        "hotel_id": confirmation["hotel_id"],
-        "reservation_id": confirmation["reference"],
-        "hotel_name": confirmation["hotel_name"],
-        "guest_name": confirmation["guest_name"],
+        "hotel_id": booking["hotel_id"],
+        "reservation_id": booking["reference"],
+        "hotel_name": booking["hotel_name"],
+        "guest_name": booking["guest_name"],
+        "payer_account_name": payer_account_name,
+        "payer_account_number": payer_account_number,
+        "amount": booking["amount"],
         "message_text": message_text,
-        "status": "handoff_requested",
+        "status": "payment_reported",
         "created_at": now_iso(),
     }
     if SUPABASE_ENABLED:
@@ -1847,40 +1920,92 @@ def record_whatsapp_handoff(confirmation):
         return
     get_db().execute(
         """INSERT INTO whatsapp_handoff_events
-        (hotel_id, reservation_id, hotel_name, guest_name, message_text,
-         status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (hotel_id, reservation_id, hotel_name, guest_name, payer_account_name,
+         payer_account_number, amount, message_text, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             event["hotel_id"], event["reservation_id"], event["hotel_name"],
-            event["guest_name"], event["message_text"], event["status"],
-            event["created_at"],
+            event["guest_name"], event["payer_account_name"],
+            event["payer_account_number"], event["amount"],
+            event["message_text"], event["status"], event["created_at"],
         ),
     )
     get_db().commit()
 
 
-def recent_whatsapp_handoffs(hotel_id=None):
+def reporting_month_bounds(month):
+    if not re.fullmatch(r"\d{4}-\d{2}", month or ""):
+        raise ValueError("Choose a valid reporting month.")
+    year, month_number = map(int, month.split("-"))
+    try:
+        start = datetime(year, month_number, 1, tzinfo=timezone.utc)
+    except ValueError as error:
+        raise ValueError("Choose a valid reporting month.") from error
+    if month_number == 12:
+        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        end = datetime(year, month_number + 1, 1, tzinfo=timezone.utc)
+    return start.isoformat(), end.isoformat()
+
+
+def spreadsheet_safe_text(value):
+    text = str(value or "")
+    if text.lstrip().startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + text
+    return text
+
+
+def recent_whatsapp_handoffs(hotel_id=None, month=None):
+    columns = (
+        "reservation_id, hotel_name, guest_name, payer_account_name, "
+        "payer_account_number, amount, message_text, status, created_at"
+    )
     if SUPABASE_ENABLED:
         client = get_supabase_admin() if hotel_id is None else get_request_supabase()
-        query = client.table("whatsapp_handoff_events").select(
-            "reservation_id, hotel_name, guest_name, message_text, status, created_at"
-        )
-        if hotel_id is not None:
-            query = query.eq("hotel_id", hotel_id)
-        return query.order("created_at", desc=True).limit(100).execute().data
-    if hotel_id is None:
-        rows = get_db().execute(
-            """SELECT reservation_id, hotel_name, guest_name, message_text,
-            status, created_at FROM whatsapp_handoff_events
-            ORDER BY created_at DESC LIMIT 100"""
-        ).fetchall()
-    else:
-        rows = get_db().execute(
-            """SELECT reservation_id, hotel_name, guest_name, message_text,
-            status, created_at FROM whatsapp_handoff_events
-            WHERE hotel_id = ? ORDER BY created_at DESC LIMIT 100""",
-            (hotel_id,),
-        ).fetchall()
+        start, end = reporting_month_bounds(month) if month else (None, None)
+
+        def event_query():
+            query = client.table("whatsapp_handoff_events").select(columns)
+            if hotel_id is not None:
+                query = query.eq("hotel_id", hotel_id)
+            if start and end:
+                query = query.gte("created_at", start).lt("created_at", end)
+            return query
+
+        if month:
+            events = []
+            offset = 0
+            while True:
+                page = event_query().order("created_at", desc=True).range(
+                    offset, offset + 999
+                ).execute().data
+                events.extend(page)
+                if len(page) < 1000:
+                    return events
+                offset += 1000
+        return event_query().order("created_at", desc=True).limit(
+            100
+        ).execute().data
+    query = (
+        "SELECT reservation_id, hotel_name, guest_name, payer_account_name, "
+        "payer_account_number, amount, message_text, status, created_at "
+        "FROM whatsapp_handoff_events"
+    )
+    values = []
+    where = []
+    if hotel_id is not None:
+        where.append("hotel_id = ?")
+        values.append(hotel_id)
+    if month:
+        reporting_month_bounds(month)
+        where.append("substr(created_at, 1, 7) = ?")
+        values.append(month)
+    if where:
+        query += " WHERE " + " AND ".join(where)
+    query += " ORDER BY created_at DESC"
+    if not month:
+        query += " LIMIT 100"
+    rows = get_db().execute(query, values).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -2383,7 +2508,9 @@ def require_workspace_login():
         "billing",
     }:
         return None
-    if endpoint in {"command_center", "issue_hotel_id"}:
+    if endpoint in {
+        "command_center", "command_center_payment_reports", "issue_hotel_id"
+    }:
         if session.get("user_role") != "controller":
             return redirect(url_for("login", role="controller"))
         required_role = None
@@ -2537,28 +2664,79 @@ def public_booking_api_create():
         create_online_booking(payload)
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
-    booking = dict(session["online_booking_confirmation"])
-    booking.pop("whatsapp_handoff_token", None)
-    booking.pop("whatsapp_message", None)
     return jsonify({
-        "booking": booking,
+        "booking": dict(session["online_booking_confirmation"]),
     }), 201
 
 
-@app.get("/api/public/whatsapp-handoff")
+@app.post("/api/public/whatsapp-handoff")
 def public_whatsapp_handoff():
-    confirmation = session.get("online_booking_confirmation")
     token = request.args.get("token", "")
-    if (
-        not confirmation
-        or not token
-        or not hmac.compare_digest(
-            confirmation.get("whatsapp_handoff_token", ""), token
+    try:
+        token_data = URLSafeTimedSerializer(
+            app.config["SECRET_KEY"], salt="public-payment-confirmation"
+        ).loads(token, max_age=7 * 24 * 60 * 60)
+    except (BadSignature, SignatureExpired):
+        return jsonify({
+            "error": "This WhatsApp confirmation link is invalid or expired."
+        }), 403
+    if not isinstance(token_data, dict):
+        return jsonify({
+            "error": "This WhatsApp confirmation link is invalid or expired."
+        }), 403
+
+    if request.is_json:
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Send payment details as a JSON object."}), 400
+    else:
+        payload = request.form
+    payer_account_name = " ".join(
+        form_text(payload.get("payer_account_name")).split()
+    )
+    payer_account_number = re.sub(
+        r"[\s-]", "", form_text(payload.get("payer_account_number"))
+    )
+    if not payer_account_name or len(payer_account_name) > 160:
+        error_message = "Enter the sender's bank account name (up to 160 characters)."
+    elif not re.fullmatch(r"\d{10}", payer_account_number):
+        error_message = "Enter the sender bank account number as 10 digits."
+    else:
+        error_message = None
+    if error_message:
+        if request.is_json:
+            return jsonify({"error": error_message}), 400
+        confirmation = session.get("online_booking_confirmation")
+        if confirmation:
+            return render_template(
+                "online_booking_confirmation.html",
+                confirmation=confirmation,
+                handoff_error=error_message,
+            ), 400
+        return error_message, 400
+
+    try:
+        booking = online_booking_handoff_details(
+            str(token_data.get("reservation_id", "")),
+            str(token_data.get("hotel_id", "")),
         )
-    ):
-        return jsonify({"error": "This WhatsApp confirmation link is invalid or expired."}), 403
-    record_whatsapp_handoff(confirmation)
-    return redirect(confirmation["whatsapp_url"], code=302)
+    except ValueError as error:
+        if request.is_json:
+            return jsonify({"error": str(error)}), 400
+        return str(error), 400
+    message_text = build_payment_confirmation_message(
+        booking, payer_account_name, payer_account_number
+    )
+    record_whatsapp_handoff(
+        booking, payer_account_name, payer_account_number, message_text
+    )
+    wa_number = re.sub(r"\D", "", booking["reception_whatsapp"])
+    whatsapp_url = (
+        f"https://wa.me/{wa_number}?{urlencode({'text': message_text})}"
+    )
+    if request.is_json:
+        return jsonify({"whatsapp_url": whatsapp_url}), 200
+    return redirect(whatsapp_url, code=302)
 
 
 @app.route("/book-legacy", methods=["GET", "POST"])
@@ -2922,6 +3100,13 @@ def online_booking_confirmation():
 
 @app.get("/commandcenter")
 def command_center():
+    reporting_month = request.args.get(
+        "month", date.today().strftime("%Y-%m")
+    )
+    try:
+        reporting_month_bounds(reporting_month)
+    except ValueError as error:
+        return str(error), 400
     hotels = [
         {
             **hotel,
@@ -2931,12 +3116,51 @@ def command_center():
     ]
     return render_template(
         "command_center.html",
-        handoff_events=recent_whatsapp_handoffs(),
+        handoff_events=recent_whatsapp_handoffs(month=reporting_month),
         hotels=hotels,
         issued_hotel_ids=command_center_hotel_ids(),
+        reporting_month=reporting_month,
         controller_csrf_token=session.setdefault(
             "controller_csrf_token", secrets.token_urlsafe(32)
         ),
+    )
+
+
+@app.get("/commandcenter/payment-reports.csv")
+def command_center_payment_reports():
+    reporting_month = request.args.get("month", "")
+    try:
+        reporting_month_bounds(reporting_month)
+    except ValueError as error:
+        return str(error), 400
+
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow((
+        "Reported at", "Hotel", "Booking reference", "Guest",
+        "Sender account name", "Sender account number", "Amount reported paid",
+        "Record status", "WhatsApp message",
+    ))
+    for event in recent_whatsapp_handoffs(month=reporting_month):
+        writer.writerow((
+            event["created_at"],
+            spreadsheet_safe_text(event["hotel_name"]),
+            spreadsheet_safe_text(event["reservation_id"]),
+            spreadsheet_safe_text(event["guest_name"]),
+            spreadsheet_safe_text(event["payer_account_name"]),
+            spreadsheet_safe_text(event["payer_account_number"]),
+            event["amount"],
+            event["status"],
+            spreadsheet_safe_text(event["message_text"]),
+        ))
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="payment-reports-{reporting_month}.csv"'
+            ),
+        },
     )
 
 
