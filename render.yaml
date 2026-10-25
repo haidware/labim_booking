@@ -16,7 +16,7 @@ services:
       - key: FLASK_SECRET_KEY
         generateValue: true
       - key: RENTAL_SERVICE_URL
-        value: https://labim-house-rental.onrender.com
+        value: https://labimhouserental-production.up.railway.app
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY

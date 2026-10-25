@@ -52,7 +52,7 @@ FLUTTER_WEB_BUILD_DIRECTORY = Path(os.getenv(
 ))
 RENTAL_SERVICE_URL = os.getenv(
     "RENTAL_SERVICE_URL",
-    "https://labim-house-rental.onrender.com",
+    "https://labimhouserental-production.up.railway.app",
 ).rstrip("/")
 RENTAL_PROXY_PREFIX = "/rentals"
 RENTAL_PROXY_RETRYABLE_STATUS_CODES = {502, 503, 504}

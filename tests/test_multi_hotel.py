@@ -142,7 +142,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         upstream_request = open_upstream.call_args.args[0]
         self.assertEqual(
             upstream_request.full_url,
-            "https://labim-house-rental.onrender.com/land?transaction_type=sale",
+            "https://labimhouserental-production.up.railway.app/land?transaction_type=sale",
         )
 
     def test_rental_home_route_proxies_to_rental_homepage(self):
@@ -163,13 +163,13 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertIn(b'<base href="/rentals/">', response.data)
         self.assertEqual(
             open_upstream.call_args.args[0].full_url,
-            "https://labim-house-rental.onrender.com/",
+            "https://labimhouserental-production.up.railway.app/",
         )
 
     def test_rental_home_route_retries_transient_gateway_errors(self):
         gateway_errors = [
             self.app_module.HTTPError(
-                "https://labim-house-rental.onrender.com/",
+                "https://labimhouserental-production.up.railway.app/",
                 502,
                 "Bad Gateway",
                 Message(),
@@ -201,7 +201,7 @@ class MultiHotelFlowTests(unittest.TestCase):
 
     def test_rental_proxy_does_not_retry_state_changing_requests(self):
         gateway_error = self.app_module.HTTPError(
-            "https://labim-house-rental.onrender.com/api/public/property-requests/",
+            "https://labimhouserental-production.up.railway.app/api/public/property-requests/",
             502,
             "Bad Gateway",
             Message(),
@@ -292,7 +292,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         upstream_request = open_upstream.call_args.args[0]
         self.assertEqual(
             upstream_request.get_header("Origin"),
-            "https://labim-house-rental.onrender.com",
+            "https://labimhouserental-production.up.railway.app",
         )
         self.assertEqual(
             upstream_request.get_header("Cookie"),
@@ -300,7 +300,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         )
         self.assertEqual(
             upstream_request.get_header("Referer"),
-            "https://labim-house-rental.onrender.com/",
+            "https://labimhouserental-production.up.railway.app/",
         )
 
     def test_rental_proxy_does_not_trust_an_unrelated_origin(self):
