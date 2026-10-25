@@ -115,7 +115,7 @@ class BookingConfirmation {
     required this.accountName,
     required this.accountNumber,
     required this.holdExpiresAt,
-    required this.whatsappUrl,
+    required this.whatsappHandoffUrl,
     required this.emailNotificationSent,
   });
 
@@ -132,7 +132,7 @@ class BookingConfirmation {
       accountName: json['account_name']?.toString() ?? '',
       accountNumber: json['account_number']?.toString() ?? '',
       holdExpiresAt: json['hold_expires_at']?.toString() ?? '',
-      whatsappUrl: json['whatsapp_url']?.toString() ?? '',
+      whatsappHandoffUrl: json['whatsapp_handoff_url']?.toString() ?? '',
       emailNotificationSent: json['email_notification_sent'] == true,
     );
   }
@@ -148,7 +148,7 @@ class BookingConfirmation {
   final String accountName;
   final String accountNumber;
   final String holdExpiresAt;
-  final String whatsappUrl;
+  final String whatsappHandoffUrl;
   final bool emailNotificationSent;
 }
 

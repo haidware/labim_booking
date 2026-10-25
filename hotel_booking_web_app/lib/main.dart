@@ -1295,12 +1295,19 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                         'Your request is saved. Contact the hotel reception after payment.',
                   ),
                 const SizedBox(height: 20),
+                const _InfoNote(
+                  icon: Icons.info_outline_rounded,
+                  text:
+                      'Opening WhatsApp logs the prefilled message in the hotel’s Haidware Command Center. '
+                      'WhatsApp does not confirm whether you send it.',
+                ),
+                const SizedBox(height: 12),
                 FilledButton.icon(
                   onPressed: () async {
-                    final uri = Uri.tryParse(confirmation.whatsappUrl);
+                    final uri = Uri.tryParse(confirmation.whatsappHandoffUrl);
                     if (uri == null || !await launchUrl(uri)) {
                       if (mounted) {
-                        setState(() => _error = 'Could not open WhatsApp.');
+                        setState(() => _error = 'Could not open WhatsApp. Please retry.');
                       }
                     }
                   },

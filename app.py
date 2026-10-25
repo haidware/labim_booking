@@ -12,7 +12,7 @@ import sqlite3
 import smtplib
 import ssl
 import time
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest, urlopen
 from uuid import uuid4
@@ -705,6 +705,16 @@ def init_db():
             reception_whatsapp TEXT NOT NULL DEFAULT '',
             reception_email TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS whatsapp_handoff_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hotel_id TEXT NOT NULL,
+            reservation_id TEXT NOT NULL,
+            hotel_name TEXT NOT NULL,
+            guest_name TEXT NOT NULL,
+            message_text TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'handoff_requested',
+            created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS hotel_subscriptions (
             hotel_id TEXT PRIMARY KEY,
@@ -1731,10 +1741,12 @@ def create_online_booking(form):
         "Transfer reference: [add your transfer reference or attach receipt]"
     )
     wa_number = re.sub(r"\D", "", settings["reception_whatsapp"])
+    handoff_token = secrets.token_urlsafe(32)
     session["online_booking_confirmation"] = {
         "reference": str(reservation_id),
         "hotel_id": hotel_id,
         "hotel_name": hotel["name"],
+        "guest_name": guest_name,
         "hotel_slug": hotel["slug"],
         "room_number": room_number,
         "room_type": room["type"],
@@ -1747,8 +1759,70 @@ def create_online_booking(form):
         "hold_expires_at": hold_expires_at,
         "email_notification_sent": email_notification_sent,
         "whatsapp_url": f"https://wa.me/{wa_number}?{urlencode({'text': message})}",
+        "whatsapp_handoff_url": url_for(
+            "public_whatsapp_handoff", token=handoff_token, _external=True
+        ),
+        "whatsapp_handoff_token": handoff_token,
+        "whatsapp_message": message,
     }
     return reservation_id
+
+
+def record_whatsapp_handoff(confirmation):
+    message_text = confirmation.get("whatsapp_message", "")
+    if not message_text:
+        message_text = parse_qs(
+            urlparse(confirmation.get("whatsapp_url", "")).query
+        ).get("text", [""])[0]
+    if not message_text:
+        raise ValueError("The WhatsApp confirmation message is unavailable.")
+
+    event = {
+        "hotel_id": confirmation["hotel_id"],
+        "reservation_id": confirmation["reference"],
+        "hotel_name": confirmation["hotel_name"],
+        "guest_name": confirmation["guest_name"],
+        "message_text": message_text,
+        "status": "handoff_requested",
+        "created_at": now_iso(),
+    }
+    if SUPABASE_ENABLED:
+        get_supabase_admin().table("whatsapp_handoff_events").insert(
+            event
+        ).execute()
+        return
+    get_db().execute(
+        """INSERT INTO whatsapp_handoff_events
+        (hotel_id, reservation_id, hotel_name, guest_name, message_text,
+         status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            event["hotel_id"], event["reservation_id"], event["hotel_name"],
+            event["guest_name"], event["message_text"], event["status"],
+            event["created_at"],
+        ),
+    )
+    get_db().commit()
+
+
+def recent_whatsapp_handoffs(hotel_id):
+    if SUPABASE_ENABLED:
+        return get_request_supabase().table(
+            "whatsapp_handoff_events"
+        ).select(
+            "reservation_id, hotel_name, guest_name, message_text, status, created_at"
+        ).eq(
+            "hotel_id", hotel_id
+        ).order(
+            "created_at", desc=True
+        ).limit(100).execute().data
+    rows = get_db().execute(
+        """SELECT reservation_id, hotel_name, guest_name, message_text,
+        status, created_at FROM whatsapp_handoff_events
+        WHERE hotel_id = ? ORDER BY created_at DESC LIMIT 100""",
+        (hotel_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def confirm_online_booking(reservation_id, received_by):
@@ -2251,7 +2325,9 @@ def require_workspace_login():
         "paystack_callback", "paystack_webhook",
     }:
         return None
-    if request.path.startswith("/workspace/"):
+    if endpoint == "command_center":
+        required_role = "director"
+    elif request.path.startswith("/workspace/"):
         required_role = (request.view_args or {}).get("role")
         if required_role is None:
             required_role = request.path.split("/", 3)[2]
@@ -2405,9 +2481,28 @@ def public_booking_api_create():
         create_online_booking(payload)
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
+    booking = dict(session["online_booking_confirmation"])
+    booking.pop("whatsapp_handoff_token", None)
+    booking.pop("whatsapp_message", None)
     return jsonify({
-        "booking": session["online_booking_confirmation"],
+        "booking": booking,
     }), 201
+
+
+@app.get("/api/public/whatsapp-handoff")
+def public_whatsapp_handoff():
+    confirmation = session.get("online_booking_confirmation")
+    token = request.args.get("token", "")
+    if (
+        not confirmation
+        or not token
+        or not hmac.compare_digest(
+            confirmation.get("whatsapp_handoff_token", ""), token
+        )
+    ):
+        return jsonify({"error": "This WhatsApp confirmation link is invalid or expired."}), 403
+    record_whatsapp_handoff(confirmation)
+    return redirect(confirmation["whatsapp_url"], code=302)
 
 
 @app.route("/book-legacy", methods=["GET", "POST"])
@@ -2778,6 +2873,18 @@ def online_booking_confirmation():
     if not confirmation:
         return redirect(url_for("home"))
     return render_template("online_booking_confirmation.html", confirmation=confirmation)
+
+
+@app.get("/commandcenter")
+def command_center():
+    hotel = hotel_details(current_hotel_id())
+    return render_template(
+        "reference_workspace.html",
+        role="director",
+        page="commandcenter",
+        hotel_name=hotel["name"] if hotel else "Hotel Booking Platform",
+        handoff_events=recent_whatsapp_handoffs(current_hotel_id()),
+    )
 
 
 @app.get("/room-photos/<path:photo_path>")

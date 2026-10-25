@@ -96,7 +96,7 @@ class _BookingFlowApi extends _EmptyBookingApi {
     accountName: 'Labim Hotel',
     accountNumber: '0123456789',
     holdExpiresAt: '2026-10-22T14:30:00',
-    whatsappUrl: 'https://wa.me/2348000000000?text=payment',
+    whatsappHandoffUrl: 'https://example.com/api/public/whatsapp-handoff?token=test',
     emailNotificationSent: true,
   );
 }

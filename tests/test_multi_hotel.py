@@ -809,6 +809,100 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertIn("attach receipt", whatsapp_message)
         send_reception_email.assert_called_once()
 
+    def test_whatsapp_handoff_logs_message_and_is_director_scoped(self):
+        manager = self.app_module.app.test_client()
+        hotel_id = self.register_hotel(
+            manager, "Handoff Test Hotel", "handoff",
+            "1 Main Road", "Lagos", "Lagos",
+        )
+        self.configure_online_booking(
+            manager, hotel_id, "Handoff Suite", 75000
+        )
+        with self.app_module.app.app_context():
+            self.app_module.get_db().execute(
+                """UPDATE rooms SET status = 'available'
+                WHERE hotel_id = ? AND number = '101'""",
+                (hotel_id,),
+            )
+            self.app_module.get_db().commit()
+
+        guest = self.app_module.app.test_client()
+        check_in = (date.today() + timedelta(days=3)).isoformat()
+        check_out = (date.today() + timedelta(days=4)).isoformat()
+        with patch.object(self.app_module, "send_reception_booking_email"):
+            booking_response = guest.post(
+                "/api/public/bookings",
+                json={
+                    "hotel_id": hotel_id,
+                    "hotel_slug": "handoff-test-hotel",
+                    "room_number": "101",
+                    "check_in": check_in,
+                    "check_out": check_out,
+                    "guest_name": "Handoff Guest",
+                    "email": "handoff-guest@example.com",
+                    "phone": "08000000000",
+                },
+            )
+        self.assertEqual(booking_response.status_code, 201)
+        booking = booking_response.get_json()["booking"]
+        self.assertIn(
+            "/api/public/whatsapp-handoff?token=",
+            booking["whatsapp_handoff_url"],
+        )
+        handoff_url = urlparse(booking["whatsapp_handoff_url"])
+
+        invalid_response = guest.get(
+            handoff_url.path + "?token=invalid-token"
+        )
+        self.assertEqual(invalid_response.status_code, 403)
+        with self.app_module.app.app_context():
+            self.assertEqual(
+                self.app_module.get_db().execute(
+                    "SELECT COUNT(*) FROM whatsapp_handoff_events"
+                ).fetchone()[0],
+                0,
+            )
+
+        handoff_response = guest.get(
+            handoff_url.path + "?" + handoff_url.query
+        )
+        self.assertEqual(handoff_response.status_code, 302)
+        self.assertEqual(
+            handoff_response.headers["Location"], booking["whatsapp_url"]
+        )
+        message = parse_qs(urlparse(booking["whatsapp_url"]).query)["text"][0]
+        with self.app_module.app.app_context():
+            self.app_module.get_db().execute(
+                """INSERT INTO whatsapp_handoff_events
+                (hotel_id, reservation_id, hotel_name, guest_name, message_text,
+                 status, created_at)
+                VALUES (?, 'other', 'Other Hotel', 'Other Guest',
+                        'private other message', 'handoff_requested', ?)""",
+                ("other-hotel", self.app_module.now_iso()),
+            )
+            self.app_module.get_db().commit()
+
+        director = self.app_module.app.test_client()
+        login_response = director.post("/login/director", data={
+            "username": "director-handoff",
+            "password": "DirectorPass123!",
+        })
+        self.assertEqual(login_response.status_code, 302)
+        command_center = director.get("/commandcenter")
+        self.assertEqual(command_center.status_code, 200)
+        self.assertIn(b"Haidware Command Center", command_center.data)
+        self.assertIn(b"WhatsApp handoff requested", command_center.data)
+        self.assertIn(message.encode(), command_center.data)
+        self.assertNotIn(b"private other message", command_center.data)
+
+        unauthenticated = self.app_module.app.test_client().get("/commandcenter")
+        self.assertEqual(unauthenticated.status_code, 302)
+        self.assertIn("/login/director", unauthenticated.headers["Location"])
+        self.assertEqual(
+            manager.get("/commandcenter").status_code,
+            302,
+        )
+
     def test_reference_booking_flow_is_at_book_and_flutter_pwa_at_book_app(self):
         with tempfile.TemporaryDirectory() as build_directory:
             build_path = Path(build_directory)
@@ -1348,6 +1442,10 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertIn(b"Other Test Hotel", confirmation.data)
         self.assertIn(b"Suite Bank", confirmation.data)
         self.assertIn(b"notification has been emailed", confirmation.data)
+        self.assertIn(
+            b"/api/public/whatsapp-handoff?token=",
+            confirmation.data,
+        )
 
         with self.app_module.app.app_context():
             booking = self.app_module.get_db().execute(
