@@ -71,7 +71,7 @@
         </form>
       </section>
       <section class="data-panel">
-        <div class="panel-heading"><strong>Room photos and guest descriptions</strong><small>Upload one to three photos; saving a new set replaces the current gallery. Reception controls availability; guests only see available rooms without a date conflict.</small></div>
+        <div class="panel-heading"><strong>Room photos and guest descriptions</strong><small>Upload any number from one to five photos; five is the maximum, not a requirement. Saving a new set replaces the current gallery. Reception controls availability; guests only see available rooms without a date conflict.</small></div>
         <div class="online-room-listings">
           {% for room in online_listings %}
           <article class="online-room-manager-card">
@@ -85,7 +85,7 @@
               <button class="secondary-button" type="submit">Save description</button>
             </form>
             <form class="online-photo-upload" method="post" enctype="multipart/form-data" action="{{ url_for('manage_online_room', room_number=room.number) }}">
-              <label>Room photos (1–3 JPG, PNG, or WebP images; max 5 MB each)<input type="file" name="photos" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple required></label>
+              <label>Room photos (choose 1–5 JPG, PNG, or WebP images; max 5 MB each)<input type="file" name="photos" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple required></label>
               <button class="secondary-button" type="submit">Save room photos</button>
             </form>
           </article>

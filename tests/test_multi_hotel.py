@@ -1142,25 +1142,83 @@ class MultiHotelFlowTests(unittest.TestCase):
                  hotel_two_location["state"]),
                 ("14 Independence Avenue", "Enugu", "Enugu"),
             )
-        photo_upload = hotel_two_manager.post(
+        for photo_count in range(2, 6):
+            with self.subTest(photo_count=photo_count):
+                photo_upload = hotel_two_manager.post(
+                    "/rooms/101/online",
+                    data={
+                        "photos": [
+                            (
+                                BytesIO(
+                                    b"\x89PNG\r\n\x1a\nimage "
+                                    + str(index).encode()
+                                ),
+                                f"room-{photo_count}-{index}.png",
+                                "image/png",
+                            )
+                            for index in range(1, photo_count + 1)
+                        ],
+                    },
+                    content_type="multipart/form-data",
+                )
+                self.assertEqual(photo_upload.status_code, 302)
+                with self.app_module.app.app_context():
+                    listing = self.app_module.get_db().execute(
+                        """SELECT photo_path, photo_paths, enabled
+                        FROM online_room_listings
+                        WHERE hotel_id = ? AND room_number = '101'""",
+                        (hotel_two_id,),
+                    ).fetchone()
+                    self.assertEqual(
+                        len(self.app_module.room_photo_paths(dict(listing))),
+                        photo_count,
+                    )
+                    self.assertTrue(listing["enabled"])
+                manager_page = hotel_two_manager.get(
+                    "/workspace/manager/online-settings"
+                )
+                self.assertIn(
+                    f"Room 101 photo {photo_count}".encode(),
+                    manager_page.data,
+                )
+                self.assertNotIn(
+                    f"Room 101 photo {photo_count + 1}".encode(),
+                    manager_page.data,
+                )
+
+        too_many_photos = hotel_two_manager.post(
             "/rooms/101/online",
             data={
                 "photos": [
-                    (BytesIO(b"\x89PNG\r\n\x1a\nimage one"), "room-one.png", "image/png"),
-                    (BytesIO(b"\x89PNG\r\n\x1a\nimage two"), "room-two.png", "image/png"),
-                ]
+                    (
+                        BytesIO(
+                            b"\x89PNG\r\n\x1a\nextra "
+                            + str(index).encode()
+                        ),
+                        f"extra-{index}.png",
+                        "image/png",
+                    )
+                    for index in range(1, 7)
+                ],
             },
             content_type="multipart/form-data",
         )
-        self.assertEqual(photo_upload.status_code, 302)
+        self.assertEqual(too_many_photos.status_code, 302)
+        online_settings = hotel_two_manager.get(
+            "/workspace/manager/online-settings"
+        )
+        self.assertIn(b"Upload no more than 5 room photos", online_settings.data)
+        self.assertIn(b"choose 1\xe2\x80\x935 JPG", online_settings.data)
         with self.app_module.app.app_context():
-            listing = self.app_module.get_db().execute(
-                """SELECT photo_path, photo_paths, enabled FROM online_room_listings
+            saved_listing = self.app_module.get_db().execute(
+                """SELECT photo_path, photo_paths FROM online_room_listings
                 WHERE hotel_id = ? AND room_number = '101'""",
                 (hotel_two_id,),
             ).fetchone()
-            self.assertEqual(len(self.app_module.room_photo_paths(dict(listing))), 2)
-            self.assertTrue(listing["enabled"])
+            self.assertEqual(
+                len(self.app_module.room_photo_paths(dict(saved_listing))),
+                5,
+            )
 
         one_workspace = hotel_one_manager.get("/workspace/manager/rooms")
         two_workspace = hotel_two_manager.get("/workspace/manager/rooms")
@@ -1222,6 +1280,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertIn(b"Suite", search.data)
         self.assertIn(b"Photo 1 of Room 101", search.data)
         self.assertIn(b"Photo 2 of Room 101", search.data)
+        self.assertIn(b"Photo 5 of Room 101", search.data)
 
         price_filtered_directory = guest.get("/book-legacy", query_string={
             "check_in": stay_start,

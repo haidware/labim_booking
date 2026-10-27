@@ -68,7 +68,7 @@ MONTHLY_PLAN_AMOUNT = 80_000
 ANNUAL_PLAN_AMOUNT = 800_000
 PAYSTACK_API_BASE = "https://api.paystack.co"
 MAX_ROOM_PHOTO_BYTES = 5 * 1024 * 1024
-MAX_ROOM_PHOTOS = 3
+MAX_ROOM_PHOTOS = 5
 ALLOWED_ROOM_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 NIGERIAN_STATES = (
     "Abia", "Adamawa", "Akwa Ibom", "Anambra", "Bauchi", "Bayelsa",
@@ -1531,7 +1531,7 @@ def save_online_room_listing(room_number, form):
 def save_room_photos(room_number, uploaded_files):
     uploads = [uploaded for uploaded in uploaded_files if uploaded and uploaded.filename]
     if not uploads:
-        raise ValueError("Choose one to three room photos to upload.")
+        raise ValueError("Choose at least one room photo to upload.")
     if len(uploads) > MAX_ROOM_PHOTOS:
         raise ValueError(f"Upload no more than {MAX_ROOM_PHOTOS} room photos.")
     expected_types = {
