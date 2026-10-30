@@ -75,6 +75,34 @@
     window.addEventListener('flutter-first-frame', function () {
       document.getElementById('app-loading')?.remove();
     });
+    window.roomsPush = {
+      subscribe: async function (publicKey) {
+        if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+          throw new Error('Push notifications are not supported by this browser.');
+        }
+        if (/iphone|ipad|ipod/i.test(navigator.userAgent) &&
+            !('standalone' in navigator && navigator.standalone) &&
+            !window.matchMedia('(display-mode: standalone)').matches) {
+          throw new Error('On iPhone or iPad, add Rooms to your Home Screen before enabling notifications.');
+        }
+        const permission = Notification.permission === 'default'
+          ? await Notification.requestPermission()
+          : Notification.permission;
+        if (permission !== 'granted') {
+          throw new Error('Notification permission was not granted. You can enable it in your device settings.');
+        }
+        const registration = await navigator.serviceWorker.register('/push/sw.js', { scope: '/push/' });
+        const existing = await registration.pushManager.getSubscription();
+        const subscription = existing || await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: Uint8Array.from(
+            atob(publicKey.replace(/-/g, '+').replace(/_/g, '/')),
+            character => character.charCodeAt(0),
+          ),
+        });
+        return JSON.stringify(subscription.toJSON());
+      },
+    };
   </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>

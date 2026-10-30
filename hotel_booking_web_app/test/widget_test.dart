@@ -37,6 +37,9 @@ class _EmptyBookingApi extends BookingApi {
 }
 
 class _BookingFlowApi extends _EmptyBookingApi {
+  String? savedPushToken;
+  String? savedPushSubscription;
+
   static const hotel = Hotel(
     id: '1',
     slug: 'labim-hotel',
@@ -99,7 +102,25 @@ class _BookingFlowApi extends _EmptyBookingApi {
     whatsappHandoffUrl:
         'https://example.com/api/public/whatsapp-handoff?token=test',
     emailNotificationSent: true,
+    pushToken: 'signed-push-token',
+    pushPublicKey: 'test-vapid-public-key',
   );
+
+  @override
+  Future<String> reportPayment({
+    required BookingConfirmation confirmation,
+    required String payerAccountName,
+    required String payerAccountNumber,
+  }) async => 'https://wa.me/2348000000000?text=payment';
+
+  @override
+  Future<void> savePushSubscription({
+    required String token,
+    required String subscriptionJson,
+  }) async {
+    savedPushToken = token;
+    savedPushSubscription = subscriptionJson;
+  }
 }
 
 void main() {
@@ -424,8 +445,17 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
+      final api = _BookingFlowApi();
       await tester.pumpWidget(
-        HotelBookingApp(bookingPage: HotelBookingPage(api: _BookingFlowApi())),
+        HotelBookingApp(
+          bookingPage: HotelBookingPage(
+            api: api,
+            whatsappLauncher: (_) async => true,
+            pushSubscriptionCreator: (_) async =>
+                '{"endpoint":"https://push.example.test/subscription",'
+                '"keys":{"p256dh":"public-key","auth":"auth-key"}}',
+          ),
+        ),
       );
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
@@ -474,6 +504,17 @@ void main() {
       expect(tester.takeException(), isNull);
 
       expect(find.text('Bank transfer details'), findsOneWidget);
+      expect(find.text('Booking notifications'), findsOneWidget);
+      expect(find.text('Enable booking notifications'), findsOneWidget);
+      await tester.ensureVisible(find.text('Enable booking notifications'));
+      await tester.tap(find.text('Enable booking notifications'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Notifications are enabled on this device'),
+        findsOneWidget,
+      );
+      expect(api.savedPushToken, 'signed-push-token');
+      expect(api.savedPushSubscription, contains('"endpoint"'));
       expect(
         find.textContaining('Your payment report will be saved'),
         findsOneWidget,
@@ -481,10 +522,21 @@ void main() {
       expect(find.text('Sender’s bank account name'), findsOneWidget);
       expect(find.text('Sender’s bank account number'), findsOneWidget);
       expect(find.text('Confirm payment on WhatsApp'), findsOneWidget);
+      await tester.enterText(find.byType(TextFormField).first, 'Guest Name');
+      await tester.enterText(find.byType(TextFormField).last, '0987654321');
       await tester.ensureVisible(find.text('Confirm payment on WhatsApp'));
       await tester.tap(find.text('Confirm payment on WhatsApp'));
       await tester.pumpAndSettle();
-      expect(find.text('Enter the sender’s bank account name'), findsOneWidget);
+      expect(find.text('Please wait for your booking receipt'), findsOneWidget);
+      expect(find.text('42'), findsOneWidget);
+      expect(find.text('Waiting for Reception approval'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Reception must verify your payment and approve the booking',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Confirm payment on WhatsApp'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

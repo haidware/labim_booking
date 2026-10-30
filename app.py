@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from flask import (
     Flask,
     Response,
+    abort,
     flash,
     g,
     jsonify,
@@ -45,6 +46,12 @@ except ImportError:
     create_client = None
     AuthApiError = None
     AuthSessionMissingError = None
+
+try:
+    from pywebpush import WebPushException, webpush
+except ImportError:
+    WebPushException = None
+    webpush = None
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE = BASE_DIR / "instance" / "booking_os.sqlite3"
@@ -89,6 +96,13 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "https://frmekmypefrwvocepjmg.supabase.
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 SUPABASE_ENABLED = bool(SUPABASE_URL and SUPABASE_ANON_KEY and SUPABASE_SECRET_KEY and create_client)
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "").strip()
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "").strip()
+VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:admin@example.com").strip()
+if bool(VAPID_PUBLIC_KEY) != bool(VAPID_PRIVATE_KEY):
+    raise RuntimeError(
+        "Set both VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable push notifications."
+    )
 HAIDWARE_CONTROLLER_USERNAME = os.getenv("HAIDWARE_CONTROLLER_USERNAME", "").strip()
 HAIDWARE_CONTROLLER_PASSWORD = os.getenv("HAIDWARE_CONTROLLER_PASSWORD", "")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
@@ -760,6 +774,16 @@ def init_db():
             message_text TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'payment_reported',
             created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS web_push_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reservation_id TEXT NOT NULL,
+            hotel_id TEXT NOT NULL,
+            endpoint TEXT NOT NULL,
+            subscription_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            notified_at TEXT,
+            UNIQUE(endpoint, reservation_id)
         );
         CREATE TABLE IF NOT EXISTS hotel_subscriptions (
             hotel_id TEXT PRIMARY KEY,
@@ -1809,6 +1833,7 @@ def create_online_booking(form):
         "reservation_id": str(reservation_id),
         "hotel_id": hotel_id,
     })
+    push_token = booking_push_token(reservation_id, hotel_id)
     session["online_booking_confirmation"] = {
         "reference": str(reservation_id),
         "hotel_id": hotel_id,
@@ -1828,6 +1853,8 @@ def create_online_booking(form):
         "whatsapp_handoff_url": url_for(
             "public_whatsapp_handoff", token=handoff_token, _external=True
         ),
+        "push_token": push_token,
+        "push_public_key": VAPID_PUBLIC_KEY,
     }
     return reservation_id
 
@@ -1883,6 +1910,210 @@ def online_booking_handoff_details(reservation_id, hotel_id):
         "amount": int(reservation["amount"]),
         "reception_whatsapp": settings["reception_whatsapp"],
     }
+
+
+def booking_push_token(reservation_id, hotel_id):
+    return URLSafeTimedSerializer(
+        app.config["SECRET_KEY"], salt="public-booking-push-subscription"
+    ).dumps({
+        "reservation_id": str(reservation_id),
+        "hotel_id": str(hotel_id),
+    })
+
+
+def verified_booking_receipt(reservation_id, hotel_id):
+    if SUPABASE_ENABLED:
+        client = get_supabase_admin()
+        reservations = client.table("reservations").select(
+            "id, hotel_id, guest_name, room_number, check_in, check_out, amount, "
+            "amount_paid, payment_method, status"
+        ).eq("id", reservation_id).eq(
+            "hotel_id", hotel_id
+        ).eq("booking_source", "online").limit(1).execute().data
+        reservation = reservations[0] if reservations else None
+        hotels = client.table("hotels").select("name").eq(
+            "id", hotel_id
+        ).limit(1).execute().data
+        rooms = client.table("rooms").select("name").eq(
+            "hotel_id", hotel_id
+        ).eq(
+            "number", reservation["room_number"] if reservation else ""
+        ).limit(1).execute().data
+        hotel = hotels[0] if hotels else None
+        room = rooms[0] if rooms else None
+    else:
+        row = get_db().execute(
+            """SELECT r.id, r.hotel_id, r.guest_name, r.room_number,
+            r.check_in, r.check_out, r.amount, r.amount_paid, r.payment_method,
+            r.status, h.name AS hotel_name, rm.name AS room_type
+            FROM reservations r
+            JOIN hotels h ON h.id = r.hotel_id
+            JOIN rooms rm ON rm.hotel_id = r.hotel_id
+                AND rm.number = r.room_number
+            WHERE r.id = ? AND r.hotel_id = ? AND r.booking_source = 'online'""",
+            (reservation_id, hotel_id),
+        ).fetchone()
+        reservation = dict(row) if row else None
+        hotel = {"name": reservation["hotel_name"]} if reservation else None
+        room = {"name": reservation["room_type"]} if reservation else None
+    if (
+        not reservation
+        or not hotel
+        or not room
+        or reservation["status"] not in {"booked", "checked_in", "checked_out"}
+    ):
+        return None
+    return {
+        "reference": str(reservation["id"]),
+        "hotel_name": hotel["name"],
+        "guest_name": reservation["guest_name"],
+        "room_number": str(reservation["room_number"]),
+        "room_type": room["name"],
+        "check_in": str(reservation["check_in"]),
+        "check_out": str(reservation["check_out"]),
+        "amount": int(reservation["amount"]),
+        "amount_paid": int(reservation["amount_paid"]),
+        "payment_method": reservation["payment_method"],
+    }
+
+
+def store_booking_push_subscription(reservation_id, hotel_id, subscription):
+    subscription_json = json.dumps(subscription, separators=(",", ":"))
+    endpoint = subscription["endpoint"]
+    if SUPABASE_ENABLED:
+        get_supabase_admin().table("web_push_subscriptions").upsert(
+            {
+                "reservation_id": str(reservation_id),
+                "hotel_id": hotel_id,
+                "endpoint": endpoint,
+                "subscription": subscription,
+                "created_at": now_iso(),
+                "notified_at": None,
+            },
+            on_conflict="endpoint,reservation_id",
+        ).execute()
+        return
+    db = get_db()
+    db.execute(
+        """INSERT INTO web_push_subscriptions
+        (reservation_id, hotel_id, endpoint, subscription_json, created_at, notified_at)
+        VALUES (?, ?, ?, ?, ?, NULL)
+        ON CONFLICT(endpoint, reservation_id) DO UPDATE SET
+            hotel_id = excluded.hotel_id,
+            subscription_json = excluded.subscription_json,
+            created_at = excluded.created_at,
+            notified_at = NULL""",
+        (
+            str(reservation_id),
+            hotel_id,
+            endpoint,
+            subscription_json,
+            now_iso(),
+        ),
+    )
+    db.commit()
+
+
+def booking_push_subscriptions(reservation_id, hotel_id):
+    if SUPABASE_ENABLED:
+        return get_supabase_admin().table("web_push_subscriptions").select(
+            "id, endpoint, subscription"
+        ).eq(
+            "reservation_id", str(reservation_id)
+        ).eq("hotel_id", hotel_id).execute().data or []
+    rows = get_db().execute(
+        """SELECT id, endpoint, subscription_json
+        FROM web_push_subscriptions
+        WHERE reservation_id = ? AND hotel_id = ?""",
+        (str(reservation_id), hotel_id),
+    ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "endpoint": row["endpoint"],
+            "subscription": json.loads(row["subscription_json"]),
+        }
+        for row in rows
+    ]
+
+
+def delete_booking_push_subscription(subscription_id):
+    if SUPABASE_ENABLED:
+        get_supabase_admin().table("web_push_subscriptions").delete().eq(
+            "id", subscription_id
+        ).execute()
+        return
+    db = get_db()
+    db.execute("DELETE FROM web_push_subscriptions WHERE id = ?", (subscription_id,))
+    db.commit()
+
+
+def mark_booking_push_subscription_notified(subscription_id):
+    if SUPABASE_ENABLED:
+        get_supabase_admin().table("web_push_subscriptions").update(
+            {"notified_at": now_iso()}
+        ).eq("id", subscription_id).execute()
+        return
+    db = get_db()
+    db.execute(
+        "UPDATE web_push_subscriptions SET notified_at = ? WHERE id = ?",
+        (now_iso(), subscription_id),
+    )
+    db.commit()
+
+
+def send_booking_receipt_notifications(reservation_id, hotel_id):
+    if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY or webpush is None:
+        app.logger.warning(
+            "Booking %s was approved but web push is not configured.",
+            reservation_id,
+        )
+        return
+    receipt = verified_booking_receipt(reservation_id, hotel_id)
+    if not receipt:
+        app.logger.warning(
+            "Booking %s was approved but its receipt details could not be loaded.",
+            reservation_id,
+        )
+        return
+    receipt_token = URLSafeTimedSerializer(
+        app.config["SECRET_KEY"], salt="public-booking-receipt"
+    ).dumps({
+        "reservation_id": str(reservation_id),
+        "hotel_id": str(hotel_id),
+    })
+    receipt_url = url_for(
+        "public_booking_receipt",
+        token=receipt_token,
+        _external=True,
+    )
+    subscriptions = booking_push_subscriptions(reservation_id, hotel_id)
+    payload = json.dumps({
+        "title": "Booking approved",
+        "body": (
+            f"{receipt['hotel_name']} approved booking {receipt['reference']}. "
+            "Tap to view your receipt."
+        ),
+        "url": receipt_url,
+    })
+    for subscription in subscriptions:
+        try:
+            webpush(
+                subscription_info=subscription["subscription"],
+                data=payload,
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims={"sub": VAPID_SUBJECT},
+            )
+        except WebPushException as error:
+            app.logger.exception(
+                "Could not send booking receipt push for reservation %s.",
+                reservation_id,
+            )
+            response = getattr(error, "response", None)
+            if response is not None and response.status_code in {404, 410}:
+                delete_booking_push_subscription(subscription["id"])
+        else:
+            mark_booking_push_subscription_notified(subscription["id"])
 
 
 def build_payment_confirmation_message(booking, payer_account_name, payer_account_number):
@@ -2571,6 +2802,7 @@ def public_api_photo_url(photo_url):
 def public_booking_api_config():
     return jsonify({
         "states": NIGERIAN_STATES,
+        "push_public_key": VAPID_PUBLIC_KEY,
         "price_ranges": [
             {"key": key, "label": label}
             for key, label, _minimum, _maximum in PUBLIC_PRICE_RANGES
@@ -2667,6 +2899,81 @@ def public_booking_api_create():
     return jsonify({
         "booking": dict(session["online_booking_confirmation"]),
     }), 201
+
+
+@app.post("/api/public/push-subscriptions")
+def public_booking_push_subscription():
+    if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY or webpush is None:
+        return jsonify({"error": "Booking notifications are not configured."}), 503
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Send the push subscription as a JSON object."}), 400
+    token = form_text(payload.get("token"))
+    subscription = payload.get("subscription")
+    try:
+        token_data = URLSafeTimedSerializer(
+            app.config["SECRET_KEY"], salt="public-booking-push-subscription"
+        ).loads(token, max_age=7 * 24 * 60 * 60)
+    except (BadSignature, SignatureExpired):
+        return jsonify({"error": "The booking notification link is invalid or expired."}), 403
+    if not isinstance(token_data, dict) or not isinstance(subscription, dict):
+        return jsonify({"error": "The booking notification details are invalid."}), 400
+    endpoint = form_text(subscription.get("endpoint"))
+    endpoint_url = urlparse(endpoint)
+    keys = subscription.get("keys")
+    if (
+        endpoint_url.scheme != "https"
+        or not endpoint_url.netloc
+        or len(endpoint) > 2048
+        or not isinstance(keys, dict)
+        or not form_text(keys.get("p256dh"))
+        or not form_text(keys.get("auth"))
+    ):
+        return jsonify({"error": "The push subscription is invalid."}), 400
+
+    reservation_id = str(token_data.get("reservation_id", ""))
+    hotel_id = str(token_data.get("hotel_id", ""))
+    if SUPABASE_ENABLED:
+        rows = get_supabase_admin().table("reservations").select(
+            "id"
+        ).eq("id", reservation_id).eq(
+            "hotel_id", hotel_id
+        ).eq("booking_source", "online").eq(
+            "status", "pending_payment"
+        ).limit(1).execute().data
+        reservation_exists = bool(rows)
+    else:
+        reservation_exists = bool(get_db().execute(
+            """SELECT 1 FROM reservations
+            WHERE id = ? AND hotel_id = ? AND booking_source = 'online'
+            AND status = 'pending_payment' LIMIT 1""",
+            (reservation_id, hotel_id),
+        ).fetchone())
+    if not reservation_exists:
+        return jsonify({
+            "error": "This booking is no longer waiting for payment approval."
+        }), 409
+    try:
+        store_booking_push_subscription(
+            reservation_id,
+            hotel_id,
+            {
+                "endpoint": endpoint,
+                "keys": {
+                    "p256dh": form_text(keys["p256dh"]),
+                    "auth": form_text(keys["auth"]),
+                },
+            },
+        )
+    except Exception:
+        app.logger.exception(
+            "Could not save push subscription for booking %s.",
+            reservation_id,
+        )
+        return jsonify({
+            "error": "Booking notifications could not be enabled. Please try again."
+        }), 503
+    return jsonify({"enabled": True}), 201
 
 
 @app.post("/api/public/whatsapp-handoff")
@@ -3098,6 +3405,26 @@ def online_booking_confirmation():
     return render_template("online_booking_confirmation.html", confirmation=confirmation)
 
 
+@app.get("/booking/receipt")
+def public_booking_receipt():
+    token = request.args.get("token", "")
+    try:
+        token_data = URLSafeTimedSerializer(
+            app.config["SECRET_KEY"], salt="public-booking-receipt"
+        ).loads(token, max_age=30 * 24 * 60 * 60)
+    except (BadSignature, SignatureExpired):
+        abort(404)
+    if not isinstance(token_data, dict):
+        abort(404)
+    receipt = verified_booking_receipt(
+        str(token_data.get("reservation_id", "")),
+        str(token_data.get("hotel_id", "")),
+    )
+    if not receipt:
+        abort(404)
+    return render_template("booking_receipt.html", receipt=receipt)
+
+
 @app.get("/commandcenter")
 def command_center():
     reporting_month = request.args.get(
@@ -3237,14 +3564,14 @@ def confirm_online_booking_route(reservation_id):
     try:
         if SUPABASE_ENABLED:
             reservations = get_request_supabase().table("reservations").select(
-                "check_in"
+                "hotel_id, check_in"
             ).eq("hotel_id", current_hotel_id()).eq(
                 "id", reservation_id
             ).eq("status", "pending_payment").limit(1).execute().data
             reservation = reservations[0] if reservations else None
         else:
             reservation = get_db().execute(
-                """SELECT check_in FROM reservations
+                """SELECT hotel_id, check_in FROM reservations
                 WHERE hotel_id = ? AND id = ? AND status = 'pending_payment'""",
                 (current_hotel_id(), reservation_id),
             ).fetchone()
@@ -3253,6 +3580,16 @@ def confirm_online_booking_route(reservation_id):
                 "This online request is no longer awaiting confirmation."
             )
         confirm_online_booking(reservation_id, session.get("username", "Reception"))
+        try:
+            send_booking_receipt_notifications(
+                reservation_id,
+                str(reservation["hotel_id"]),
+            )
+        except Exception:
+            app.logger.exception(
+                "Booking %s was approved, but its receipt notification failed.",
+                reservation_id,
+            )
         flash(f"Online booking {reservation_id} confirmed and payment recorded.", "success")
         return redirect(url_for(
             "reference_workspace",

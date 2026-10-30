@@ -117,6 +117,8 @@ class BookingConfirmation {
     required this.holdExpiresAt,
     required this.whatsappHandoffUrl,
     required this.emailNotificationSent,
+    required this.pushToken,
+    required this.pushPublicKey,
   });
 
   factory BookingConfirmation.fromJson(Map<String, dynamic> json) {
@@ -134,6 +136,8 @@ class BookingConfirmation {
       holdExpiresAt: json['hold_expires_at']?.toString() ?? '',
       whatsappHandoffUrl: json['whatsapp_handoff_url']?.toString() ?? '',
       emailNotificationSent: json['email_notification_sent'] == true,
+      pushToken: json['push_token']?.toString() ?? '',
+      pushPublicKey: json['push_public_key']?.toString() ?? '',
     );
   }
 
@@ -150,6 +154,8 @@ class BookingConfirmation {
   final String holdExpiresAt;
   final String whatsappHandoffUrl;
   final bool emailNotificationSent;
+  final String pushToken;
+  final String pushPublicKey;
 }
 
 class BookingApi {
@@ -293,6 +299,21 @@ class BookingApi {
       );
     }
     return whatsappUrl;
+  }
+
+  Future<void> savePushSubscription({
+    required String token,
+    required String subscriptionJson,
+  }) async {
+    final response = await _client.post(
+      _uri('/api/public/push-subscriptions'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'token': token,
+        'subscription': jsonDecode(subscriptionJson),
+      }),
+    );
+    _decode(response);
   }
 
   void dispose() => _client.close();

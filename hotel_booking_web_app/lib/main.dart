@@ -8,6 +8,9 @@ import 'rental_preview_page.dart';
 import 'rooms_category_tabs.dart';
 import 'services/apartment_preview_api.dart';
 import 'services/booking_api.dart';
+import 'services/push_notifications_stub.dart'
+    if (dart.library.js_interop) 'services/push_notifications_web.dart'
+    as push_notifications;
 
 void main() {
   runApp(const HotelBookingApp());
@@ -88,10 +91,18 @@ class HotelBookingApp extends StatelessWidget {
 }
 
 class HotelBookingPage extends StatefulWidget {
-  const HotelBookingPage({super.key, this.api, this.apartmentPreview = false});
+  const HotelBookingPage({
+    super.key,
+    this.api,
+    this.apartmentPreview = false,
+    this.whatsappLauncher,
+    this.pushSubscriptionCreator,
+  });
 
   final BookingApi? api;
   final bool apartmentPreview;
+  final Future<bool> Function(Uri uri)? whatsappLauncher;
+  final Future<String> Function(String publicKey)? pushSubscriptionCreator;
 
   @override
   State<HotelBookingPage> createState() => _HotelBookingPageState();
@@ -131,8 +142,12 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   bool _loadingRooms = false;
   bool _submittingBooking = false;
   bool _submittingPaymentReport = false;
+  bool _enablingPushNotifications = false;
+  bool _pushNotificationsEnabled = false;
+  bool _paymentHandoffOpened = false;
   bool _previewBookingComplete = false;
   String? _paymentWhatsappUrl;
+  String? _pushNotificationMessage;
   String? _error;
 
   bool get _isApartmentPreview => widget.apartmentPreview;
@@ -374,6 +389,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
       _confirmation = null;
       _previewBookingComplete = false;
       _paymentWhatsappUrl = null;
+      _paymentHandoffOpened = false;
       _error = null;
     });
     _loadHotels();
@@ -396,13 +412,19 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
       );
       final uri = Uri.tryParse(_paymentWhatsappUrl!);
       if (uri == null ||
-          !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+          !await (widget.whatsappLauncher?.call(uri) ??
+              launchUrl(uri, mode: LaunchMode.externalApplication))) {
         if (mounted) {
           setState(() {
             _error =
                 'Your payment report is recorded. WhatsApp could not be opened; tap again to retry.';
           });
         }
+      } else if (mounted) {
+        setState(() {
+          _paymentHandoffOpened = true;
+          _error = null;
+        });
       }
     } on BookingApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
@@ -417,6 +439,38 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
     }
   }
 
+  Future<void> _enableBookingNotifications(
+    BookingConfirmation confirmation,
+  ) async {
+    setState(() {
+      _enablingPushNotifications = true;
+      _pushNotificationMessage = null;
+    });
+    try {
+      final subscription = await (widget.pushSubscriptionCreator ??
+          push_notifications.createPushSubscription)(confirmation.pushPublicKey);
+      await _api.savePushSubscription(
+        token: confirmation.pushToken,
+        subscriptionJson: subscription,
+      );
+      if (mounted) {
+        setState(() {
+          _pushNotificationsEnabled = true;
+          _pushNotificationMessage =
+              'Notifications are enabled on this device for booking ${confirmation.reference}.';
+        });
+      }
+    } on BookingApiException catch (error) {
+      if (mounted) setState(() => _pushNotificationMessage = error.message);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _pushNotificationMessage = error.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _enablingPushNotifications = false);
+    }
+  }
+
   String _isoDate(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-'
       '${date.month.toString().padLeft(2, '0')}-'
@@ -427,7 +481,11 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
     final page = _previewBookingComplete
         ? _buildApartmentPreviewConfirmation()
         : _confirmation != null
-        ? _buildCategoryFlow(_buildConfirmation(_confirmation!))
+        ? _buildCategoryFlow(
+            _paymentHandoffOpened
+                ? _buildReceiptWaiting(_confirmation!)
+                : _buildConfirmation(_confirmation!),
+          )
         : _selectedHotel != null
         ? _buildCategoryFlow(_buildRoomsPage(_selectedHotel!))
         : _buildHotelsPage();
@@ -1332,6 +1390,43 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                   ),
                 ),
                 const SizedBox(height: 16),
+                if (confirmation.pushPublicKey.isNotEmpty)
+                  _ConfirmationCard(
+                    title: 'Booking notifications',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          _pushNotificationMessage ??
+                              'Get an alert and receipt link when Reception approves your booking.',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        if (!_pushNotificationsEnabled) ...[
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed: _enablingPushNotifications
+                                ? null
+                                : () => _enableBookingNotifications(
+                                    confirmation,
+                                  ),
+                            icon: const Icon(Icons.notifications_active_outlined),
+                            label: Text(
+                              _enablingPushNotifications
+                                  ? 'Enabling notifications…'
+                                  : 'Enable booking notifications',
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  )
+                else
+                  const _InfoNote(
+                    icon: Icons.notifications_off_outlined,
+                    text:
+                        'Booking notifications are not configured for this service yet.',
+                  ),
+                const SizedBox(height: 16),
                 if (confirmation.emailNotificationSent)
                   const _InfoNote(
                     icon: Icons.mark_email_read_outlined,
@@ -1415,6 +1510,68 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                 OutlinedButton(
                   onPressed: _backToHotels,
                   child: const Text('Back to hotels'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReceiptWaiting(BookingConfirmation confirmation) {
+    return SingleChildScrollView(
+      key: const ValueKey('receipt-waiting'),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 680),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 64),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Icon(
+                  Icons.hourglass_top_rounded,
+                  size: 64,
+                  color: Color(0xFF17607A),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'Please wait for your booking receipt',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Your payment details are recorded. WhatsApp opened with a '
+                  'message for ${confirmation.hotelName}; send it there if you '
+                  'have not already. Reception must verify your payment and '
+                  'approve the booking before your receipt is issued.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 24),
+                _ConfirmationCard(
+                  title: 'Booking request',
+                  child: Column(
+                    children: [
+                      _DetailRow(
+                        label: 'Reference',
+                        value: confirmation.reference,
+                      ),
+                      _DetailRow(label: 'Hotel', value: confirmation.hotelName),
+                      _DetailRow(
+                        label: 'Status',
+                        value: 'Waiting for Reception approval',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const _InfoNote(
+                  icon: Icons.info_outline_rounded,
+                  text:
+                      'This is not yet a confirmed booking. Keep your reference and wait for the hotel to verify the transfer.',
                 ),
               ],
             ),

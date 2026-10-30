@@ -801,6 +801,8 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(booking_result["hotel_name"], "Flutter API Hotel")
         self.assertEqual(booking_result["amount"], 75000)
         self.assertEqual(booking_result["bank_name"], "API Suite Bank")
+        self.assertTrue(booking_result["push_token"])
+        self.assertIn("push_public_key", booking_result)
         self.assertIn(
             "/api/public/whatsapp-handoff?token=",
             booking_result["whatsapp_handoff_url"],
@@ -839,6 +841,65 @@ class MultiHotelFlowTests(unittest.TestCase):
             self.assertEqual(event["amount"], 75000)
             self.assertEqual(event["status"], "payment_reported")
             self.assertEqual(event["message_text"], whatsapp_message)
+
+        with (
+            patch.object(self.app_module, "VAPID_PUBLIC_KEY", "test-public-key"),
+            patch.object(self.app_module, "VAPID_PRIVATE_KEY", "test-private-key"),
+            patch.object(self.app_module, "webpush", return_value={}) as send_push,
+        ):
+            subscription_response = guest.post(
+                "/api/public/push-subscriptions",
+                json={
+                    "token": booking_result["push_token"],
+                    "subscription": {
+                        "endpoint": "https://push.example.test/subscription/42",
+                        "keys": {"p256dh": "public-key", "auth": "auth-key"},
+                    },
+                },
+            )
+            self.assertEqual(subscription_response.status_code, 201)
+            self.assertTrue(subscription_response.get_json()["enabled"])
+
+            unapproved_receipt_token = self.app_module.URLSafeTimedSerializer(
+                self.app_module.app.config["SECRET_KEY"],
+                salt="public-booking-receipt",
+            ).dumps({
+                "reservation_id": booking_result["reference"],
+                "hotel_id": hotel_id,
+            })
+            unapproved_receipt = guest.get(
+                "/booking/receipt",
+                query_string={"token": unapproved_receipt_token},
+            )
+            self.assertEqual(unapproved_receipt.status_code, 404)
+
+            reception = self.app_module.app.test_client()
+            reception_login = reception.post("/login/reception", data={
+                "username": "reception-flutter-api",
+                "password": "ReceptionPass123!",
+            })
+            self.assertEqual(reception_login.status_code, 302)
+            approval = reception.post(
+                f"/online-bookings/{booking_result['reference']}/confirm"
+            )
+            self.assertEqual(approval.status_code, 302)
+            send_push.assert_called_once()
+            notification = json.loads(send_push.call_args.kwargs["data"])
+            self.assertEqual(notification["title"], "Booking approved")
+            self.assertIn(booking_result["reference"], notification["body"])
+            receipt_url = urlparse(notification["url"])
+            receipt = guest.get(receipt_url.path + "?" + receipt_url.query)
+            self.assertEqual(receipt.status_code, 200)
+            self.assertIn(b"Your booking receipt", receipt.data)
+            self.assertIn(b"Payment verified", receipt.data)
+
+        with self.app_module.app.app_context():
+            saved_subscription = self.app_module.get_db().execute(
+                """SELECT notified_at FROM web_push_subscriptions
+                WHERE reservation_id = ?""",
+                (booking_result["reference"],),
+            ).fetchone()
+            self.assertIsNotNone(saved_subscription["notified_at"])
         send_reception_email.assert_called_once()
 
     def test_whatsapp_handoff_command_center_is_controller_only(self):

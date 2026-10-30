@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#17607a">
+  <title>Booking receipt · {{ receipt.hotel_name }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
+  <style>
+    .receipt-card { max-width: 680px; margin: 32px auto; padding: 28px; border: 1px solid #dce5eb; border-radius: 16px; background: #fff; }
+    .receipt-status { color: #176b48; font-weight: 700; }
+    .receipt-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+    @media print { .public-booking-header, .receipt-actions { display: none; } .receipt-card { border: 0; margin: 0 auto; } }
+  </style>
+</head>
+<body class="public-booking-page">
+  <header class="public-booking-header">
+    <a href="{{ url_for('home') }}">HAIDWARE HOTEL BOOKING</a>
+    <span>{{ receipt.hotel_name }} · Booking receipt</span>
+  </header>
+  <main class="public-booking-main">
+    <section class="receipt-card">
+      <p class="receipt-status">Booking confirmed · Payment verified</p>
+      <h1>Your booking receipt</h1>
+      <p>Reception has approved your booking and confirmed payment.</p>
+      <dl>
+        <dt>Receipt reference</dt><dd>{{ receipt.reference }}</dd>
+        <dt>Guest</dt><dd>{{ receipt.guest_name }}</dd>
+        <dt>Hotel</dt><dd>{{ receipt.hotel_name }}</dd>
+        <dt>Room</dt><dd>{{ receipt.room_type }} · {{ receipt.room_number }}</dd>
+        <dt>Stay</dt><dd>{{ receipt.check_in }} to {{ receipt.check_out }}</dd>
+        <dt>Payment method</dt><dd>{{ receipt.payment_method }}</dd>
+        <dt>Amount paid</dt><dd>₦{{ '{:,.0f}'.format(receipt.amount_paid) }}</dd>
+      </dl>
+      <div class="receipt-actions">
+        <button class="primary-button" type="button" onclick="window.print()">Print receipt</button>
+        <a class="primary-button" href="{{ url_for('home') }}">Return to Rooms</a>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
