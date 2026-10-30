@@ -40,6 +40,15 @@ class _BookingFlowApi extends _EmptyBookingApi {
   String? savedPushToken;
   String? savedPushSubscription;
 
+  @override
+  Future<Map<String, dynamic>> loadConfig() async => {
+    'states': ['Lagos'],
+    'price_ranges': [
+      {'key': '10000-50000', 'label': '₦10,000–₦50,000'},
+    ],
+    'push_public_key': 'test-vapid-public-key',
+  };
+
   static const hotel = Hotel(
     id: '1',
     slug: 'labim-hotel',
@@ -459,6 +468,11 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
+      expect(find.text('Get booking notifications'), findsOneWidget);
+      expect(find.text('Allow notifications'), findsOneWidget);
+      await tester.tap(find.text('Allow notifications'));
+      await tester.pumpAndSettle();
+      expect(find.text('Get booking notifications'), findsNothing);
       await tester.ensureVisible(find.text('View rooms'));
       await tester.tap(find.text('View rooms'));
       await tester.pumpAndSettle();
@@ -505,12 +519,10 @@ void main() {
 
       expect(find.text('Bank transfer details'), findsOneWidget);
       expect(find.text('Booking notifications'), findsOneWidget);
-      expect(find.text('Enable booking notifications'), findsOneWidget);
-      await tester.ensureVisible(find.text('Enable booking notifications'));
-      await tester.tap(find.text('Enable booking notifications'));
-      await tester.pumpAndSettle();
       expect(
-        find.textContaining('Notifications are enabled on this device'),
+        find.textContaining(
+          'This device will be notified when Reception approves your booking.',
+        ),
         findsOneWidget,
       );
       expect(api.savedPushToken, 'signed-push-token');
