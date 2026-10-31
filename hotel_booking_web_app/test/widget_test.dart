@@ -8,6 +8,7 @@ import 'package:flutter/material.dart'
         MaterialPageRoute,
         NavigatorState,
         Scrollable,
+        SizedBox,
         Text,
         TextFormField;
 import 'package:flutter_test/flutter_test.dart';
@@ -446,6 +447,45 @@ void main() {
     expect(layoutException, isNull, reason: '$layoutException');
   });
 
+  testWidgets('home screen setup guide stays dismissed after Got it', (
+    tester,
+  ) async {
+    var installPromptDismissed = false;
+    final api = _BookingFlowApi();
+    await tester.pumpWidget(
+      HotelBookingApp(
+        bookingPage: HotelBookingPage(
+          api: api,
+          installPromptDismissed: () => installPromptDismissed,
+          installPromptDismiss: () => installPromptDismissed = true,
+          installPromptPlatform: () => 'android',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Add Rooms to your Home Screen'), findsOneWidget);
+    expect(find.text('Install with Google Chrome'), findsOneWidget);
+    expect(find.text('Got it'), findsOneWidget);
+    await tester.tap(find.text('Got it'));
+    await tester.pumpAndSettle();
+    expect(installPromptDismissed, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(
+      HotelBookingApp(
+        bookingPage: HotelBookingPage(
+          api: _BookingFlowApi(),
+          installPromptDismissed: () => installPromptDismissed,
+          installPromptDismiss: () => installPromptDismissed = true,
+          installPromptPlatform: () => 'android',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Add Rooms to your Home Screen'), findsNothing);
+  });
+
   testWidgets(
     'booking ends with bank instructions and payment WhatsApp handoff',
     (tester) async {
@@ -454,6 +494,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
+      var installPromptDismissed = false;
       final api = _BookingFlowApi();
       await tester.pumpWidget(
         HotelBookingApp(
@@ -463,16 +504,21 @@ void main() {
             pushSubscriptionCreator: (_) async =>
                 '{"endpoint":"https://push.example.test/subscription",'
                 '"keys":{"p256dh":"public-key","auth":"auth-key"}}',
+            installPromptDismissed: () => installPromptDismissed,
+            installPromptDismiss: () => installPromptDismissed = true,
+            installPromptPlatform: () => 'android',
           ),
         ),
       );
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      expect(find.text('Get booking notifications'), findsOneWidget);
+      expect(find.text('Add Rooms to your Home Screen'), findsOneWidget);
+      expect(find.text('Install with Google Chrome'), findsOneWidget);
       expect(find.text('Allow notifications'), findsOneWidget);
       await tester.tap(find.text('Allow notifications'));
       await tester.pumpAndSettle();
-      expect(find.text('Get booking notifications'), findsNothing);
+      expect(find.text('Add Rooms to your Home Screen'), findsNothing);
+      expect(installPromptDismissed, isTrue);
       await tester.ensureVisible(find.text('View rooms'));
       await tester.tap(find.text('View rooms'));
       await tester.pumpAndSettle();

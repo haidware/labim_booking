@@ -72,6 +72,35 @@
 <body>
   <div id="app-loading" role="status" aria-label="Loading Rooms"></div>
   <script>
+    window.roomsInstallPrompt = {
+      hasDismissed: function () {
+        try {
+          return localStorage.getItem('rooms-install-prompt-dismissed') === 'true';
+        } catch (_) {
+          return false;
+        }
+      },
+      dismiss: function () {
+        try {
+          localStorage.setItem('rooms-install-prompt-dismissed', 'true');
+        } catch (_) {
+          // Keep the current page usable when browser storage is unavailable.
+        }
+      },
+      platform: function () {
+        const userAgent = navigator.userAgent.toLowerCase();
+        if (/iphone|ipad|ipod/.test(userAgent) ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) {
+          return 'apple';
+        }
+        if (/android/.test(userAgent)) return 'android';
+        return 'other';
+      },
+      isInstalled: function () {
+        return window.matchMedia('(display-mode: standalone)').matches ||
+          navigator.standalone === true;
+      },
+    };
     window.addEventListener('flutter-first-frame', function () {
       document.getElementById('app-loading')?.remove();
     });

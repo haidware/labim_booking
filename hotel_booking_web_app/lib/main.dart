@@ -8,6 +8,9 @@ import 'rental_preview_page.dart';
 import 'rooms_category_tabs.dart';
 import 'services/apartment_preview_api.dart';
 import 'services/booking_api.dart';
+import 'services/pwa_install_prompt_stub.dart'
+    if (dart.library.js_interop) 'services/pwa_install_prompt_web.dart'
+    as pwa_install_prompt;
 import 'services/push_notifications_stub.dart'
     if (dart.library.js_interop) 'services/push_notifications_web.dart'
     as push_notifications;
@@ -97,12 +100,20 @@ class HotelBookingPage extends StatefulWidget {
     this.apartmentPreview = false,
     this.whatsappLauncher,
     this.pushSubscriptionCreator,
+    this.installPromptDismissed,
+    this.installPromptDismiss,
+    this.installPromptPlatform,
+    this.isRunningAsInstalledApp,
   });
 
   final BookingApi? api;
   final bool apartmentPreview;
   final Future<bool> Function(Uri uri)? whatsappLauncher;
   final Future<String> Function(String publicKey)? pushSubscriptionCreator;
+  final bool Function()? installPromptDismissed;
+  final void Function()? installPromptDismiss;
+  final String Function()? installPromptPlatform;
+  final bool Function()? isRunningAsInstalledApp;
 
   @override
   State<HotelBookingPage> createState() => _HotelBookingPageState();
@@ -208,9 +219,9 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
         final match = _hotels.where((hotel) => hotel.slug == requestedHotel);
         if (match.isNotEmpty) await _openHotel(match.first);
       }
-      if (!_isApartmentPreview && _pushPublicKey.isNotEmpty) {
+      if (!_isApartmentPreview) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _showNotificationPermissionPrompt();
+          if (mounted) _showAppSetupPrompt();
         });
       }
     } on BookingApiException catch (error) {
@@ -473,73 +484,125 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
     }
   }
 
-  Future<void> _showNotificationPermissionPrompt() async {
+  Future<void> _showAppSetupPrompt() async {
+    final isInstalled =
+        (widget.isRunningAsInstalledApp ??
+        pwa_install_prompt.isRunningAsInstalledApp)();
+    if (isInstalled) return;
+    final isDismissed =
+        (widget.installPromptDismissed ??
+        pwa_install_prompt.hasDismissedInstallPrompt)();
+    if (isDismissed) return;
+
     var requesting = false;
     String? errorMessage;
+    final platform =
+        (widget.installPromptPlatform ??
+        pwa_install_prompt.installPromptPlatform)();
+    final platformInstructions = switch (platform) {
+      'apple' => (
+        'Use Safari on your iPhone or iPad',
+        'Open this link in Safari. Tap the Share button, choose “Add to Home Screen”, then tap “Add”. Internet Explorer is not available on iPhone or iPad.',
+      ),
+      'android' => (
+        'Install with Google Chrome',
+        'Open this link in Chrome. Tap the menu (⋮), choose “Install app” or “Add to Home screen”, then confirm “Install”, “Add”, or “Create shortcut”.',
+      ),
+      _ => (
+        'Add Rooms to your Home Screen',
+        'Open this link in your device’s browser menu and choose “Install app” or “Add to Home screen”. Follow the browser’s confirmation steps.',
+      ),
+    };
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          icon: const Icon(Icons.notifications_active_outlined),
-          title: const Text('Get booking notifications'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Allow Rooms to notify you when Reception approves your booking. '
-                'Your device will be linked to a booking when you request one.',
-              ),
-              if (errorMessage != null) ...[
-                const SizedBox(height: 12),
+          scrollable: true,
+          icon: const Icon(Icons.add_to_home_screen_outlined),
+          title: const Text('Add Rooms to your Home Screen'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Text(
-                  errorMessage!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  platformInstructions.$1,
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
+                const SizedBox(height: 8),
+                Text(platformInstructions.$2),
+                if (_pushPublicKey.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Then allow notifications so we can alert you when Reception approves your booking.',
+                  ),
+                ],
+                if (errorMessage != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    errorMessage!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
           actions: [
-            TextButton(
-              onPressed: requesting
-                  ? null
-                  : () => Navigator.of(dialogContext).pop(),
-              child: const Text('Not now'),
-            ),
-            FilledButton(
-              onPressed: requesting
-                  ? null
-                  : () async {
-                      setDialogState(() {
-                        requesting = true;
-                        errorMessage = null;
-                      });
-                      try {
-                        final subscription =
-                            await (widget.pushSubscriptionCreator ??
-                                push_notifications.createPushSubscription)(
-                              _pushPublicKey,
-                            );
-                        if (!dialogContext.mounted || !mounted) return;
-                        setState(() {
-                          _pendingPushSubscription = subscription;
-                          _pushNotificationMessage =
-                              'Notification permission granted. It will be linked to your booking when you request one.';
-                        });
-                        Navigator.of(dialogContext).pop();
-                      } catch (error) {
+            if (_pushPublicKey.isNotEmpty)
+              TextButton(
+                onPressed: requesting
+                    ? null
+                    : () => _dismissAppSetupPrompt(dialogContext),
+                child: const Text('Got it'),
+              ),
+            if (_pushPublicKey.isNotEmpty)
+              FilledButton(
+                onPressed: requesting
+                    ? null
+                    : () async {
                         setDialogState(() {
-                          requesting = false;
-                          errorMessage = error.toString();
+                          requesting = true;
+                          errorMessage = null;
                         });
-                      }
-                    },
-              child: Text(requesting ? 'Requesting…' : 'Allow notifications'),
-            ),
+                        try {
+                          final subscription =
+                              await (widget.pushSubscriptionCreator ??
+                                  push_notifications.createPushSubscription)(
+                                _pushPublicKey,
+                              );
+                          if (!dialogContext.mounted || !mounted) return;
+                          setState(() {
+                            _pendingPushSubscription = subscription;
+                            _pushNotificationMessage =
+                                'Notification permission granted. It will be linked to your booking when you request one.';
+                          });
+                          _dismissAppSetupPrompt(dialogContext);
+                        } catch (error) {
+                          setDialogState(() {
+                            requesting = false;
+                            errorMessage = error.toString();
+                          });
+                        }
+                      },
+                child: Text(requesting ? 'Requesting…' : 'Allow notifications'),
+              )
+            else
+              FilledButton(
+                onPressed: () => _dismissAppSetupPrompt(dialogContext),
+                child: const Text('Got it'),
+              ),
           ],
         ),
       ),
     );
+  }
+
+  void _dismissAppSetupPrompt(BuildContext dialogContext) {
+    (widget.installPromptDismiss ?? pwa_install_prompt.dismissInstallPrompt)();
+    Navigator.of(dialogContext).pop();
   }
 
   String _isoDate(DateTime date) =>
