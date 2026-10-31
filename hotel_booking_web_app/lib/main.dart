@@ -104,6 +104,8 @@ class HotelBookingPage extends StatefulWidget {
     this.installPromptDismiss,
     this.installPromptPlatform,
     this.isRunningAsInstalledApp,
+    this.notificationPermissionState,
+    this.existingPushSubscriptionLoader,
   });
 
   final BookingApi? api;
@@ -114,6 +116,8 @@ class HotelBookingPage extends StatefulWidget {
   final void Function()? installPromptDismiss;
   final String Function()? installPromptPlatform;
   final bool Function()? isRunningAsInstalledApp;
+  final String Function()? notificationPermissionState;
+  final Future<String> Function()? existingPushSubscriptionLoader;
 
   @override
   State<HotelBookingPage> createState() => _HotelBookingPageState();
@@ -221,7 +225,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
       }
       if (!_isApartmentPreview) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _showAppSetupPrompt();
+          if (mounted) _showFirstVisitPrompts();
         });
       }
     } on BookingApiException catch (error) {
@@ -484,42 +488,53 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
     }
   }
 
-  Future<void> _showAppSetupPrompt() async {
+  Future<void> _showFirstVisitPrompts() async {
     final isInstalled =
         (widget.isRunningAsInstalledApp ??
         pwa_install_prompt.isRunningAsInstalledApp)();
-    if (isInstalled) return;
-    final isDismissed =
-        (widget.installPromptDismissed ??
-        pwa_install_prompt.hasDismissedInstallPrompt)();
-    if (isDismissed) return;
-
-    var requesting = false;
-    String? errorMessage;
     final platform =
         (widget.installPromptPlatform ??
         pwa_install_prompt.installPromptPlatform)();
-    final platformInstructions = switch (platform) {
-      'apple' => (
-        'Use Safari on your iPhone or iPad',
-        'Open this link in Safari. Tap the Share button, choose “Add to Home Screen”, then tap “Add”. Internet Explorer is not available on iPhone or iPad.',
-      ),
-      'android' => (
-        'Install with Google Chrome',
-        'Open this link in Chrome. Tap the menu (⋮), choose “Install app” or “Add to Home screen”, then confirm “Install”, “Add”, or “Create shortcut”.',
-      ),
-      _ => (
-        'Add Rooms to your Home Screen',
-        'Open this link in your device’s browser menu and choose “Install app” or “Add to Home screen”. Follow the browser’s confirmation steps.',
-      ),
-    };
+    final requiresHomeScreenInstall = platform == 'apple' && !isInstalled;
+    if (_pushPublicKey.isNotEmpty) {
+      final permission =
+          (widget.notificationPermissionState ??
+          push_notifications.notificationPermissionState)();
+      if (permission == 'granted' && !requiresHomeScreenInstall) {
+        final subscription =
+            await (widget.existingPushSubscriptionLoader ??
+                push_notifications.loadExistingPushSubscription)();
+        if (!mounted) return;
+        if (subscription.isNotEmpty) {
+          _pendingPushSubscription = subscription;
+        } else {
+          await _showNotificationPrompt(permission);
+        }
+      } else if (permission != 'unsupported') {
+        await _showNotificationPrompt(
+          permission,
+          requiresHomeScreenInstall: requiresHomeScreenInstall,
+        );
+      }
+    }
+
+    if (!mounted) return;
+    if (!isInstalled) await _showHomeScreenGuide();
+  }
+
+  Future<void> _showNotificationPrompt(
+    String permission, {
+    bool requiresHomeScreenInstall = false,
+  }) async {
+    var requesting = false;
+    String? errorMessage;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           scrollable: true,
-          icon: const Icon(Icons.add_to_home_screen_outlined),
-          title: const Text('Add Rooms to your Home Screen'),
+          icon: const Icon(Icons.notifications_active_outlined),
+          title: const Text('Notification settings'),
           content: SizedBox(
             width: 420,
             child: Column(
@@ -527,17 +542,12 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  platformInstructions.$1,
-                  style: Theme.of(context).textTheme.titleMedium,
+                  requiresHomeScreenInstall
+                      ? 'On iPhone or iPad, notifications are available after Rooms is added to your Home Screen and opened as an app. Continue to see the installation steps.'
+                      : permission == 'denied'
+                      ? 'Notifications are blocked for Rooms in your browser settings. Enable them in site permissions to receive booking approval alerts.'
+                      : 'Allow Rooms to notify you when Reception approves your booking. Your device will be linked to the booking when you request one.',
                 ),
-                const SizedBox(height: 8),
-                Text(platformInstructions.$2),
-                if (_pushPublicKey.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Then allow notifications so we can alert you when Reception approves your booking.',
-                  ),
-                ],
                 if (errorMessage != null) ...[
                   const SizedBox(height: 12),
                   Text(
@@ -551,14 +561,18 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
             ),
           ),
           actions: [
-            if (_pushPublicKey.isNotEmpty)
+            if (requiresHomeScreenInstall || permission == 'denied')
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Continue'),
+              ),
+            if (!requiresHomeScreenInstall && permission != 'denied') ...[
               TextButton(
                 onPressed: requesting
                     ? null
-                    : () => _dismissAppSetupPrompt(dialogContext),
-                child: const Text('Got it'),
+                    : () => Navigator.of(dialogContext).pop(),
+                child: const Text('Not now'),
               ),
-            if (_pushPublicKey.isNotEmpty)
               FilledButton(
                 onPressed: requesting
                     ? null
@@ -579,7 +593,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                             _pushNotificationMessage =
                                 'Notification permission granted. It will be linked to your booking when you request one.';
                           });
-                          _dismissAppSetupPrompt(dialogContext);
+                          Navigator.of(dialogContext).pop();
                         } catch (error) {
                           setDialogState(() {
                             requesting = false;
@@ -588,14 +602,64 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                         }
                       },
                 child: Text(requesting ? 'Requesting…' : 'Allow notifications'),
-              )
-            else
-              FilledButton(
-                onPressed: () => _dismissAppSetupPrompt(dialogContext),
-                child: const Text('Got it'),
               ),
+            ],
           ],
         ),
+      ),
+    );
+  }
+
+  Future<void> _showHomeScreenGuide() async {
+    final isDismissed =
+        (widget.installPromptDismissed ??
+        pwa_install_prompt.hasDismissedInstallPrompt)();
+    if (isDismissed) return;
+
+    final platform =
+        (widget.installPromptPlatform ??
+        pwa_install_prompt.installPromptPlatform)();
+    final platformInstructions = switch (platform) {
+      'apple' => (
+        'Use Safari on your iPhone or iPad',
+        'Open this link in Safari. Tap the Share button, choose “Add to Home Screen”, then tap “Add”. Internet Explorer is not available on iPhone or iPad.',
+      ),
+      'android' => (
+        'Install with Google Chrome',
+        'Open this link in Chrome. Tap the menu (⋮), choose “Install app” or “Add to Home screen”, then confirm “Install”, “Add”, or “Create shortcut”.',
+      ),
+      _ => (
+        'Add Rooms to your Home Screen',
+        'Open this link in your device’s browser menu and choose “Install app” or “Add to Home screen”. Follow the browser’s confirmation steps.',
+      ),
+    };
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        scrollable: true,
+        icon: const Icon(Icons.add_to_home_screen_outlined),
+        title: const Text('Add Rooms to your Home Screen'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                platformInstructions.$1,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(platformInstructions.$2),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => _dismissAppSetupPrompt(dialogContext),
+            child: const Text('Got it'),
+          ),
+        ],
       ),
     );
   }

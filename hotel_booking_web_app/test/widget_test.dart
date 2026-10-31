@@ -459,6 +459,7 @@ void main() {
           installPromptDismissed: () => installPromptDismissed,
           installPromptDismiss: () => installPromptDismissed = true,
           installPromptPlatform: () => 'android',
+          notificationPermissionState: () => 'unsupported',
         ),
       ),
     );
@@ -479,11 +480,43 @@ void main() {
           installPromptDismissed: () => installPromptDismissed,
           installPromptDismiss: () => installPromptDismissed = true,
           installPromptPlatform: () => 'android',
+          notificationPermissionState: () => 'unsupported',
         ),
       ),
     );
     await tester.pumpAndSettle();
     expect(find.text('Add Rooms to your Home Screen'), findsNothing);
+  });
+
+  testWidgets('iPhone notification setup explains install requirement first', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      HotelBookingApp(
+        bookingPage: HotelBookingPage(
+          api: _BookingFlowApi(),
+          installPromptDismissed: () => false,
+          installPromptDismiss: () {},
+          installPromptPlatform: () => 'apple',
+          isRunningAsInstalledApp: () => false,
+          notificationPermissionState: () => 'default',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Notification settings'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'notifications are available after Rooms is added to your Home Screen',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Allow notifications'), findsNothing);
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(find.text('Use Safari on your iPhone or iPad'), findsOneWidget);
+    expect(find.text('Add Rooms to your Home Screen'), findsOneWidget);
   });
 
   testWidgets(
@@ -507,15 +540,22 @@ void main() {
             installPromptDismissed: () => installPromptDismissed,
             installPromptDismiss: () => installPromptDismissed = true,
             installPromptPlatform: () => 'android',
+            notificationPermissionState: () => 'default',
           ),
         ),
       );
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      expect(find.text('Add Rooms to your Home Screen'), findsOneWidget);
-      expect(find.text('Install with Google Chrome'), findsOneWidget);
+      expect(find.text('Notification settings'), findsOneWidget);
+      expect(find.text('Add Rooms to your Home Screen'), findsNothing);
       expect(find.text('Allow notifications'), findsOneWidget);
       await tester.tap(find.text('Allow notifications'));
+      await tester.pumpAndSettle();
+      expect(find.text('Notification settings'), findsNothing);
+      expect(find.text('Add Rooms to your Home Screen'), findsOneWidget);
+      expect(find.text('Install with Google Chrome'), findsOneWidget);
+      expect(find.text('Allow notifications'), findsNothing);
+      await tester.tap(find.text('Got it'));
       await tester.pumpAndSettle();
       expect(find.text('Add Rooms to your Home Screen'), findsNothing);
       expect(installPromptDismissed, isTrue);
