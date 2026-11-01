@@ -157,6 +157,8 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   bool _loadingRooms = false;
   bool _submittingBooking = false;
   bool _submittingPaymentReport = false;
+  bool _enablingBookingNotifications = false;
+  bool _pushSubscriptionLinked = false;
   bool _paymentHandoffOpened = false;
   bool _previewBookingComplete = false;
   String _pushPublicKey = '';
@@ -390,14 +392,16 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
       );
       if (_pendingPushSubscription != null) {
         try {
-          await _api.savePushSubscription(
+          final result = await _api.savePushSubscription(
             token: confirmation.pushToken,
             subscriptionJson: _pendingPushSubscription!,
           );
           if (mounted) {
             setState(() {
-              _pushNotificationMessage =
-                  'This device will be notified when Reception approves your booking.';
+              _pushSubscriptionLinked = true;
+              _pushNotificationMessage = result['notification_sent'] == true
+                  ? 'Reception approved this booking and the alert was sent to this device.'
+                  : 'This device is registered for an alert when Reception approves your booking.';
             });
           }
         } on BookingApiException catch (error) {
@@ -488,6 +492,47 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
     }
   }
 
+  Future<void> _enableNotificationsForBooking(
+    BookingConfirmation confirmation,
+  ) async {
+    setState(() {
+      _enablingBookingNotifications = true;
+      _pushNotificationMessage = null;
+    });
+    try {
+      final subscription =
+          await (widget.pushSubscriptionCreator ??
+              push_notifications.createPushSubscription)(
+            confirmation.pushPublicKey,
+          );
+      final result = await _api.savePushSubscription(
+        token: confirmation.pushToken,
+        subscriptionJson: subscription,
+      );
+      if (mounted) {
+        setState(() {
+          _pendingPushSubscription = subscription;
+          _pushSubscriptionLinked = true;
+          _pushNotificationMessage = result['notification_sent'] == true
+              ? 'Reception already approved this booking. An alert was sent to this device.'
+              : result['booking_approved'] == true
+              ? 'This device is linked, but we could not confirm delivery of the approval alert. Please open the receipt using your booking link.'
+              : 'Notifications are enabled for this booking. You will be alerted when Reception approves it.';
+        });
+      }
+    } on BookingApiException catch (error) {
+      if (mounted) {
+        setState(() => _pushNotificationMessage = error.message);
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _pushNotificationMessage = error.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _enablingBookingNotifications = false);
+    }
+  }
+
   Future<void> _showFirstVisitPrompts() async {
     final isInstalled =
         (widget.isRunningAsInstalledApp ??
@@ -496,11 +541,16 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
         (widget.installPromptPlatform ??
         pwa_install_prompt.installPromptPlatform)();
     final requiresHomeScreenInstall = platform == 'apple' && !isInstalled;
+    if (requiresHomeScreenInstall) {
+      await _showHomeScreenGuide();
+      return;
+    }
+
     if (_pushPublicKey.isNotEmpty) {
       final permission =
           (widget.notificationPermissionState ??
           push_notifications.notificationPermissionState)();
-      if (permission == 'granted' && !requiresHomeScreenInstall) {
+      if (permission == 'granted') {
         final subscription =
             await (widget.existingPushSubscriptionLoader ??
                 push_notifications.loadExistingPushSubscription)();
@@ -511,10 +561,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
           await _showNotificationPrompt(permission);
         }
       } else if (permission != 'unsupported') {
-        await _showNotificationPrompt(
-          permission,
-          requiresHomeScreenInstall: requiresHomeScreenInstall,
-        );
+        await _showNotificationPrompt(permission);
       }
     }
 
@@ -522,10 +569,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
     if (!isInstalled) await _showHomeScreenGuide();
   }
 
-  Future<void> _showNotificationPrompt(
-    String permission, {
-    bool requiresHomeScreenInstall = false,
-  }) async {
+  Future<void> _showNotificationPrompt(String permission) async {
     var requesting = false;
     String? errorMessage;
     await showDialog<void>(
@@ -542,9 +586,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  requiresHomeScreenInstall
-                      ? 'On iPhone or iPad, notifications are available after Rooms is added to your Home Screen and opened as an app. Continue to see the installation steps.'
-                      : permission == 'denied'
+                  permission == 'denied'
                       ? 'Notifications are blocked for Rooms in your browser settings. Enable them in site permissions to receive booking approval alerts.'
                       : 'Allow Rooms to notify you when Reception approves your booking. Your device will be linked to the booking when you request one.',
                 ),
@@ -561,12 +603,12 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
             ),
           ),
           actions: [
-            if (requiresHomeScreenInstall || permission == 'denied')
+            if (permission == 'denied')
               FilledButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
                 child: const Text('Continue'),
               ),
-            if (!requiresHomeScreenInstall && permission != 'denied') ...[
+            if (permission != 'denied') ...[
               TextButton(
                 onPressed: requesting
                     ? null
@@ -1755,6 +1797,40 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                   text:
                       'This is not yet a confirmed booking. Keep your reference and wait for the hotel to verify the transfer.',
                 ),
+                if (confirmation.pushPublicKey.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  _ConfirmationCard(
+                    title: 'Booking notifications',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          _pushNotificationMessage ??
+                              'Enable alerts on this device to know when Reception approves this booking.',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        if (!_pushSubscriptionLinked) ...[
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed: _enablingBookingNotifications
+                                ? null
+                                : () => _enableNotificationsForBooking(
+                                    confirmation,
+                                  ),
+                            icon: const Icon(
+                              Icons.notifications_active_outlined,
+                            ),
+                            label: Text(
+                              _enablingBookingNotifications
+                                  ? 'Enabling notifications…'
+                                  : 'Enable notifications for this booking',
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

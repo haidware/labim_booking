@@ -893,6 +893,29 @@ class MultiHotelFlowTests(unittest.TestCase):
             self.assertIn(b"Your booking receipt", receipt.data)
             self.assertIn(b"Payment verified", receipt.data)
 
+            late_subscription = guest.post(
+                "/api/public/push-subscriptions",
+                json={
+                    "token": booking_result["push_token"],
+                    "subscription": {
+                        "endpoint": "https://push.example.test/subscription/late",
+                        "keys": {"p256dh": "public-key", "auth": "auth-key"},
+                    },
+                },
+            )
+            self.assertEqual(late_subscription.status_code, 201)
+            self.assertTrue(late_subscription.get_json()["booking_approved"])
+            self.assertTrue(late_subscription.get_json()["notification_sent"])
+            self.assertEqual(send_push.call_count, 2)
+            self.assertEqual(
+                json.loads(send_push.call_args.kwargs["data"])["title"],
+                "Booking approved",
+            )
+            self.assertEqual(
+                send_push.call_args.kwargs["subscription_info"]["endpoint"],
+                "https://push.example.test/subscription/late",
+            )
+
         with self.app_module.app.app_context():
             saved_subscription = self.app_module.get_db().execute(
                 """SELECT notified_at FROM web_push_subscriptions

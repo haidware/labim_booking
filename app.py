@@ -2062,20 +2062,22 @@ def mark_booking_push_subscription_notified(subscription_id):
     db.commit()
 
 
-def send_booking_receipt_notifications(reservation_id, hotel_id):
+def send_booking_receipt_notifications(
+    reservation_id, hotel_id, subscription_endpoint=None,
+):
     if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY or webpush is None:
         app.logger.warning(
             "Booking %s was approved but web push is not configured.",
             reservation_id,
         )
-        return
+        return 0
     receipt = verified_booking_receipt(reservation_id, hotel_id)
     if not receipt:
         app.logger.warning(
             "Booking %s was approved but its receipt details could not be loaded.",
             reservation_id,
         )
-        return
+        return 0
     receipt_token = URLSafeTimedSerializer(
         app.config["SECRET_KEY"], salt="public-booking-receipt"
     ).dumps({
@@ -2088,6 +2090,17 @@ def send_booking_receipt_notifications(reservation_id, hotel_id):
         _external=True,
     )
     subscriptions = booking_push_subscriptions(reservation_id, hotel_id)
+    if subscription_endpoint:
+        subscriptions = [
+            subscription for subscription in subscriptions
+            if subscription["endpoint"] == subscription_endpoint
+        ]
+    if not subscriptions:
+        app.logger.warning(
+            "Booking %s was approved but has no registered device push subscription.",
+            reservation_id,
+        )
+        return 0
     payload = json.dumps({
         "title": "Booking approved",
         "body": (
@@ -2096,6 +2109,7 @@ def send_booking_receipt_notifications(reservation_id, hotel_id):
         ),
         "url": receipt_url,
     })
+    sent_count = 0
     for subscription in subscriptions:
         try:
             webpush(
@@ -2114,6 +2128,8 @@ def send_booking_receipt_notifications(reservation_id, hotel_id):
                 delete_booking_push_subscription(subscription["id"])
         else:
             mark_booking_push_subscription_notified(subscription["id"])
+            sent_count += 1
+    return sent_count
 
 
 def build_payment_confirmation_message(booking, payer_account_name, payer_account_number):
@@ -2935,23 +2951,22 @@ def public_booking_push_subscription():
     hotel_id = str(token_data.get("hotel_id", ""))
     if SUPABASE_ENABLED:
         rows = get_supabase_admin().table("reservations").select(
-            "id"
+            "id, status"
         ).eq("id", reservation_id).eq(
             "hotel_id", hotel_id
-        ).eq("booking_source", "online").eq(
-            "status", "pending_payment"
-        ).limit(1).execute().data
-        reservation_exists = bool(rows)
+        ).eq("booking_source", "online").limit(1).execute().data
+        reservation = rows[0] if rows else None
     else:
-        reservation_exists = bool(get_db().execute(
-            """SELECT 1 FROM reservations
-            WHERE id = ? AND hotel_id = ? AND booking_source = 'online'
-            AND status = 'pending_payment' LIMIT 1""",
+        reservation = get_db().execute(
+            """SELECT id, status FROM reservations
+            WHERE id = ? AND hotel_id = ? AND booking_source = 'online'""",
             (reservation_id, hotel_id),
-        ).fetchone())
-    if not reservation_exists:
+        ).fetchone()
+    if not reservation or reservation["status"] not in {
+        "pending_payment", "booked", "checked_in", "checked_out",
+    }:
         return jsonify({
-            "error": "This booking is no longer waiting for payment approval."
+            "error": "This booking is not eligible for notification enrollment."
         }), 409
     try:
         store_booking_push_subscription(
@@ -2973,7 +2988,29 @@ def public_booking_push_subscription():
         return jsonify({
             "error": "Booking notifications could not be enabled. Please try again."
         }), 503
-    return jsonify({"enabled": True}), 201
+    booking_approved = reservation["status"] in {
+        "booked", "checked_in", "checked_out",
+    }
+    notification_sent = False
+    if booking_approved:
+        try:
+            notification_sent = bool(
+                send_booking_receipt_notifications(
+                    reservation_id,
+                    hotel_id,
+                    subscription_endpoint=endpoint,
+                )
+            )
+        except Exception:
+            app.logger.exception(
+                "Could not send an approval push after notification enrollment for booking %s.",
+                reservation_id,
+            )
+    return jsonify({
+        "enabled": True,
+        "booking_approved": booking_approved,
+        "notification_sent": notification_sent,
+    }), 201
 
 
 @app.post("/api/public/whatsapp-handoff")

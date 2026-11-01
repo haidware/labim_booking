@@ -301,7 +301,7 @@ class BookingApi {
     return whatsappUrl;
   }
 
-  Future<void> savePushSubscription({
+  Future<Map<String, dynamic>> savePushSubscription({
     required String token,
     required String subscriptionJson,
   }) async {
@@ -313,7 +313,7 @@ class BookingApi {
         'subscription': jsonDecode(subscriptionJson),
       }),
     );
-    _decode(response);
+    return _decode(response);
   }
 
   void dispose() => _client.close();

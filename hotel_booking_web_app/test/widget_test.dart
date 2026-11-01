@@ -124,12 +124,17 @@ class _BookingFlowApi extends _EmptyBookingApi {
   }) async => 'https://wa.me/2348000000000?text=payment';
 
   @override
-  Future<void> savePushSubscription({
+  Future<Map<String, dynamic>> savePushSubscription({
     required String token,
     required String subscriptionJson,
   }) async {
     savedPushToken = token;
     savedPushSubscription = subscriptionJson;
+    return {
+      'enabled': true,
+      'booking_approved': false,
+      'notification_sent': false,
+    };
   }
 }
 
@@ -488,9 +493,10 @@ void main() {
     expect(find.text('Add Rooms to your Home Screen'), findsNothing);
   });
 
-  testWidgets('iPhone notification setup explains install requirement first', (
+  testWidgets('iPhone Home Screen guide comes before notification settings', (
     tester,
   ) async {
+    var isInstalled = false;
     await tester.pumpWidget(
       HotelBookingApp(
         bookingPage: HotelBookingPage(
@@ -498,25 +504,37 @@ void main() {
           installPromptDismissed: () => false,
           installPromptDismiss: () {},
           installPromptPlatform: () => 'apple',
-          isRunningAsInstalledApp: () => false,
+          isRunningAsInstalledApp: () => isInstalled,
           notificationPermissionState: () => 'default',
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Notification settings'), findsOneWidget);
-    expect(
-      find.textContaining(
-        'notifications are available after Rooms is added to your Home Screen',
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('Allow notifications'), findsNothing);
-    await tester.tap(find.text('Continue'));
-    await tester.pumpAndSettle();
-    expect(find.text('Use Safari on your iPhone or iPad'), findsOneWidget);
     expect(find.text('Add Rooms to your Home Screen'), findsOneWidget);
+    expect(find.text('Use Safari on your iPhone or iPad'), findsOneWidget);
+    expect(find.text('Notification settings'), findsNothing);
+    await tester.tap(find.text('Got it'));
+    await tester.pumpAndSettle();
+
+    isInstalled = true;
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(
+      HotelBookingApp(
+        bookingPage: HotelBookingPage(
+          api: _BookingFlowApi(),
+          installPromptDismissed: () => true,
+          installPromptDismiss: () {},
+          installPromptPlatform: () => 'apple',
+          isRunningAsInstalledApp: () => isInstalled,
+          notificationPermissionState: () => 'default',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Notification settings'), findsOneWidget);
+    expect(find.text('Allow notifications'), findsOneWidget);
+    expect(find.text('Add Rooms to your Home Screen'), findsNothing);
   });
 
   testWidgets(
@@ -549,7 +567,7 @@ void main() {
       expect(find.text('Notification settings'), findsOneWidget);
       expect(find.text('Add Rooms to your Home Screen'), findsNothing);
       expect(find.text('Allow notifications'), findsOneWidget);
-      await tester.tap(find.text('Allow notifications'));
+      await tester.tap(find.text('Not now'));
       await tester.pumpAndSettle();
       expect(find.text('Notification settings'), findsNothing);
       expect(find.text('Add Rooms to your Home Screen'), findsOneWidget);
@@ -605,14 +623,7 @@ void main() {
 
       expect(find.text('Bank transfer details'), findsOneWidget);
       expect(find.text('Booking notifications'), findsOneWidget);
-      expect(
-        find.textContaining(
-          'This device will be notified when Reception approves your booking.',
-        ),
-        findsOneWidget,
-      );
-      expect(api.savedPushToken, 'signed-push-token');
-      expect(api.savedPushSubscription, contains('"endpoint"'));
+      expect(api.savedPushToken, isNull);
       expect(
         find.textContaining('Your payment report will be saved'),
         findsOneWidget,
@@ -628,6 +639,23 @@ void main() {
       expect(find.text('Please wait for your booking receipt'), findsOneWidget);
       expect(find.text('42'), findsOneWidget);
       expect(find.text('Waiting for Reception approval'), findsOneWidget);
+      expect(
+        find.text('Enable notifications for this booking'),
+        findsOneWidget,
+      );
+      await tester.ensureVisible(
+        find.text('Enable notifications for this booking'),
+      );
+      await tester.tap(find.text('Enable notifications for this booking'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining(
+          'Notifications are enabled for this booking. You will be alerted',
+        ),
+        findsOneWidget,
+      );
+      expect(api.savedPushToken, 'signed-push-token');
+      expect(api.savedPushSubscription, contains('"endpoint"'));
       expect(
         find.textContaining(
           'Reception must verify your payment and approve the booking',
