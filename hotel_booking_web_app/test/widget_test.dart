@@ -640,6 +640,14 @@ void main() {
       expect(find.text('42'), findsOneWidget);
       expect(find.text('Waiting for Reception approval'), findsOneWidget);
       expect(
+        find.textContaining('WhatsApp does not send the message automatically'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('tap Send to contact Reception'),
+        findsOneWidget,
+      );
+      expect(
         find.text('Enable notifications for this booking'),
         findsOneWidget,
       );

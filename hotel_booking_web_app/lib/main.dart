@@ -1767,10 +1767,12 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'Your payment details are recorded. WhatsApp opened with a '
-                  'message for ${confirmation.hotelName}; send it there if you '
-                  'have not already. Reception must verify your payment and '
-                  'approve the booking before your receipt is issued.',
+                  'Your payment details are recorded. WhatsApp does not send '
+                  'the message automatically. In WhatsApp, review the '
+                  'prefilled message for ${confirmation.hotelName} and tap '
+                  'Send to contact Reception. Return here afterward. Reception '
+                  'must verify your payment and approve the booking before '
+                  'your receipt is issued.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
