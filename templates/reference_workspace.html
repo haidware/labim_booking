@@ -90,7 +90,7 @@
           <article class="online-room-manager-card">
             <div><strong>Room {{ room.number }} · {{ room.type }}</strong><small>{{ room.beds }} bed{{ '' if room.beds == 1 else 's' }} · ₦{{ '{:,.0f}'.format(room.rate) }} per night</small>
               {% if room.photo_urls %}<div class="online-room-photo-gallery">{% for photo_url in room.photo_urls %}<img src="{{ photo_url }}" alt="Room {{ room.number }} photo {{ loop.index }}">{% endfor %}</div>{% else %}<p>No room photos uploaded.</p>{% endif %}
-              {% if room.video_url %}<video class="online-room-video-preview" controls preload="metadata" src="{{ room.video_url }}">Your browser does not support MP4 video.</video>{% endif %}
+              {% if room.video_url %}<video class="online-room-video-preview" controls preload="metadata" src="{{ room.video_url }}">Your browser does not support this room video.</video>{% endif %}
             </div>
             <form class="online-settings-form" method="post">
               <input type="hidden" name="action" value="listing">
@@ -100,7 +100,7 @@
             </form>
             <form class="online-photo-upload" method="post" enctype="multipart/form-data" action="{{ url_for('manage_online_room', room_number=room.number) }}">
               <label>Room photos (optional; choose up to 5 JPG, PNG, or WebP images, max 5 MB each. Choosing photos replaces the existing photo set.)<input type="file" name="photos" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple></label>
-              <label>Room video (optional; one MP4 video up to 3 minutes and 100 MB. Uploading a video replaces the current video.)<input type="file" name="video" accept=".mp4,video/mp4"></label>
+              <label>Room video (optional; one MP4 or MOV video up to 3 minutes and 100 MB. Uploading a video replaces the current video.)<input type="file" name="video" accept=".mp4,.mov,video/mp4,video/quicktime"></label>
               <button class="secondary-button" type="submit">Save room media</button>
             </form>
           </article>

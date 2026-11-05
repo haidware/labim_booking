@@ -1718,7 +1718,7 @@ def save_online_room_listing(room_number, form):
         db.commit()
 
 
-def _mp4_duration_seconds(content):
+def _video_container_duration_seconds(content):
     def boxes(start, end):
         while start + 8 <= end:
             size = int.from_bytes(content[start:start + 4], "big")
@@ -1829,17 +1829,22 @@ def save_room_photos(room_number, uploaded_files, uploaded_video=None):
     validated_video = None
     if video is not None:
         extension = Path(secure_filename(video.filename)).suffix.lower()
-        if extension != ".mp4" or video.mimetype != "video/mp4":
-            raise ValueError("Use an MP4 room video.")
+        video_types = {
+            ".mp4": "video/mp4",
+            ".mov": "video/quicktime",
+        }
+        content_type = video_types.get(extension)
+        if content_type is None or video.mimetype != content_type:
+            raise ValueError("Use an MP4 or MOV room video.")
         content = video.stream.read(MAX_ROOM_VIDEO_BYTES + 1)
         if not content or len(content) > MAX_ROOM_VIDEO_BYTES:
             raise ValueError("The room video must be between 1 byte and 100 MB.")
-        duration = _mp4_duration_seconds(content)
+        duration = _video_container_duration_seconds(content)
         if duration is None or duration <= 0:
-            raise ValueError("The uploaded file is not a supported MP4 video.")
+            raise ValueError("The uploaded file is not a supported MP4 or MOV video.")
         if duration > MAX_ROOM_VIDEO_SECONDS:
             raise ValueError("The room video must be 3 minutes or shorter.")
-        validated_video = (content, "video/mp4")
+        validated_video = (content, content_type, extension)
 
     hotel_id = current_hotel_id()
     if SUPABASE_ENABLED:
@@ -1867,7 +1872,7 @@ def save_room_photos(room_number, uploaded_files, uploaded_video=None):
                 )
                 photo_paths.append(photo_path)
             if validated_video:
-                video_path = f"{hotel_id}/{uuid4().hex}.mp4"
+                video_path = f"{hotel_id}/{uuid4().hex}{validated_video[2]}"
                 admin.storage.from_(ROOM_PHOTO_BUCKET).upload(
                     video_path,
                     validated_video[0],
@@ -1931,7 +1936,7 @@ def save_room_photos(room_number, uploaded_files, uploaded_video=None):
             destination.write_bytes(content)
             photo_paths.append(photo_path)
         if validated_video:
-            video_path = f"{hotel_id}/{uuid4().hex}.mp4"
+            video_path = f"{hotel_id}/{uuid4().hex}{validated_video[2]}"
             destination = ROOM_PHOTO_DIRECTORY / video_path
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(validated_video[0])
@@ -3967,15 +3972,18 @@ def online_room_photo(photo_path):
 @app.get("/room-videos/<path:video_path>")
 def online_room_video(video_path):
     valid_path = re.fullmatch(
-        r"(?:[0-9a-f-]{36}/)?[a-f0-9]{32}\.mp4",
+        r"(?:[0-9a-f-]{36}/)?[a-f0-9]{32}\.(?:mp4|mov)",
         video_path,
     )
     if SUPABASE_ENABLED or not valid_path:
         return "", 404
+    content_type = (
+        "video/quicktime" if video_path.endswith(".mov") else "video/mp4"
+    )
     return send_from_directory(
         ROOM_PHOTO_DIRECTORY,
         video_path,
-        mimetype="video/mp4",
+        mimetype=content_type,
         conditional=True,
     )
 

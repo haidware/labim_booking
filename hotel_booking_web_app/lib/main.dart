@@ -968,7 +968,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                       child: Text(
                         _isApartmentPreview
                             ? 'Sample apartments for your stay'
-                            : 'Live hotels and live available rooms',
+                            : 'Live hotels',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                     ),

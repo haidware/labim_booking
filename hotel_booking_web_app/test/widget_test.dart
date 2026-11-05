@@ -283,7 +283,7 @@ void main() {
     expect(find.text('Apartment'), findsOneWidget);
     expect(find.text('Homes'), findsOneWidget);
     expect(find.text('Land/Properties'), findsOneWidget);
-    expect(find.text('Live hotels and live available rooms'), findsOneWidget);
+    expect(find.text('Live hotels'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
