@@ -1009,7 +1009,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                           crossAxisCount: columns,
                           crossAxisSpacing: 18,
                           mainAxisSpacing: 18,
-                          childAspectRatio: columns == 1 ? 1.05 : 0.88,
+                          childAspectRatio: columns == 1 ? 0.88 : 0.78,
                         ),
                         itemBuilder: (context, index) {
                           final hotel = _hotels[index];
@@ -1299,6 +1299,13 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                             style: Theme.of(context).textTheme.headlineMedium,
                           ),
                           const SizedBox(height: 7),
+                          if (hotel.description.isNotEmpty) ...[
+                            Text(
+                              hotel.description,
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                            const SizedBox(height: 7),
+                          ],
                           Text(
                             'Select your dates to see the $_unitPlural listed and available.'
                             '${hotel.displayAddress.isEmpty ? '' : ' ${hotel.displayAddress}'}',
@@ -2055,8 +2062,8 @@ class _HotelCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: _PhotoPanel(
-                imageUrl: hotel.coverPhotoUrl,
+              child: _HotelPhotoGallery(
+                hotel: hotel,
                 emptyIcon: Icons.apartment_rounded,
                 label: hotel.state.isEmpty
                     ? isApartmentPreview
@@ -2100,6 +2107,19 @@ class _HotelCard extends StatelessWidget {
                       ),
                     ],
                   ),
+                  if (hotel.description.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      hotel.description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF596B70),
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 14),
                   Row(
                     children: [
@@ -2467,6 +2487,83 @@ class _SelectableRoomCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _HotelPhotoGallery extends StatefulWidget {
+  const _HotelPhotoGallery({
+    required this.hotel,
+    required this.emptyIcon,
+    required this.label,
+  });
+
+  final Hotel hotel;
+  final IconData emptyIcon;
+  final String label;
+
+  @override
+  State<_HotelPhotoGallery> createState() => _HotelPhotoGalleryState();
+}
+
+class _HotelPhotoGalleryState extends State<_HotelPhotoGallery> {
+  int _currentPage = 0;
+
+  List<String> get _photoUrls {
+    if (widget.hotel.photoUrls.isNotEmpty) return widget.hotel.photoUrls;
+    final coverPhotoUrl = widget.hotel.coverPhotoUrl;
+    return coverPhotoUrl == null || coverPhotoUrl.isEmpty
+        ? const []
+        : [coverPhotoUrl];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final photoUrls = _photoUrls;
+    if (photoUrls.isEmpty) {
+      return _PhotoPanel(
+        imageUrl: null,
+        emptyIcon: widget.emptyIcon,
+        label: widget.label,
+      );
+    }
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        PageView.builder(
+          itemCount: photoUrls.length,
+          onPageChanged: (index) => setState(() => _currentPage = index),
+          itemBuilder: (context, index) => Image.network(
+            photoUrls[index],
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) => _PhotoPanel(
+              imageUrl: null,
+              emptyIcon: widget.emptyIcon,
+              label: widget.label,
+            ),
+          ),
+        ),
+        if (photoUrls.length > 1)
+          Positioned(
+            right: 12,
+            top: 12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Text(
+                '${_currentPage + 1} / ${photoUrls.length}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

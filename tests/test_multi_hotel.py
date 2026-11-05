@@ -706,6 +706,31 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.configure_online_booking(
             manager, hotel_id, "API Suite", 75000
         )
+        hotel_description = "A quiet city hotel with breakfast and secure parking."
+        profile_save = manager.post(
+            "/workspace/manager/online-settings",
+            data={
+                "action": "hotel_profile",
+                "description": hotel_description,
+            },
+        )
+        self.assertEqual(profile_save.status_code, 302)
+        profile_page = manager.get("/workspace/manager/online-settings")
+        self.assertIn(hotel_description.encode(), profile_page.data)
+        photo_upload = manager.post(
+            "/hotel/profile/photos",
+            data={
+                "photos": (
+                    BytesIO(b"\x89PNG\r\n\x1a\nhotel profile photo"),
+                    "hotel-profile.png",
+                    "image/png",
+                ),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(photo_upload.status_code, 302)
+        profile_page = manager.get("/workspace/manager/online-settings")
+        self.assertIn(b"Flutter API Hotel photo 1", profile_page.data)
         unavailable_manager = self.app_module.app.test_client()
         unavailable_hotel_id = self.register_hotel(
             unavailable_manager, "Flutter No Vacancy Hotel",
@@ -765,6 +790,10 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(hotels[0]["id"], hotel_id)
         hotel_result = hotels[0]
         self.assertTrue(hotel_result["slug"].startswith("flutter-api-hotel"))
+        self.assertEqual(hotel_result["description"], hotel_description)
+        self.assertEqual(len(hotel_result["photo_urls"]), 1)
+        self.assertIn(hotel_id, hotel_result["photo_urls"][0])
+        self.assertNotIn("photo_paths", hotel_result)
         self.assertEqual(hotel_result["available_room_count"], 1)
         self.assertIn(hotel_id, hotel_result["cover_photo_url"])
 

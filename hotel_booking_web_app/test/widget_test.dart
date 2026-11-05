@@ -7,6 +7,7 @@ import 'package:flutter/material.dart'
         MaterialApp,
         MaterialPageRoute,
         NavigatorState,
+        PageView,
         Scrollable,
         SizedBox,
         Text,
@@ -61,6 +62,11 @@ class _BookingFlowApi extends _EmptyBookingApi {
     availableRoomCount: 1,
     lowestRate: 30000,
     coverPhotoUrl: null,
+    description: 'A quiet city hotel with breakfast.',
+    photoUrls: [
+      'https://example.com/hotel-front.jpg',
+      'https://example.com/hotel-lobby.jpg',
+    ],
   );
 
   static const room = HotelRoom(
@@ -153,6 +159,32 @@ class _BookingFlowApi extends _EmptyBookingApi {
 }
 
 void main() {
+  test('hotel JSON includes its description and photo gallery', () {
+    final hotel = Hotel.fromJson({
+      'id': '1',
+      'slug': 'test-hotel',
+      'name': 'Test Hotel',
+      'address': '12 Palm Avenue',
+      'city': 'Abuja',
+      'state': 'FCT',
+      'available_room_count': 20,
+      'lowest_rate': 30000,
+      'cover_photo_url': 'https://example.com/hotel-front.jpg',
+      'description': 'A quiet city hotel.',
+      'photo_urls': [
+        'https://example.com/hotel-front.jpg',
+        'https://example.com/hotel-lobby.jpg',
+      ],
+    });
+
+    expect(hotel.availableRoomCount, 20);
+    expect(hotel.description, 'A quiet city hotel.');
+    expect(hotel.photoUrls, [
+      'https://example.com/hotel-front.jpg',
+      'https://example.com/hotel-lobby.jpg',
+    ]);
+  });
+
   test('room JSON includes the optional video in its media gallery', () {
     final room = HotelRoom.fromJson({
       'number': '101',
@@ -610,6 +642,12 @@ void main() {
       expect(find.text('Add Rooms to your Home Screen'), findsNothing);
       expect(installPromptDismissed, isTrue);
       await tester.ensureVisible(find.text('View rooms'));
+      expect(find.text('A quiet city hotel with breakfast.'), findsOneWidget);
+      expect(find.text('1 / 2'), findsOneWidget);
+      await tester.ensureVisible(find.text('1 / 2'));
+      await tester.drag(find.byType(PageView).last, const Offset(-250, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('2 / 2'), findsOneWidget);
       await tester.tap(find.text('View rooms'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);

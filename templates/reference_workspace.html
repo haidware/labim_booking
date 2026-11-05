@@ -59,6 +59,19 @@
       <h1>Online Booking Setup</h1><p>Maintain guest-facing room photos and descriptions, configure transfer and Reception contact details. Reception controls which rooms are available to guests.</p>
       <section class="data-panel"><div class="panel-heading"><strong>Guest booking link for {{ hotel_name }}</strong><small>Guests can also browse and select your hotel from the platform booking page.</small></div><p><a href="{{ url_for('home', hotel=hotel_slug) }}" target="_blank" rel="noopener noreferrer">{{ request.url_root }}?hotel={{ hotel_slug }}</a></p></section>
       <section class="data-panel">
+        <div class="panel-heading"><strong>Hotel profile for guests</strong><small>This description and photo gallery appear on the hotel card before guests open its available rooms.</small></div>
+        <form class="online-settings-form" method="post">
+          <input type="hidden" name="action" value="hotel_profile">
+          <label>Hotel description<textarea name="description" rows="4" maxlength="1200" placeholder="Describe the hotel, facilities, and what guests can expect.">{{ hotel_profile.get('description', '') }}</textarea></label>
+          <button class="secondary-button" type="submit">Save hotel description</button>
+        </form>
+        {% if hotel_profile.photo_urls %}<div class="online-room-photo-gallery">{% for photo_url in hotel_profile.photo_urls %}<img src="{{ photo_url }}" alt="{{ hotel_name }} photo {{ loop.index }}">{% endfor %}</div>{% else %}<p>No hotel photos uploaded.</p>{% endif %}
+        <form class="online-photo-upload" method="post" enctype="multipart/form-data" action="{{ url_for('manage_hotel_photos') }}">
+          <label>Hotel photos (choose 1–5 JPG, PNG, or WebP images, max 5 MB each. Uploading replaces the current hotel gallery.)<input type="file" name="photos" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple required></label>
+          <button class="secondary-button" type="submit">Save hotel photos</button>
+        </form>
+      </section>
+      <section class="data-panel">
         <div class="panel-heading"><strong>Payment details and Reception notifications</strong><small>Guests receive the transfer details; Reception receives new booking requests by email.</small></div>
         <form class="online-settings-form" method="post">
           <input type="hidden" name="action" value="settings">

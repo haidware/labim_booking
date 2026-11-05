@@ -24,6 +24,8 @@ class Hotel {
     required this.availableRoomCount,
     required this.lowestRate,
     required this.coverPhotoUrl,
+    this.description = '',
+    this.photoUrls = const [],
   });
 
   factory Hotel.fromJson(Map<String, dynamic> json) {
@@ -37,6 +39,10 @@ class Hotel {
       availableRoomCount: (json['available_room_count'] as num?)?.toInt() ?? 0,
       lowestRate: (json['lowest_rate'] as num?)?.toDouble(),
       coverPhotoUrl: json['cover_photo_url']?.toString(),
+      description: json['description']?.toString() ?? '',
+      photoUrls: (json['photo_urls'] as List<dynamic>? ?? const [])
+          .map((photo) => photo.toString())
+          .toList(),
     );
   }
 
@@ -49,6 +55,8 @@ class Hotel {
   final int availableRoomCount;
   final double? lowestRate;
   final String? coverPhotoUrl;
+  final String description;
+  final List<String> photoUrls;
 
   String get location =>
       [city, state].where((part) => part.isNotEmpty).join(', ');
