@@ -16,6 +16,9 @@ import 'services/pwa_install_prompt_stub.dart'
 import 'services/push_notifications_stub.dart'
     if (dart.library.js_interop) 'services/push_notifications_web.dart'
     as push_notifications;
+import 'services/whatsapp_popup_stub.dart'
+    if (dart.library.js_interop) 'services/whatsapp_popup_web.dart'
+    as whatsapp_popup;
 
 void main() {
   runApp(const HotelBookingApp());
@@ -469,6 +472,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
         !_paymentFormKey.currentState!.validate()) {
       return;
     }
+    final handoffWindow = whatsapp_popup.openWhatsAppPopup();
     setState(() {
       _submittingPaymentReport = true;
       _error = null;
@@ -480,9 +484,14 @@ class _HotelBookingPageState extends State<HotelBookingPage>
         payerAccountNumber: _payerAccountNumberController.text.trim(),
       );
       final uri = Uri.tryParse(_paymentWhatsappUrl!);
-      if (uri == null ||
-          !await (widget.whatsappLauncher?.call(uri) ??
-              launchUrl(uri, mode: LaunchMode.externalApplication))) {
+      var whatsappOpened =
+          uri != null && handoffWindow?.navigate(uri.toString()) == true;
+      if (uri != null && !whatsappOpened) {
+        whatsappOpened =
+            await (widget.whatsappLauncher?.call(uri) ??
+                launchUrl(uri, mode: LaunchMode.externalApplication));
+      }
+      if (!whatsappOpened) {
         if (mounted) {
           setState(() {
             _error =
@@ -497,8 +506,11 @@ class _HotelBookingPageState extends State<HotelBookingPage>
         _startBookingStatusPolling(confirmation);
       }
     } on BookingApiException catch (error) {
+      handoffWindow?.close();
       if (mounted) setState(() => _error = error.message);
-    } catch (_) {
+    } catch (error, stackTrace) {
+      handoffWindow?.close();
+      debugPrint('WhatsApp payment handoff failed: $error\n$stackTrace');
       if (mounted) {
         setState(
           () => _error = 'Could not record the payment report. Please retry.',

@@ -560,12 +560,16 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
 
       var installPromptDismissed = false;
+      var whatsappLaunchCount = 0;
       final api = _BookingFlowApi();
       await tester.pumpWidget(
         HotelBookingApp(
           bookingPage: HotelBookingPage(
             api: api,
-            whatsappLauncher: (_) async => true,
+            whatsappLauncher: (_) async {
+              whatsappLaunchCount++;
+              return true;
+            },
             pushSubscriptionCreator: (_) async =>
                 '{"endpoint":"https://push.example.test/subscription",'
                 '"keys":{"p256dh":"public-key","auth":"auth-key"}}',
@@ -650,6 +654,7 @@ void main() {
       await tester.ensureVisible(find.text('Confirm payment on WhatsApp'));
       await tester.tap(find.text('Confirm payment on WhatsApp'));
       await tester.pumpAndSettle();
+      expect(whatsappLaunchCount, 1);
       expect(find.text('Please wait for your booking receipt'), findsOneWidget);
       expect(find.text('42'), findsOneWidget);
       expect(find.text('Waiting for Reception approval'), findsOneWidget);
