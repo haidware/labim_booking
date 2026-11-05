@@ -2017,12 +2017,12 @@ def store_booking_push_subscription(reservation_id, hotel_id, subscription):
 def booking_push_subscriptions(reservation_id, hotel_id):
     if SUPABASE_ENABLED:
         return get_supabase_admin().table("web_push_subscriptions").select(
-            "id, endpoint, subscription"
+            "id, endpoint, subscription, notified_at"
         ).eq(
             "reservation_id", str(reservation_id)
         ).eq("hotel_id", hotel_id).execute().data or []
     rows = get_db().execute(
-        """SELECT id, endpoint, subscription_json
+        """SELECT id, endpoint, subscription_json, notified_at
         FROM web_push_subscriptions
         WHERE reservation_id = ? AND hotel_id = ?""",
         (str(reservation_id), hotel_id),
@@ -2032,6 +2032,7 @@ def booking_push_subscriptions(reservation_id, hotel_id):
             "id": row["id"],
             "endpoint": row["endpoint"],
             "subscription": json.loads(row["subscription_json"]),
+            "notified_at": row["notified_at"],
         }
         for row in rows
     ]
@@ -2915,6 +2916,84 @@ def public_booking_api_create():
     return jsonify({
         "booking": dict(session["online_booking_confirmation"]),
     }), 201
+
+
+@app.get("/api/public/booking-status")
+def public_booking_api_status():
+    token = request.args.get("token", "")
+    try:
+        token_data = URLSafeTimedSerializer(
+            app.config["SECRET_KEY"], salt="public-booking-push-subscription"
+        ).loads(token, max_age=30 * 24 * 60 * 60)
+    except (BadSignature, SignatureExpired):
+        return jsonify({"error": "This booking status link is invalid or expired."}), 403
+    if not isinstance(token_data, dict):
+        return jsonify({"error": "This booking status link is invalid or expired."}), 403
+
+    reservation_id = str(token_data.get("reservation_id", ""))
+    hotel_id = str(token_data.get("hotel_id", ""))
+    try:
+        if SUPABASE_ENABLED:
+            rows = get_supabase_admin().table("reservations").select(
+                "id, status"
+            ).eq("id", reservation_id).eq(
+                "hotel_id", hotel_id
+            ).eq("booking_source", "online").limit(1).execute().data
+            reservation = rows[0] if rows else None
+        else:
+            row = get_db().execute(
+                """SELECT id, status FROM reservations
+                WHERE id = ? AND hotel_id = ? AND booking_source = 'online'""",
+                (reservation_id, hotel_id),
+            ).fetchone()
+            reservation = dict(row) if row else None
+    except Exception:
+        app.logger.exception(
+            "Could not check approval status for booking %s.",
+            reservation_id,
+        )
+        return jsonify({"error": "Booking status is temporarily unavailable."}), 503
+
+    if not reservation or reservation["status"] not in {
+        "pending_payment", "booked", "checked_in", "checked_out",
+    }:
+        return jsonify({"error": "This booking is no longer available."}), 404
+
+    booking_approved = reservation["status"] in {
+        "booked", "checked_in", "checked_out",
+    }
+    receipt_url = ""
+    notification_sent = False
+    if booking_approved:
+        receipt_token = URLSafeTimedSerializer(
+            app.config["SECRET_KEY"], salt="public-booking-receipt"
+        ).dumps({
+            "reservation_id": reservation_id,
+            "hotel_id": hotel_id,
+        })
+        receipt_url = url_for(
+            "public_booking_receipt",
+            token=receipt_token,
+            _external=True,
+        )
+        try:
+            subscriptions = booking_push_subscriptions(reservation_id, hotel_id)
+        except Exception:
+            app.logger.exception(
+                "Could not check notification delivery for booking %s.",
+                reservation_id,
+            )
+        else:
+            notification_sent = any(
+                subscription.get("notified_at") for subscription in subscriptions
+            )
+
+    return jsonify({
+        "status": "approved" if booking_approved else "pending",
+        "booking_approved": booking_approved,
+        "notification_sent": notification_sent,
+        "receipt_url": receipt_url,
+    }), 200
 
 
 @app.post("/api/public/push-subscriptions")

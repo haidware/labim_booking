@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -123,7 +125,8 @@ class HotelBookingPage extends StatefulWidget {
   State<HotelBookingPage> createState() => _HotelBookingPageState();
 }
 
-class _HotelBookingPageState extends State<HotelBookingPage> {
+class _HotelBookingPageState extends State<HotelBookingPage>
+    with WidgetsBindingObserver {
   late final BookingApi _api;
   final TextEditingController _cityController = TextEditingController();
   final TextEditingController _guestNameController = TextEditingController();
@@ -160,11 +163,16 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   bool _enablingBookingNotifications = false;
   bool _pushSubscriptionLinked = false;
   bool _paymentHandoffOpened = false;
+  bool _bookingApproved = false;
+  bool _checkingBookingStatus = false;
   bool _previewBookingComplete = false;
   String _pushPublicKey = '';
   String? _pendingPushSubscription;
   String? _paymentWhatsappUrl;
   String? _pushNotificationMessage;
+  String? _bookingStatusError;
+  String? _bookingReceiptUrl;
+  Timer? _bookingStatusTimer;
   String? _error;
 
   bool get _isApartmentPreview => widget.apartmentPreview;
@@ -179,6 +187,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _api =
         widget.api ??
         (_isApartmentPreview ? ApartmentPreviewApi() : BookingApi());
@@ -190,6 +199,8 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _bookingStatusTimer?.cancel();
     _api.dispose();
     _cityController.dispose();
     _guestNameController.dispose();
@@ -268,7 +279,8 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
       if (mounted) setState(() => _hotels = hotels);
     } on BookingApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
-    } catch (_) {
+    } catch (error, stackTrace) {
+      debugPrint('Booking status refresh failed: $error\n$stackTrace');
       if (mounted) {
         setState(
           () => _error = 'Could not load $_propertyPlural. Please retry.',
@@ -433,6 +445,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
   }
 
   void _backToHotels() {
+    _bookingStatusTimer?.cancel();
     _payerAccountNameController.clear();
     _payerAccountNumberController.clear();
     setState(() {
@@ -443,6 +456,9 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
       _previewBookingComplete = false;
       _paymentWhatsappUrl = null;
       _paymentHandoffOpened = false;
+      _bookingApproved = false;
+      _bookingStatusError = null;
+      _bookingReceiptUrl = null;
       _error = null;
     });
     _loadHotels();
@@ -478,6 +494,7 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
           _paymentHandoffOpened = true;
           _error = null;
         });
+        _startBookingStatusPolling(confirmation);
       }
     } on BookingApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
@@ -489,6 +506,71 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
       }
     } finally {
       if (mounted) setState(() => _submittingPaymentReport = false);
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final confirmation = _confirmation;
+    if (state == AppLifecycleState.resumed &&
+        _paymentHandoffOpened &&
+        !_bookingApproved &&
+        confirmation != null) {
+      unawaited(_refreshBookingStatus(confirmation));
+    }
+  }
+
+  void _startBookingStatusPolling(BookingConfirmation confirmation) {
+    _bookingStatusTimer?.cancel();
+    unawaited(_refreshBookingStatus(confirmation));
+    _bookingStatusTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => unawaited(_refreshBookingStatus(confirmation)),
+    );
+  }
+
+  Future<void> _refreshBookingStatus(BookingConfirmation confirmation) async {
+    if (_checkingBookingStatus || _bookingApproved) return;
+    setState(() => _checkingBookingStatus = true);
+    try {
+      final result = await _api.getBookingStatus(token: confirmation.pushToken);
+      if (!mounted) return;
+      final approved = result['booking_approved'] == true;
+      setState(() {
+        _bookingApproved = approved;
+        _bookingReceiptUrl = result['receipt_url']?.toString();
+        _bookingStatusError = null;
+        if (result['notification_sent'] == true) {
+          _pushNotificationMessage =
+              'Reception approved your booking and a notification was sent to this device.';
+        }
+      });
+      if (approved) _bookingStatusTimer?.cancel();
+    } on BookingApiException catch (error) {
+      if (mounted) setState(() => _bookingStatusError = error.message);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _bookingStatusError =
+              'Could not refresh the booking status. We will keep trying.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _checkingBookingStatus = false);
+    }
+  }
+
+  Future<void> _openBookingReceipt() async {
+    final receiptUrl = _bookingReceiptUrl;
+    final uri = receiptUrl == null ? null : Uri.tryParse(receiptUrl);
+    if (uri == null ||
+        !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) {
+        setState(
+          () => _bookingStatusError =
+              'Your booking is confirmed, but the receipt could not be opened. Please try again.',
+        );
+      }
     }
   }
 
@@ -723,7 +805,9 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
         : _confirmation != null
         ? _buildCategoryFlow(
             _paymentHandoffOpened
-                ? _buildReceiptWaiting(_confirmation!)
+                ? _bookingApproved
+                      ? _buildBookingApproved(_confirmation!)
+                      : _buildReceiptWaiting(_confirmation!)
                 : _buildConfirmation(_confirmation!),
           )
         : _selectedHotel != null
@@ -1766,6 +1850,10 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
                 const SizedBox(height: 12),
+                if (_bookingStatusError != null) ...[
+                  _ErrorBanner(message: _bookingStatusError!),
+                  const SizedBox(height: 12),
+                ],
                 Text(
                   'Your payment details are recorded. WhatsApp does not send '
                   'the message automatically. In WhatsApp, review the '
@@ -1833,6 +1921,88 @@ class _HotelBookingPageState extends State<HotelBookingPage> {
                     ),
                   ),
                 ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBookingApproved(BookingConfirmation confirmation) {
+    return SingleChildScrollView(
+      key: const ValueKey('booking-approved'),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 680),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 64),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Icon(
+                  Icons.verified_rounded,
+                  size: 64,
+                  color: Color(0xFF2B8556),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'Your booking is confirmed',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Reception has verified your payment and approved your stay at ${confirmation.hotelName}.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                if (_pushNotificationMessage != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    _pushNotificationMessage!,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ],
+                if (_bookingStatusError != null) ...[
+                  const SizedBox(height: 12),
+                  _ErrorBanner(message: _bookingStatusError!),
+                ],
+                const SizedBox(height: 24),
+                _ConfirmationCard(
+                  title: 'Confirmed booking',
+                  child: Column(
+                    children: [
+                      _DetailRow(
+                        label: 'Reference',
+                        value: confirmation.reference,
+                      ),
+                      _DetailRow(label: 'Hotel', value: confirmation.hotelName),
+                      _DetailRow(
+                        label: 'Room',
+                        value:
+                            '${confirmation.roomType} · ${confirmation.roomNumber}',
+                      ),
+                      _DetailRow(
+                        label: 'Stay',
+                        value:
+                            '${_formatIsoDate(confirmation.checkIn)} – ${_formatIsoDate(confirmation.checkOut)}',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                if (_bookingReceiptUrl?.isNotEmpty == true)
+                  FilledButton.icon(
+                    onPressed: _openBookingReceipt,
+                    icon: const Icon(Icons.receipt_long_outlined),
+                    label: const Text('View booking receipt'),
+                  ),
+                OutlinedButton(
+                  onPressed: _backToHotels,
+                  child: const Text('Back to hotels'),
+                ),
               ],
             ),
           ),

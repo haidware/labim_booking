@@ -40,6 +40,7 @@ class _EmptyBookingApi extends BookingApi {
 class _BookingFlowApi extends _EmptyBookingApi {
   String? savedPushToken;
   String? savedPushSubscription;
+  bool bookingApproved = false;
 
   @override
   Future<Map<String, dynamic>> loadConfig() async => {
@@ -134,6 +135,19 @@ class _BookingFlowApi extends _EmptyBookingApi {
       'enabled': true,
       'booking_approved': false,
       'notification_sent': false,
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> getBookingStatus({required String token}) async {
+    expect(token, 'signed-push-token');
+    return {
+      'status': bookingApproved ? 'approved' : 'pending',
+      'booking_approved': bookingApproved,
+      'notification_sent': bookingApproved,
+      'receipt_url': bookingApproved
+          ? 'https://example.com/booking/receipt?token=approved'
+          : '',
     };
   }
 }
@@ -664,9 +678,16 @@ void main() {
       );
       expect(api.savedPushToken, 'signed-push-token');
       expect(api.savedPushSubscription, contains('"endpoint"'));
+      expect(find.text('Please wait for your booking receipt'), findsOneWidget);
+      api.bookingApproved = true;
+      await tester.pump(const Duration(seconds: 15));
+      await tester.pumpAndSettle();
+      expect(find.text('Your booking is confirmed'), findsOneWidget);
+      expect(find.text('Waiting for Reception approval'), findsNothing);
+      expect(find.text('View booking receipt'), findsOneWidget);
       expect(
         find.textContaining(
-          'Reception must verify your payment and approve the booking',
+          'Reception approved your booking and a notification was sent to this device.',
         ),
         findsOneWidget,
       );

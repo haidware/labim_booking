@@ -808,6 +808,14 @@ class MultiHotelFlowTests(unittest.TestCase):
             booking_result["whatsapp_handoff_url"],
         )
         self.assertNotIn("whatsapp_url", booking_result)
+        pending_status = guest.get(
+            "/api/public/booking-status",
+            query_string={"token": booking_result["push_token"]},
+        )
+        self.assertEqual(pending_status.status_code, 200)
+        self.assertFalse(pending_status.get_json()["booking_approved"])
+        self.assertEqual(pending_status.get_json()["status"], "pending")
+        self.assertFalse(pending_status.get_json()["receipt_url"])
         handoff_url = urlparse(booking_result["whatsapp_handoff_url"])
         handoff_response = guest.post(
             handoff_url.path + "?" + handoff_url.query,
@@ -884,6 +892,20 @@ class MultiHotelFlowTests(unittest.TestCase):
             )
             self.assertEqual(approval.status_code, 302)
             send_push.assert_called_once()
+            approved_status = guest.get(
+                "/api/public/booking-status",
+                query_string={"token": booking_result["push_token"]},
+            )
+            self.assertEqual(approved_status.status_code, 200)
+            self.assertTrue(approved_status.get_json()["booking_approved"])
+            self.assertEqual(approved_status.get_json()["status"], "approved")
+            self.assertTrue(approved_status.get_json()["notification_sent"])
+            status_receipt_url = urlparse(approved_status.get_json()["receipt_url"])
+            self.assertEqual(status_receipt_url.path, "/booking/receipt")
+            status_receipt = guest.get(
+                status_receipt_url.path + "?" + status_receipt_url.query
+            )
+            self.assertEqual(status_receipt.status_code, 200)
             notification = json.loads(send_push.call_args.kwargs["data"])
             self.assertEqual(notification["title"], "Booking approved")
             self.assertIn(booking_result["reference"], notification["body"])

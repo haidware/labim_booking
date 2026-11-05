@@ -316,5 +316,9 @@ class BookingApi {
     return _decode(response);
   }
 
+  Future<Map<String, dynamic>> getBookingStatus({required String token}) async {
+    return _get('/api/public/booking-status', {'token': token});
+  }
+
   void dispose() => _client.close();
 }
