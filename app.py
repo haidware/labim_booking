@@ -77,6 +77,8 @@ PAYSTACK_API_BASE = "https://api.paystack.co"
 MAX_ROOM_PHOTO_BYTES = 5 * 1024 * 1024
 MAX_ROOM_PHOTOS = 5
 ALLOWED_ROOM_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+MAX_ROOM_VIDEO_BYTES = 100 * 1024 * 1024
+MAX_ROOM_VIDEO_SECONDS = 3 * 60
 NIGERIAN_STATES = (
     "Abia", "Adamawa", "Akwa Ibom", "Anambra", "Bauchi", "Bayelsa",
     "Benue", "Borno", "Cross River", "Delta", "Ebonyi", "Edo", "Ekiti",
@@ -124,7 +126,7 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = IS_PRODUCTION
 app.config["MAX_CONTENT_LENGTH"] = (
-    MAX_ROOM_PHOTOS * MAX_ROOM_PHOTO_BYTES + 1024 * 1024
+    MAX_ROOM_PHOTOS * MAX_ROOM_PHOTO_BYTES + MAX_ROOM_VIDEO_BYTES + 1024 * 1024
 )
 
 
@@ -749,6 +751,7 @@ def init_db():
             description TEXT NOT NULL DEFAULT '',
             photo_path TEXT NOT NULL DEFAULT '',
             photo_paths TEXT NOT NULL DEFAULT '[]',
+            video_path TEXT NOT NULL DEFAULT '',
             enabled INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT NOT NULL,
             PRIMARY KEY (hotel_id, room_number)
@@ -929,6 +932,12 @@ def init_db():
     }:
         db.execute(
             "ALTER TABLE online_room_listings ADD COLUMN photo_paths TEXT NOT NULL DEFAULT '[]'"
+        )
+    if "video_path" not in {
+        column[1] for column in db.execute("PRAGMA table_info(online_room_listings)")
+    }:
+        db.execute(
+            "ALTER TABLE online_room_listings ADD COLUMN video_path TEXT NOT NULL DEFAULT ''"
         )
     settings_info = list(db.execute("PRAGMA table_info(online_booking_settings)"))
     if "hotel_id" not in {column[1] for column in settings_info}:
@@ -1282,7 +1291,14 @@ def online_room_listings(manager=False, hotel_id=None):
                 "photo_paths": photo_paths,
                 "photo_urls": [online_photo_url(path) for path in photo_paths],
                 "photo_url": online_photo_url(photo_paths[0]) if photo_paths else "",
-                "enabled": bool(listing and listing["enabled"] and photo_paths),
+                "video_path": (listing or {}).get("video_path", ""),
+                "video_url": online_room_video_url(
+                    (listing or {}).get("video_path", "")
+                ),
+                "enabled": bool(
+                    listing and listing["enabled"]
+                    and (photo_paths or (listing or {}).get("video_path"))
+                ),
             })
         elif listing:
             result.append({
@@ -1290,6 +1306,7 @@ def online_room_listings(manager=False, hotel_id=None):
                 **listing,
                 "photo_paths": photo_paths,
                 "photo_urls": [online_photo_url(path) for path in photo_paths],
+                "video_url": online_room_video_url(listing.get("video_path", "")),
             })
     return result
 
@@ -1322,6 +1339,16 @@ def online_photo_url(photo_path):
     return url_for("online_room_photo", photo_path=photo_path)
 
 
+def online_room_video_url(video_path):
+    if not video_path:
+        return ""
+    if SUPABASE_ENABLED:
+        return get_supabase_admin().storage.from_(ROOM_PHOTO_BUCKET).get_public_url(
+            video_path
+        )
+    return url_for("online_room_video", video_path=video_path)
+
+
 def available_online_rooms(check_in, check_out, hotel_id=None):
     hotel_id = hotel_id or current_hotel_id()
     expire_online_booking_holds()
@@ -1330,7 +1357,7 @@ def available_online_rooms(check_in, check_out, hotel_id=None):
     for room in listings:
         if room["status"].lower() != "available":
             continue
-        if not room.get("photo_urls"):
+        if not room.get("photo_urls") and not room.get("video_url"):
             continue
         if SUPABASE_ENABLED:
             stays = get_supabase_admin().table("reservations").select(
@@ -1514,7 +1541,7 @@ def save_online_room_listing(room_number, form):
     if SUPABASE_ENABLED:
         client = get_request_supabase()
         old = client.table("online_room_listings").select(
-            "photo_path, photo_paths"
+            "photo_path, photo_paths, video_path"
         ).eq(
             "hotel_id", hotel_id
         ).eq("room_number", room_number
@@ -1526,36 +1553,107 @@ def save_online_room_listing(room_number, form):
             "description": description,
             "photo_path": photo_paths[0] if photo_paths else "",
             "photo_paths": photo_paths,
-            "enabled": bool(photo_paths),
+            "video_path": old[0].get("video_path", "") if old else "",
+            "enabled": bool(photo_paths or (old and old[0].get("video_path"))),
             "updated_at": now_iso(),
         }).execute()
     else:
         db = get_db()
         old = db.execute(
-            "SELECT photo_path, photo_paths FROM online_room_listings WHERE hotel_id = ? AND room_number = ?",
+            "SELECT photo_path, photo_paths, video_path FROM online_room_listings WHERE hotel_id = ? AND room_number = ?",
             (hotel_id, room_number),
         ).fetchone()
         photo_paths = room_photo_paths(dict(old) if old else None)
         db.execute(
             """INSERT INTO online_room_listings
-            (hotel_id, room_number, description, photo_path, photo_paths, enabled, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (hotel_id, room_number, description, photo_path, photo_paths, video_path, enabled, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(hotel_id, room_number) DO UPDATE SET description = excluded.description,
             photo_path = excluded.photo_path, photo_paths = excluded.photo_paths,
+            video_path = excluded.video_path,
             enabled = excluded.enabled, updated_at = excluded.updated_at""",
             (
                 hotel_id, room_number, description,
                 photo_paths[0] if photo_paths else "",
-                json.dumps(photo_paths), int(bool(photo_paths)), now_iso(),
+                json.dumps(photo_paths),
+                old["video_path"] if old else "",
+                int(bool(photo_paths) or bool(old and old["video_path"])),
+                now_iso(),
             ),
         )
         db.commit()
 
 
-def save_room_photos(room_number, uploaded_files):
+def _mp4_duration_seconds(content):
+    def boxes(start, end):
+        while start + 8 <= end:
+            size = int.from_bytes(content[start:start + 4], "big")
+            box_type = content[start + 4:start + 8]
+            header_size = 8
+            if size == 1:
+                if start + 16 > end:
+                    return
+                size = int.from_bytes(content[start + 8:start + 16], "big")
+                header_size = 16
+            elif size == 0:
+                size = end - start
+            if size < header_size or start + size > end:
+                return
+            yield box_type, start + header_size, start + size
+            start += size
+
+    top_level = list(boxes(0, len(content)))
+    if not any(
+        box_type == b"ftyp" and payload + 8 <= box_end
+        for box_type, payload, box_end in top_level
+    ):
+        return None
+    moov = next(
+        (box for box in top_level if box[0] == b"moov"),
+        None,
+    )
+    if moov is None:
+        return None
+    moov_boxes = list(boxes(moov[1], moov[2]))
+    has_video_track = any(
+        track_type == b"trak"
+        and any(
+            media_type == b"mdia"
+            and any(
+                handler_type == b"hdlr"
+                and handler_payload + 12 <= handler_end
+                and content[handler_payload + 8:handler_payload + 12] == b"vide"
+                for handler_type, handler_payload, handler_end
+                in boxes(media_payload, media_end)
+            )
+            for media_type, media_payload, media_end
+            in boxes(track_payload, track_end)
+        )
+        for track_type, track_payload, track_end in moov_boxes
+    )
+    if not has_video_track:
+        return None
+    for box_type, payload, box_end in moov_boxes:
+        if box_type != b"mvhd" or payload + 4 > box_end:
+            continue
+        version = content[payload]
+        if version == 0 and payload + 20 <= box_end:
+            timescale = int.from_bytes(content[payload + 12:payload + 16], "big")
+            duration = int.from_bytes(content[payload + 16:payload + 20], "big")
+        elif version == 1 and payload + 32 <= box_end:
+            timescale = int.from_bytes(content[payload + 20:payload + 24], "big")
+            duration = int.from_bytes(content[payload + 24:payload + 32], "big")
+        else:
+            return None
+        return duration / timescale if timescale else None
+    return None
+
+
+def save_room_photos(room_number, uploaded_files, uploaded_video=None):
     uploads = [uploaded for uploaded in uploaded_files if uploaded and uploaded.filename]
-    if not uploads:
-        raise ValueError("Choose at least one room photo to upload.")
+    video = uploaded_video if uploaded_video and uploaded_video.filename else None
+    if not uploads and video is None:
+        raise ValueError("Choose room photos or a room video to upload.")
     if len(uploads) > MAX_ROOM_PHOTOS:
         raise ValueError(f"Upload no more than {MAX_ROOM_PHOTOS} room photos.")
     expected_types = {
@@ -1583,6 +1681,20 @@ def save_room_photos(room_number, uploaded_files):
         if not valid_signature:
             raise ValueError("A selected file is not a valid JPG, PNG, or WebP image.")
         validated_uploads.append((extension, content, expected_types[extension]))
+    validated_video = None
+    if video is not None:
+        extension = Path(secure_filename(video.filename)).suffix.lower()
+        if extension != ".mp4" or video.mimetype != "video/mp4":
+            raise ValueError("Use an MP4 room video.")
+        content = video.stream.read(MAX_ROOM_VIDEO_BYTES + 1)
+        if not content or len(content) > MAX_ROOM_VIDEO_BYTES:
+            raise ValueError("The room video must be between 1 byte and 100 MB.")
+        duration = _mp4_duration_seconds(content)
+        if duration is None or duration <= 0:
+            raise ValueError("The uploaded file is not a supported MP4 video.")
+        if duration > MAX_ROOM_VIDEO_SECONDS:
+            raise ValueError("The room video must be 3 minutes or shorter.")
+        validated_video = (content, "video/mp4")
 
     hotel_id = current_hotel_id()
     if SUPABASE_ENABLED:
@@ -1594,11 +1706,12 @@ def save_room_photos(room_number, uploaded_files):
         if not room:
             raise ValueError("Room not found.")
         existing = admin.table("online_room_listings").select(
-            "photo_path, photo_paths, description"
+            "photo_path, photo_paths, video_path, description"
         ).eq("hotel_id", hotel_id).eq(
             "room_number", room_number
         ).limit(1).execute().data
         photo_paths = []
+        video_path = ""
         try:
             for extension, content, content_type in validated_uploads:
                 photo_path = f"{hotel_id}/{uuid4().hex}{extension}"
@@ -1608,28 +1721,46 @@ def save_room_photos(room_number, uploaded_files):
                     {"content-type": content_type, "upsert": "true"},
                 )
                 photo_paths.append(photo_path)
+            if validated_video:
+                video_path = f"{hotel_id}/{uuid4().hex}.mp4"
+                admin.storage.from_(ROOM_PHOTO_BUCKET).upload(
+                    video_path,
+                    validated_video[0],
+                    {"content-type": validated_video[1], "upsert": "true"},
+                )
         except Exception:
             app.logger.exception(
                 "Could not upload room photos for hotel %s room %s",
                 hotel_id, room_number,
             )
-            if photo_paths:
-                admin.storage.from_(ROOM_PHOTO_BUCKET).remove(photo_paths)
+            uploaded_paths = photo_paths + ([video_path] if video_path else [])
+            if uploaded_paths:
+                admin.storage.from_(ROOM_PHOTO_BUCKET).remove(uploaded_paths)
             raise
+        existing_listing = existing[0] if existing else {}
+        saved_photo_paths = (
+            photo_paths if uploads else room_photo_paths(existing_listing)
+        )
+        saved_video_path = (
+            video_path if validated_video else existing_listing.get("video_path", "")
+        )
         admin.table("online_room_listings").upsert({
             "hotel_id": hotel_id,
             "room_number": room_number,
-            "photo_path": photo_paths[0],
-            "photo_paths": photo_paths,
-            "description": existing[0]["description"] if existing else "",
-            "enabled": True,
+            "photo_path": saved_photo_paths[0] if saved_photo_paths else "",
+            "photo_paths": saved_photo_paths,
+            "video_path": saved_video_path,
+            "description": existing_listing.get("description", ""),
+            "enabled": bool(saved_photo_paths or saved_video_path),
             "updated_at": now_iso(),
         }).execute()
-        old_photo_paths = room_photo_paths(existing[0] if existing else None)
-        if old_photo_paths:
-            admin.storage.from_(ROOM_PHOTO_BUCKET).remove(
-                old_photo_paths
-            )
+        old_assets = []
+        if uploads:
+            old_assets.extend(room_photo_paths(existing_listing))
+        if validated_video and existing_listing.get("video_path"):
+            old_assets.append(existing_listing["video_path"])
+        if old_assets:
+            admin.storage.from_(ROOM_PHOTO_BUCKET).remove(old_assets)
         return
 
     db = get_db()
@@ -1641,11 +1772,12 @@ def save_room_photos(room_number, uploaded_files):
         raise ValueError("Room not found.")
     ROOM_PHOTO_DIRECTORY.mkdir(parents=True, exist_ok=True)
     existing = db.execute(
-        """SELECT description, photo_path, photo_paths FROM online_room_listings
+        """SELECT description, photo_path, photo_paths, video_path FROM online_room_listings
         WHERE hotel_id = ? AND room_number = ?""",
         (hotel_id, room_number),
     ).fetchone()
     photo_paths = []
+    video_path = ""
     try:
         for extension, content, _ in validated_uploads:
             photo_path = f"{hotel_id}/{uuid4().hex}{extension}"
@@ -1653,33 +1785,51 @@ def save_room_photos(room_number, uploaded_files):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
             photo_paths.append(photo_path)
+        if validated_video:
+            video_path = f"{hotel_id}/{uuid4().hex}.mp4"
+            destination = ROOM_PHOTO_DIRECTORY / video_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(validated_video[0])
     except OSError:
         app.logger.exception(
             "Could not save room photos for hotel %s room %s",
             hotel_id, room_number,
         )
-        for photo_path in photo_paths:
-            destination = ROOM_PHOTO_DIRECTORY / photo_path
+        uploaded_paths = photo_paths + ([video_path] if video_path else [])
+        for uploaded_path in uploaded_paths:
+            destination = ROOM_PHOTO_DIRECTORY / uploaded_path
             if destination.is_file():
                 destination.unlink()
         raise
+    existing_listing = dict(existing) if existing else {}
+    saved_photo_paths = photo_paths if uploads else room_photo_paths(existing_listing)
+    saved_video_path = (
+        video_path if validated_video else existing_listing.get("video_path", "")
+    )
     db.execute(
         """INSERT INTO online_room_listings
-        (hotel_id, room_number, description, photo_path, photo_paths, enabled, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(hotel_id, room_number) DO UPDATE SET
+        (hotel_id, room_number, description, photo_path, photo_paths, video_path, enabled, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(hotel_id, room_number) DO UPDATE SET
         photo_path = excluded.photo_path, photo_paths = excluded.photo_paths,
+        video_path = excluded.video_path,
         enabled = excluded.enabled, updated_at = excluded.updated_at""",
         (
             hotel_id, room_number,
             existing["description"] if existing else "",
-            photo_paths[0],
-            json.dumps(photo_paths),
-            1,
+            saved_photo_paths[0] if saved_photo_paths else "",
+            json.dumps(saved_photo_paths),
+            saved_video_path,
+            int(bool(saved_photo_paths or saved_video_path)),
             now_iso(),
         ),
     )
     db.commit()
-    for previous_path in room_photo_paths(dict(existing) if existing else None):
+    old_assets = []
+    if uploads:
+        old_assets.extend(room_photo_paths(existing_listing))
+    if validated_video and existing_listing.get("video_path"):
+        old_assets.append(existing_listing["video_path"])
+    for previous_path in old_assets:
         previous = ROOM_PHOTO_DIRECTORY / previous_path
         if previous.is_file():
             previous.unlink()
@@ -2900,6 +3050,7 @@ def public_booking_api_rooms(hotel_slug):
                 public_api_photo_url(photo_url)
                 for photo_url in room.get("photo_urls", [])
             ],
+            "video_url": public_api_photo_url(room.get("video_url", "")),
         } for room in rooms],
     })
 
@@ -3660,14 +3811,37 @@ def online_room_photo(photo_path):
     return send_from_directory(ROOM_PHOTO_DIRECTORY, photo_path)
 
 
+@app.get("/room-videos/<path:video_path>")
+def online_room_video(video_path):
+    valid_path = re.fullmatch(
+        r"(?:[0-9a-f-]{36}/)?[a-f0-9]{32}\.mp4",
+        video_path,
+    )
+    if SUPABASE_ENABLED or not valid_path:
+        return "", 404
+    return send_from_directory(
+        ROOM_PHOTO_DIRECTORY,
+        video_path,
+        mimetype="video/mp4",
+        conditional=True,
+    )
+
+
 @app.post("/rooms/<room_number>/online")
 def manage_online_room(room_number):
     try:
         uploaded_files = request.files.getlist("photos")
         if not any(uploaded_file.filename for uploaded_file in uploaded_files):
             uploaded_files = [request.files.get("photo")]
-        save_room_photos(room_number, uploaded_files)
-        flash(f"Room photos for {room_number} uploaded.", "success")
+        uploaded_videos = request.files.getlist("video")
+        if sum(bool(item and item.filename) for item in uploaded_videos) > 1:
+            raise ValueError("Upload only one room video.")
+        save_room_photos(
+            room_number,
+            uploaded_files,
+            uploaded_videos[0] if uploaded_videos else None,
+        )
+        flash(f"Room media for {room_number} uploaded.", "success")
     except ValueError as error:
         flash(str(error), "error")
     return redirect(url_for(

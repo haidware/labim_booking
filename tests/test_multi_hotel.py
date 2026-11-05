@@ -1314,7 +1314,7 @@ class MultiHotelFlowTests(unittest.TestCase):
             "/workspace/manager/online-settings"
         )
         self.assertIn(b"Upload no more than 5 room photos", online_settings.data)
-        self.assertIn(b"choose 1\xe2\x80\x935 JPG", online_settings.data)
+        self.assertIn(b"up to 5 JPG", online_settings.data)
         with self.app_module.app.app_context():
             saved_listing = self.app_module.get_db().execute(
                 """SELECT photo_path, photo_paths FROM online_room_listings
@@ -1325,6 +1325,112 @@ class MultiHotelFlowTests(unittest.TestCase):
                 len(self.app_module.room_photo_paths(dict(saved_listing))),
                 5,
             )
+
+        def mp4_video(duration_seconds):
+            def atom(kind, payload):
+                return (
+                    (len(payload) + 8).to_bytes(4, "big")
+                    + kind
+                    + payload
+                )
+
+            movie_header = (
+                b"\x00\x00\x00\x00"
+                + b"\x00" * 8
+                + (1000).to_bytes(4, "big")
+                + (duration_seconds * 1000).to_bytes(4, "big")
+            )
+            video_handler = (
+                b"\x00" * 8
+                + b"vide"
+                + b"\x00" * 12
+            )
+            file_type = atom(
+                b"ftyp",
+                b"isom" + b"\x00\x00\x02\x00" + b"isom",
+            )
+            return file_type + atom(
+                b"moov",
+                atom(b"mvhd", movie_header)
+                + atom(b"trak", atom(b"mdia", atom(b"hdlr", video_handler))),
+            )
+
+        video_upload = hotel_two_manager.post(
+            "/rooms/101/online",
+            data={
+                "video": (
+                    BytesIO(mp4_video(180)),
+                    "room-tour.mp4",
+                    "video/mp4",
+                ),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(video_upload.status_code, 302)
+        with self.app_module.app.app_context():
+            saved_listing = self.app_module.get_db().execute(
+                """SELECT photo_paths, video_path, enabled
+                FROM online_room_listings WHERE hotel_id = ? AND room_number = '101'""",
+                (hotel_two_id,),
+            ).fetchone()
+            self.assertEqual(len(json.loads(saved_listing["photo_paths"])), 5)
+            self.assertRegex(saved_listing["video_path"], r"^[0-9a-f-]{36}/[a-f0-9]{32}\.mp4$")
+            self.assertTrue(saved_listing["enabled"])
+            self.app_module.get_db().execute(
+                """UPDATE rooms SET status = 'available'
+                WHERE hotel_id = ? AND number = '101'""",
+                (hotel_two_id,),
+            )
+            self.app_module.get_db().commit()
+        check_in = (date.today() + timedelta(days=1)).isoformat()
+        check_out = (date.today() + timedelta(days=2)).isoformat()
+        public_hotels = hotel_two_manager.get(
+            "/api/public/hotels",
+            query_string={"check_in": check_in, "check_out": check_out},
+        ).get_json()["hotels"]
+        hotel_two_slug = next(
+            hotel["slug"] for hotel in public_hotels if hotel["id"] == hotel_two_id
+        )
+        guest_rooms = hotel_two_manager.get(
+            f"/api/public/hotels/{hotel_two_slug}/rooms",
+            query_string={"check_in": check_in, "check_out": check_out},
+        )
+        self.assertEqual(guest_rooms.status_code, 200)
+        room_media = guest_rooms.get_json()["rooms"][0]
+        self.assertEqual(len(room_media["photo_urls"]), 5)
+        self.assertIn("/room-videos/", room_media["video_url"])
+        served_video = hotel_two_manager.get(
+            urlparse(room_media["video_url"]).path,
+            headers={"Range": "bytes=0-15"},
+        )
+        self.assertEqual(served_video.status_code, 206)
+        self.assertEqual(served_video.mimetype, "video/mp4")
+        served_video.close()
+
+        long_video_upload = hotel_two_manager.post(
+            "/rooms/101/online",
+            data={
+                "video": (
+                    BytesIO(mp4_video(181)),
+                    "too-long.mp4",
+                    "video/mp4",
+                ),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(long_video_upload.status_code, 302)
+        manager_page = hotel_two_manager.get(
+            "/workspace/manager/online-settings"
+        )
+        self.assertIn(b"The room video must be 3 minutes or shorter", manager_page.data)
+        self.assertIn(b"online-room-video-preview", manager_page.data)
+        with self.app_module.app.app_context():
+            saved_listing = self.app_module.get_db().execute(
+                """SELECT video_path FROM online_room_listings
+                WHERE hotel_id = ? AND room_number = '101'""",
+                (hotel_two_id,),
+            ).fetchone()
+            self.assertTrue(saved_listing["video_path"].endswith(".mp4"))
 
         one_workspace = hotel_one_manager.get("/workspace/manager/rooms")
         two_workspace = hotel_two_manager.get("/workspace/manager/rooms")

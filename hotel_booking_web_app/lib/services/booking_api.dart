@@ -79,6 +79,7 @@ class HotelRoom {
     required this.rate,
     required this.description,
     required this.photoUrls,
+    this.videoUrl,
   });
 
   factory HotelRoom.fromJson(Map<String, dynamic> json) {
@@ -91,6 +92,7 @@ class HotelRoom {
       photoUrls: (json['photo_urls'] as List<dynamic>? ?? const [])
           .map((photo) => photo.toString())
           .toList(),
+      videoUrl: json['video_url']?.toString(),
     );
   }
 
@@ -100,6 +102,7 @@ class HotelRoom {
   final double rate;
   final String description;
   final List<String> photoUrls;
+  final String? videoUrl;
 }
 
 class BookingConfirmation {

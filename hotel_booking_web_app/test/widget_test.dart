@@ -153,6 +153,20 @@ class _BookingFlowApi extends _EmptyBookingApi {
 }
 
 void main() {
+  test('room JSON includes the optional video in its media gallery', () {
+    final room = HotelRoom.fromJson({
+      'number': '101',
+      'type': 'Standard',
+      'beds': 1,
+      'rate': 30000,
+      'photo_urls': ['https://example.com/room-1.jpg'],
+      'video_url': 'https://example.com/room-tour.mp4',
+    });
+
+    expect(room.photoUrls, ['https://example.com/room-1.jpg']);
+    expect(room.videoUrl, 'https://example.com/room-tour.mp4');
+  });
+
   test('hotel display address includes address, city, and state once', () {
     const hotel = Hotel(
       id: '1',

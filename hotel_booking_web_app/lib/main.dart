@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:video_player/video_player.dart';
 
 import 'property_category_preview_page.dart';
 import 'rental_preview_page.dart';
@@ -2175,6 +2176,216 @@ class _HotelCard extends StatelessWidget {
   }
 }
 
+class _RoomMediaGallery extends StatefulWidget {
+  const _RoomMediaGallery({required this.room, required this.aspectRatio});
+
+  final HotelRoom room;
+  final double aspectRatio;
+
+  @override
+  State<_RoomMediaGallery> createState() => _RoomMediaGalleryState();
+}
+
+class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
+  VideoPlayerController? _videoController;
+  String? _videoError;
+  int _currentPage = 0;
+
+  int get _mediaCount =>
+      widget.room.photoUrls.length +
+      ((widget.room.videoUrl?.isNotEmpty ?? false) ? 1 : 0);
+
+  Future<void> _initializeVideo(String videoUrl) async {
+    final controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
+    _videoController = controller;
+    try {
+      await controller.initialize();
+      if (mounted) setState(() {});
+    } catch (error, stackTrace) {
+      debugPrint('Room video could not be loaded: $error\n$stackTrace');
+      if (mounted) {
+        setState(() => _videoError = 'This room video could not be loaded.');
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _videoController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final count = _mediaCount == 0 ? 1 : _mediaCount;
+    final videoIndex = widget.room.photoUrls.length;
+    return AspectRatio(
+      aspectRatio: widget.aspectRatio,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          PageView.builder(
+            itemCount: count,
+            onPageChanged: (index) {
+              setState(() => _currentPage = index);
+              final videoUrl = widget.room.videoUrl;
+              if (index == videoIndex &&
+                  videoUrl != null &&
+                  videoUrl.isNotEmpty &&
+                  _videoController == null &&
+                  _videoError == null) {
+                _initializeVideo(videoUrl);
+              }
+              final controller = _videoController;
+              if (index != videoIndex &&
+                  controller != null &&
+                  controller.value.isPlaying) {
+                controller.pause();
+              }
+            },
+            itemBuilder: (context, index) {
+              if (index < widget.room.photoUrls.length) {
+                return Image.network(
+                  widget.room.photoUrls[index],
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) =>
+                      _roomPhotoFallback(),
+                );
+              }
+              if (index == videoIndex &&
+                  widget.room.videoUrl?.isNotEmpty == true) {
+                return _buildVideo();
+              }
+              return _roomPhotoFallback();
+            },
+          ),
+          if (count > 1)
+            Positioned(
+              right: 10,
+              top: 10,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Text(
+                  '${_currentPage + 1} / $count',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          if (widget.room.videoUrl?.isNotEmpty == true)
+            Positioned(
+              left: 10,
+              top: 10,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.videocam, size: 15, color: Colors.white),
+                    SizedBox(width: 4),
+                    Text(
+                      'Video',
+                      style: TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVideo() {
+    final controller = _videoController;
+    if (_videoError != null) {
+      return Container(
+        color: Colors.black,
+        alignment: Alignment.center,
+        child: Text(
+          _videoError!,
+          style: const TextStyle(color: Colors.white),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    if (controller == null || !controller.value.isInitialized) {
+      return Container(
+        color: Colors.black,
+        alignment: Alignment.center,
+        child: const CircularProgressIndicator(color: Colors.white),
+      );
+    }
+    return ColoredBox(
+      color: Colors.black,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Center(
+            child: AspectRatio(
+              aspectRatio: controller.value.aspectRatio,
+              child: VideoPlayer(controller),
+            ),
+          ),
+          IconButton.filled(
+            onPressed: () {
+              setState(() {
+                controller.value.isPlaying
+                    ? controller.pause()
+                    : controller.play();
+              });
+            },
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.black54,
+              foregroundColor: Colors.white,
+            ),
+            icon: Icon(
+              controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
+              size: 34,
+            ),
+          ),
+          Positioned(
+            left: 8,
+            right: 8,
+            bottom: 4,
+            child: VideoProgressIndicator(
+              controller,
+              allowScrubbing: true,
+              colors: const VideoProgressColors(
+                playedColor: Color(0xFF67C3D0),
+                bufferedColor: Colors.white54,
+                backgroundColor: Colors.white24,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _roomPhotoFallback() => Container(
+    color: const Color(0xFFEAF2F3),
+    child: const Center(
+      child: Icon(
+        Icons.bedroom_parent_rounded,
+        size: 54,
+        color: Color(0xFF86A8B0),
+      ),
+    ),
+  );
+}
+
 class _SelectableRoomCard extends StatelessWidget {
   const _SelectableRoomCard({
     required this.room,
@@ -2204,16 +2415,9 @@ class _SelectableRoomCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           LayoutBuilder(
-            builder: (context, constraints) => AspectRatio(
+            builder: (context, constraints) => _RoomMediaGallery(
+              room: room,
               aspectRatio: constraints.maxWidth < 600 ? 1.8 : 5.0,
-              child: room.photoUrls.isNotEmpty
-                  ? Image.network(
-                      room.photoUrls.first,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) =>
-                          _roomPhotoFallback(),
-                    )
-                  : _roomPhotoFallback(),
             ),
           ),
           Padding(
@@ -2265,17 +2469,6 @@ class _SelectableRoomCard extends StatelessWidget {
       ),
     );
   }
-
-  Widget _roomPhotoFallback() => Container(
-    color: const Color(0xFFEAF2F3),
-    child: const Center(
-      child: Icon(
-        Icons.bedroom_parent_rounded,
-        size: 54,
-        color: Color(0xFF86A8B0),
-      ),
-    ),
-  );
 }
 
 class _PhotoPanel extends StatelessWidget {

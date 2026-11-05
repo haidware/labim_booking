@@ -64,15 +64,15 @@
       <label class="booking-honeypot" aria-hidden="true">Website<input name="website" tabindex="-1" autocomplete="off"></label>
       <div class="public-room-grid">
         {% for room in rooms %}
-        <label class="public-room-card">
-          {% if room.photo_urls %}<div class="public-room-photo-gallery">{% for photo_url in room.photo_urls %}<img src="{{ photo_url }}" alt="Photo {{ loop.index }} of Room {{ room.number }}">{% endfor %}</div>{% else %}<div class="public-room-no-photo">Photo unavailable</div>{% endif %}
+        <article class="public-room-card">
+          {% if room.photo_urls or room.video_url %}<div class="public-room-photo-gallery">{% for photo_url in room.photo_urls %}<img src="{{ photo_url }}" alt="Photo {{ loop.index }} of Room {{ room.number }}">{% endfor %}{% if room.video_url %}<video controls preload="metadata" src="{{ room.video_url }}">Your browser does not support MP4 video.</video>{% endif %}</div>{% else %}<div class="public-room-no-photo">Photo unavailable</div>{% endif %}
           <span class="public-room-info">
             <strong>{{ room.type }} · Room {{ room.number }}</strong>
             <small>{{ room.beds }} bed{{ '' if room.beds == 1 else 's' }} · ₦{{ '{:,.0f}'.format(room.rate) }} per night</small>
             {% if room.description %}<span>{{ room.description }}</span>{% endif %}
-            <span class="public-room-select"><input type="radio" name="room_number" value="{{ room.number }}" required> Select this room</span>
+            <label class="public-room-select"><input type="radio" name="room_number" value="{{ room.number }}" required> Select this room</label>
           </span>
-        </label>
+        </article>
         {% endfor %}
       </div>
       <section class="public-guest-details">
