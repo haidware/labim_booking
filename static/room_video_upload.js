@@ -74,14 +74,13 @@ async function roomVideoUploadChunked(file, uploadDetails, storageKey, progress,
   }
 
   if (!uploadUrl) {
+    const contentType = file.name.toLowerCase().endsWith(".mov")
+      ? "video/quicktime"
+      : "video/mp4";
     const metadata = [
       ["bucketName", "room-photos"],
       ["objectName", uploadDetails.path],
-      ["contentType", file.type || (
-        file.name.toLowerCase().endsWith(".mov")
-          ? "video/quicktime"
-          : "video/mp4"
-      )],
+      ["contentType", contentType],
       ["cacheControl", "3600"]
     ].map(([key, value]) => `${key} ${roomVideoBase64(value)}`).join(",");
     const created = await roomVideoTusRequest(

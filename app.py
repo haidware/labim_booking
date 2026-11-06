@@ -1888,18 +1888,53 @@ def save_room_photos(
                 if uploaded_video_path.endswith(".mov")
                 else "video/mp4"
             )
+            stored_content_types = [
+                value for value in (
+                    video_metadata.get("mimetype"),
+                    video_metadata.get("contentType"),
+                    video_metadata.get("content_type"),
+                    video_info.get("mimetype"),
+                    video_info.get("contentType"),
+                    video_info.get("content_type"),
+                )
+                if isinstance(value, str) and value.strip()
+            ]
+            video_content_type = next((
+                value for value in stored_content_types
+                if value.split(";", 1)[0].strip().lower()
+                != "application/octet-stream"
+            ), stored_content_types[0] if stored_content_types else "")
             video_content_type = (
-                video_metadata.get("mimetype")
-                or video_metadata.get("contentType")
-                or video_info.get("mimetype")
+                video_content_type.split(";", 1)[0].strip().lower()
             )
+            if video_content_type in ("", "application/octet-stream"):
+                app.logger.warning(
+                    "Storage did not retain a specific video MIME type for "
+                    "hotel %s room %s; using the validated object extension",
+                    hotel_id, room_number,
+                )
+                video_content_type = expected_content_type
             try:
                 video_size = int(
-                    video_metadata.get("size", video_info.get("size", 0))
+                    video_metadata.get(
+                        "size",
+                        video_metadata.get(
+                            "contentLength",
+                            video_info.get(
+                                "size", video_info.get("contentLength", 0)
+                            ),
+                        ),
+                    )
                 )
             except (TypeError, ValueError):
                 video_size = 0
             if video_content_type != expected_content_type:
+                app.logger.warning(
+                    "Uploaded room video MIME type mismatch for hotel %s "
+                    "room %s: expected %s, received %s",
+                    hotel_id, room_number, expected_content_type,
+                    video_content_type,
+                )
                 raise ValueError("The uploaded room video has an invalid file type.")
             if video_size <= 0 or video_size > MAX_ROOM_VIDEO_BYTES:
                 raise ValueError("The room video must be between 1 byte and 100 MB.")

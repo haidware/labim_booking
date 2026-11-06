@@ -1390,9 +1390,10 @@ class MultiHotelFlowTests(unittest.TestCase):
         }
         storage_bucket.info.return_value = {
             "metadata": {
-                "mimetype": "video/quicktime",
+                "mimetype": "application/octet-stream",
                 "size": 2048,
             },
+            "contentType": "video/quicktime; charset=binary",
         }
         supabase_admin = Mock()
         supabase_admin.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
