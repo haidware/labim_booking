@@ -1,10 +1,19 @@
 document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
   const videoInput = form.querySelector('input[name="video"]');
+  const photosInput = form.querySelector("[data-room-photos]");
   const videoPathInput = form.querySelector('input[name="video_path"]');
   const durationInput = form.querySelector('input[name="video_duration"]');
   const progress = form.querySelector("progress");
   const status = form.querySelector(".room-video-upload-status");
   const submitButton = form.querySelector('button[type="submit"]');
+  const photoStatus = form.querySelector(".room-photo-selection-status");
+
+  photosInput.addEventListener("change", () => {
+    const count = photosInput.files.length;
+    photoStatus.textContent = count
+      ? `${count} room photo${count === 1 ? "" : "s"} selected.`
+      : "";
+  });
 
   form.addEventListener("submit", async (event) => {
     const file = videoInput.files[0];
@@ -73,7 +82,17 @@ document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
           if (upload.status >= 200 && upload.status < 300) {
             resolve();
           } else {
-            reject(new Error("Video upload failed. Please retry."));
+            let detail = "";
+            try {
+              const response = JSON.parse(upload.responseText);
+              detail = response.message || response.error || "";
+            } catch {
+              detail = "";
+            }
+            reject(new Error(
+              `Video upload failed (HTTP ${upload.status})` +
+              `${detail ? `: ${detail}` : ". Please retry."}`
+            ));
           }
         };
         upload.onerror = () => reject(
@@ -87,11 +106,7 @@ document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
         );
         const body = new FormData();
         body.append("cacheControl", "3600");
-        body.append(
-          "file",
-          new Blob([file], {type: contentType}),
-          file.name
-        );
+        body.append("", file);
         upload.send(body);
       });
 

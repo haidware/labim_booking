@@ -1855,6 +1855,27 @@ class MultiHotelFlowTests(unittest.TestCase):
         })
         self.assertIn("Standard · Room 101".encode(), hotel_one_availability.data)
         self.assertNotIn("Suite · Room 101".encode(), hotel_one_availability.data)
+        multiple_photos = hotel_two_manager.post(
+            "/rooms/101/online",
+            data={
+                "photos": [
+                    (BytesIO(b"\x89PNG\r\n\x1a\nfirst"), "first.png", "image/png"),
+                    (BytesIO(b"\x89PNG\r\n\x1a\nsecond"), "second.png", "image/png"),
+                ],
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(multiple_photos.status_code, 302)
+        with self.app_module.app.app_context():
+            saved_listing = self.app_module.get_db().execute(
+                """SELECT photo_path, photo_paths FROM online_room_listings
+                WHERE hotel_id = ? AND room_number = '101'""",
+                (hotel_two_id,),
+            ).fetchone()
+            self.assertEqual(
+                len(self.app_module.room_photo_paths(dict(saved_listing))),
+                2,
+            )
 
     def test_legacy_sqlite_records_are_assigned_to_labim(self):
         legacy_directory = Path(tempfile.mkdtemp())

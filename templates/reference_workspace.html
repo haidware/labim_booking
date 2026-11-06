@@ -99,7 +99,8 @@
               <button class="secondary-button" type="submit">Save description</button>
             </form>
             <form class="online-photo-upload" method="post" enctype="multipart/form-data" action="{{ url_for('manage_online_room', room_number=room.number) }}" data-room-video-upload data-upload-url="{{ url_for('create_room_video_upload', room_number=room.number) if supabase_enabled else '' }}">
-              <label>Room photos (optional; choose up to 5 JPG, PNG, or WebP images, max 5 MB each. Choosing photos replaces the existing photo set.)<input type="file" name="photos" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple></label>
+              <label>Room photos (optional; choose up to 5 JPG, PNG, or WebP images, max 5 MB each. Select multiple photos in the picker; choosing photos replaces the existing photo set.)<input type="file" name="photos" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple data-room-photos></label>
+              <p class="room-photo-selection-status" role="status" aria-live="polite"></p>
               <label>Room video (optional; one MP4 or MOV video up to 3 minutes and 100 MB. Uploading a video replaces the current video.)<input type="file" name="video" accept=".mp4,.mov,video/mp4,video/quicktime"></label>
               <input type="hidden" name="video_path">
               <input type="hidden" name="video_duration">
