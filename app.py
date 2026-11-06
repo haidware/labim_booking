@@ -4101,11 +4101,11 @@ def create_room_video_upload(room_number):
         project_ref = storage_host.removesuffix(".supabase.co")
         resumable_endpoint = (
             f"https://{project_ref}.storage.supabase.co"
-            "/storage/v1/upload/resumable"
+            "/storage/v1/upload/resumable/sign"
         )
     else:
         resumable_endpoint = (
-            f"{SUPABASE_URL.rstrip('/')}/storage/v1/upload/resumable"
+            f"{SUPABASE_URL.rstrip('/')}/storage/v1/upload/resumable/sign"
         )
     return jsonify({
         "path": path,

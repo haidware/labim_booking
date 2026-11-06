@@ -1423,7 +1423,7 @@ class MultiHotelFlowTests(unittest.TestCase):
             self.assertEqual(
                 signed_details["resumable_endpoint"],
                 "https://frmekmypefrwvocepjmg.storage.supabase.co"
-                "/storage/v1/upload/resumable",
+                "/storage/v1/upload/resumable/sign",
             )
             finalized_upload = hotel_two_manager.post(
                 "/rooms/101/online",
