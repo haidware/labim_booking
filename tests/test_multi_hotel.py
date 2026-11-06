@@ -1386,6 +1386,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         storage_bucket = Mock()
         storage_bucket.create_signed_upload_url.return_value = {
             "signed_url": "https://storage.example.test/signed-upload?token=short-lived",
+            "token": "short-lived",
         }
         storage_bucket.info.return_value = {
             "metadata": {
@@ -1416,8 +1417,13 @@ class MultiHotelFlowTests(unittest.TestCase):
             signed_details = signed_upload.get_json()
             self.assertIn(hotel_two_id, signed_details["path"])
             self.assertEqual(
-                signed_details["signed_url"],
-                "https://storage.example.test/signed-upload?token=short-lived",
+                signed_details["token"],
+                "short-lived",
+            )
+            self.assertEqual(
+                signed_details["resumable_endpoint"],
+                "https://frmekmypefrwvocepjmg.storage.supabase.co"
+                "/storage/v1/upload/resumable",
             )
             finalized_upload = hotel_two_manager.post(
                 "/rooms/101/online",

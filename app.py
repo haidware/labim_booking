@@ -4096,9 +4096,21 @@ def create_room_video_upload(room_number):
             current_hotel_id(), room_number,
         )
         return jsonify({"error": "Could not prepare the video upload. Please retry."}), 502
+    storage_host = urlparse(SUPABASE_URL).hostname or ""
+    if storage_host.endswith(".supabase.co"):
+        project_ref = storage_host.removesuffix(".supabase.co")
+        resumable_endpoint = (
+            f"https://{project_ref}.storage.supabase.co"
+            "/storage/v1/upload/resumable"
+        )
+    else:
+        resumable_endpoint = (
+            f"{SUPABASE_URL.rstrip('/')}/storage/v1/upload/resumable"
+        )
     return jsonify({
         "path": path,
-        "signed_url": signed_upload["signed_url"],
+        "resumable_endpoint": resumable_endpoint,
+        "token": signed_upload["token"],
     })
 
 
