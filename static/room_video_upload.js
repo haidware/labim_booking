@@ -17,9 +17,19 @@ function roomVideoTusRequest(method, url, headers, body, onProgress) {
         resolve(request);
         return;
       }
-      reject(new Error(
-        `Upload request failed (HTTP ${request.status}).`
-      ));
+      let detail = "";
+      try {
+        const response = JSON.parse(request.responseText);
+        detail = response.message || response.error || response.details || "";
+      } catch {
+        detail = request.responseText.trim().slice(0, 240);
+      }
+      const error = new Error(
+        `Upload request failed (HTTP ${request.status})` +
+        `${detail ? `: ${detail}` : "."}`
+      );
+      error.status = request.status;
+      reject(error);
     };
     request.onerror = () => reject(new Error("Network connection interrupted."));
     request.ontimeout = () => reject(new Error("Upload request timed out."));
@@ -90,7 +100,6 @@ async function roomVideoUploadChunked(file, uploadDetails, storageKey, progress,
     }
     uploadUrl = new URL(location, uploadDetails.resumable_endpoint).toString();
     uploadDetails.upload_url = uploadUrl;
-    localStorage.setItem(storageKey, JSON.stringify(uploadDetails));
   }
 
   while (offset < file.size) {
@@ -193,6 +202,13 @@ document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
     status.textContent = "Checking video duration...";
 
     let objectUrl;
+    const storageKey = [
+      "room-video-tus",
+      form.action,
+      file.name,
+      file.size,
+      file.lastModified
+    ].join(":");
     try {
       const duration = await new Promise((resolve, reject) => {
         const probe = document.createElement("video");
@@ -209,13 +225,6 @@ document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
       }
 
       status.textContent = "Preparing secure upload...";
-      const storageKey = [
-        "room-video-tus",
-        form.action,
-        file.name,
-        file.size,
-        file.lastModified
-      ].join(":");
       let uploadDetails;
       try {
         uploadDetails = JSON.parse(localStorage.getItem(storageKey));
@@ -254,7 +263,13 @@ document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
       submitButton.disabled = false;
       form.requestSubmit(submitButton);
     } catch (error) {
-      status.textContent = error.message || "Video upload failed. Please retry.";
+      if (error.status === 400) {
+        localStorage.removeItem(storageKey);
+      }
+      const message = error.message || "Video upload failed. Please retry.";
+      status.textContent = /mime type .* is not supported/i.test(message)
+        ? `${message} Run the MOV storage migration in the Rooms Supabase project.`
+        : message;
       form.dataset.uploading = "false";
       submitButton.disabled = false;
       progress.hidden = true;
