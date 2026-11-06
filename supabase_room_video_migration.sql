@@ -11,7 +11,13 @@ values (
   'room-photos',
   true,
   104857600,
-  array['image/jpeg', 'image/png', 'image/webp', 'video/mp4']
+  array[
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'video/mp4',
+    'video/quicktime'
+  ]
 )
 on conflict (id) do update set
   public = excluded.public,
