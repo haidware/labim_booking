@@ -1370,6 +1370,8 @@ class MultiHotelFlowTests(unittest.TestCase):
         )
         self.assertIn(b"Upload no more than 5 room photos", online_settings.data)
         self.assertIn(b"up to 5 JPG", online_settings.data)
+        self.assertIn(b"room_video_upload.js", online_settings.data)
+        self.assertIn(b"data-room-video-upload", online_settings.data)
         with self.app_module.app.app_context():
             saved_listing = self.app_module.get_db().execute(
                 """SELECT photo_path, photo_paths FROM online_room_listings
@@ -1380,6 +1382,64 @@ class MultiHotelFlowTests(unittest.TestCase):
                 len(self.app_module.room_photo_paths(dict(saved_listing))),
                 5,
             )
+
+        storage_bucket = Mock()
+        storage_bucket.create_signed_upload_url.return_value = {
+            "signed_url": "https://storage.example.test/signed-upload?token=short-lived",
+        }
+        storage_bucket.info.return_value = {
+            "metadata": {
+                "mimetype": "video/quicktime",
+                "size": 2048,
+            },
+        }
+        supabase_admin = Mock()
+        supabase_admin.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+            {"number": "101"},
+        ]
+        supabase_admin.storage.from_.return_value = storage_bucket
+        with (
+            patch.object(self.app_module, "SUPABASE_ENABLED", True),
+            patch.object(
+                self.app_module, "get_supabase_admin", return_value=supabase_admin
+            ),
+        ):
+            signed_upload = hotel_two_manager.post(
+                "/rooms/101/online/video-upload",
+                json={
+                    "filename": "room-tour.mov",
+                    "content_type": "video/quicktime",
+                    "size": 2048,
+                },
+            )
+            self.assertEqual(signed_upload.status_code, 200)
+            signed_details = signed_upload.get_json()
+            self.assertIn(hotel_two_id, signed_details["path"])
+            self.assertEqual(
+                signed_details["signed_url"],
+                "https://storage.example.test/signed-upload?token=short-lived",
+            )
+            finalized_upload = hotel_two_manager.post(
+                "/rooms/101/online",
+                data={
+                    "video_path": signed_details["path"],
+                    "video_duration": "60",
+                },
+            )
+            self.assertEqual(finalized_upload.status_code, 302)
+            saved_video_path = (
+                supabase_admin.table.return_value.upsert.call_args.args[0][
+                    "video_path"
+                ]
+            )
+            self.assertEqual(saved_video_path, signed_details["path"])
+
+        interrupted_upload = hotel_two_manager.get("/rooms/101/online")
+        self.assertEqual(interrupted_upload.status_code, 302)
+        self.assertIn(
+            "/workspace/manager/online-settings",
+            interrupted_upload.headers["Location"],
+        )
 
         def video_container(duration_seconds, brand=b"isom"):
             def atom(kind, payload):

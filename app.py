@@ -1818,11 +1818,17 @@ def _validate_photo_uploads(uploads, label, maximum):
     return validated_uploads
 
 
-def save_room_photos(room_number, uploaded_files, uploaded_video=None):
+def save_room_photos(
+    room_number, uploaded_files, uploaded_video=None,
+    uploaded_video_path="", video_duration="",
+):
     uploads = [uploaded for uploaded in uploaded_files if uploaded and uploaded.filename]
     video = uploaded_video if uploaded_video and uploaded_video.filename else None
-    if not uploads and video is None:
+    uploaded_video_path = form_text(uploaded_video_path)
+    if not uploads and video is None and not uploaded_video_path:
         raise ValueError("Choose room photos or a room video to upload.")
+    if video is not None and uploaded_video_path:
+        raise ValueError("Upload the room video only once.")
     validated_uploads = _validate_photo_uploads(
         uploads, "room", MAX_ROOM_PHOTOS
     )
@@ -1845,6 +1851,23 @@ def save_room_photos(room_number, uploaded_files, uploaded_video=None):
         if duration > MAX_ROOM_VIDEO_SECONDS:
             raise ValueError("The room video must be 3 minutes or shorter.")
         validated_video = (content, content_type, extension)
+    elif uploaded_video_path:
+        if not SUPABASE_ENABLED:
+            raise ValueError("Direct video uploads require Supabase storage.")
+        expected_path = re.fullmatch(
+            rf"{re.escape(current_hotel_id())}/[a-f0-9]{{32}}\.(mp4|mov)",
+            uploaded_video_path,
+        )
+        try:
+            reported_duration = float(video_duration)
+        except (TypeError, ValueError) as error:
+            raise ValueError("The room video duration could not be verified.") from error
+        if (
+            not expected_path
+            or reported_duration <= 0
+            or reported_duration > MAX_ROOM_VIDEO_SECONDS
+        ):
+            raise ValueError("The room video must be 3 minutes or shorter.")
 
     hotel_id = current_hotel_id()
     if SUPABASE_ENABLED:
@@ -1855,6 +1878,31 @@ def save_room_photos(room_number, uploaded_files, uploaded_video=None):
         ).limit(1).execute().data
         if not room:
             raise ValueError("Room not found.")
+        if uploaded_video_path:
+            video_info = admin.storage.from_(ROOM_PHOTO_BUCKET).info(
+                uploaded_video_path
+            )
+            video_metadata = video_info.get("metadata") or {}
+            expected_content_type = (
+                "video/quicktime"
+                if uploaded_video_path.endswith(".mov")
+                else "video/mp4"
+            )
+            video_content_type = (
+                video_metadata.get("mimetype")
+                or video_metadata.get("contentType")
+                or video_info.get("mimetype")
+            )
+            try:
+                video_size = int(
+                    video_metadata.get("size", video_info.get("size", 0))
+                )
+            except (TypeError, ValueError):
+                video_size = 0
+            if video_content_type != expected_content_type:
+                raise ValueError("The uploaded room video has an invalid file type.")
+            if video_size <= 0 or video_size > MAX_ROOM_VIDEO_BYTES:
+                raise ValueError("The room video must be between 1 byte and 100 MB.")
         existing = admin.table("online_room_listings").select(
             "photo_path, photo_paths, video_path, description"
         ).eq("hotel_id", hotel_id).eq(
@@ -1892,7 +1940,10 @@ def save_room_photos(room_number, uploaded_files, uploaded_video=None):
             photo_paths if uploads else room_photo_paths(existing_listing)
         )
         saved_video_path = (
-            video_path if validated_video else existing_listing.get("video_path", "")
+            uploaded_video_path
+            if uploaded_video_path else
+            video_path
+            if validated_video else existing_listing.get("video_path", "")
         )
         admin.table("online_room_listings").upsert({
             "hotel_id": hotel_id,
@@ -1907,7 +1958,7 @@ def save_room_photos(room_number, uploaded_files, uploaded_video=None):
         old_assets = []
         if uploads:
             old_assets.extend(room_photo_paths(existing_listing))
-        if validated_video and existing_listing.get("video_path"):
+        if (validated_video or uploaded_video_path) and existing_listing.get("video_path"):
             old_assets.append(existing_listing["video_path"])
         if old_assets:
             admin.storage.from_(ROOM_PHOTO_BUCKET).remove(old_assets)
@@ -3071,7 +3122,8 @@ def require_workspace_login():
     elif endpoint == "update_room":
         required_role = "reception"
     elif endpoint in {
-        "manage_room", "manage_online_room", "manage_hotel_photos",
+        "manage_room", "manage_online_room", "create_room_video_upload",
+        "manage_hotel_photos",
     }:
         required_role = "manager"
     elif endpoint in {
@@ -4005,8 +4057,62 @@ def manage_hotel_photos():
     ))
 
 
-@app.post("/rooms/<room_number>/online")
+@app.post("/rooms/<room_number>/online/video-upload")
+def create_room_video_upload(room_number):
+    if not SUPABASE_ENABLED:
+        return jsonify({"error": "Direct video uploads require Supabase storage."}), 503
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Send the video details as JSON."}), 400
+    filename = secure_filename(form_text(payload.get("filename")))
+    extension = Path(filename).suffix.lower()
+    video_types = {
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+    }
+    content_type = video_types.get(extension)
+    try:
+        size = int(payload.get("size", 0))
+    except (TypeError, ValueError):
+        size = 0
+    if not filename or not content_type or payload.get("content_type") != content_type:
+        return jsonify({"error": "Choose a valid MP4 or MOV room video."}), 400
+    if size <= 0 or size > MAX_ROOM_VIDEO_BYTES:
+        return jsonify({"error": "The room video must be between 1 byte and 100 MB."}), 400
+    admin = get_supabase_admin()
+    room = admin.table("rooms").select("number").eq(
+        "hotel_id", current_hotel_id()
+    ).eq("number", room_number).limit(1).execute().data
+    if not room:
+        return jsonify({"error": "Room not found."}), 404
+    path = f"{current_hotel_id()}/{uuid4().hex}{extension}"
+    try:
+        signed_upload = admin.storage.from_(ROOM_PHOTO_BUCKET).create_signed_upload_url(
+            path
+        )
+    except Exception:
+        app.logger.exception(
+            "Could not create a signed video upload for hotel %s room %s",
+            current_hotel_id(), room_number,
+        )
+        return jsonify({"error": "Could not prepare the video upload. Please retry."}), 502
+    return jsonify({
+        "path": path,
+        "signed_url": signed_upload["signed_url"],
+    })
+
+
+@app.route("/rooms/<room_number>/online", methods=["GET", "POST"])
 def manage_online_room(room_number):
+    if request.method == "GET":
+        flash(
+            "The previous room media upload may have been interrupted. "
+            "Check the room gallery and retry if needed.",
+            "error",
+        )
+        return redirect(url_for(
+            "reference_workspace", role="manager", page="online-settings"
+        ))
     try:
         uploaded_files = request.files.getlist("photos")
         if not any(uploaded_file.filename for uploaded_file in uploaded_files):
@@ -4018,10 +4124,18 @@ def manage_online_room(room_number):
             room_number,
             uploaded_files,
             uploaded_videos[0] if uploaded_videos else None,
+            request.form.get("video_path", ""),
+            request.form.get("video_duration", ""),
         )
         flash(f"Room media for {room_number} uploaded.", "success")
     except ValueError as error:
         flash(str(error), "error")
+    except Exception:
+        app.logger.exception(
+            "Could not save room media for hotel %s room %s",
+            current_hotel_id(), room_number,
+        )
+        flash("Could not save room media. Please retry.", "error")
     return redirect(url_for(
         "reference_workspace", role="manager", page="online-settings"
     ))
@@ -5228,6 +5342,7 @@ def reference_workspace(role, page):
         online_listings=online_listings,
         booking_settings=booking_settings,
         hotel_profile=hotel_profile,
+        supabase_enabled=SUPABASE_ENABLED,
         pending_online_bookings=(
             pending_online_bookings()
             if role == "reception" and page == "online" else []
