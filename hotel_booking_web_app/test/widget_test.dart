@@ -445,13 +445,22 @@ void main() {
       findsOneWidget,
     );
     expect(find.byTooltip('Apartment Admin'), findsOneWidget);
+    expect(find.text('Apply to list an apartment'), findsOneWidget);
     expect(
       find.textContaining('Shortlet stays require manager confirmation'),
-      findsOneWidget,
+      findsNothing,
     );
     expect(find.text('Search apartments'), findsOneWidget);
     expect(find.text('Shortlet apartments'), findsOneWidget);
     expect(find.text('Land/Properties'), findsOneWidget);
+    final howApartmentsWork = find.text('How Rooms works for apartments');
+    await tester.ensureVisible(howApartmentsWork);
+    await tester.pumpAndSettle();
+    expect(howApartmentsWork, findsOneWidget);
+    expect(
+      find.textContaining('No booking or payment is made through Rooms'),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

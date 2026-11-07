@@ -1428,31 +1428,17 @@ class _HotelBookingPageState extends State<HotelBookingPage>
         border: Border.all(color: const Color(0xFFE9B45F)),
         borderRadius: BorderRadius.circular(14),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Shortlet stays require manager confirmation. Select an apartment to send an availability request; this does not create a booking or collect payment.',
-            style: TextStyle(
-              color: Color(0xFF173651),
-              fontWeight: FontWeight.w600,
-              height: 1.45,
-            ),
+      child: Align(
+        alignment: AlignmentDirectional.centerEnd,
+        child: FilledButton.icon(
+          onPressed: _applyToListApartment,
+          icon: const Icon(Icons.add_home_work_outlined),
+          label: const Text('Apply to list an apartment'),
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF17607A),
+            foregroundColor: Colors.white,
           ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: AlignmentDirectional.centerEnd,
-            child: FilledButton.icon(
-              onPressed: _applyToListApartment,
-              icon: const Icon(Icons.add_home_work_outlined),
-              label: const Text('Apply to list an apartment'),
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF17607A),
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -3306,11 +3292,61 @@ class _TrustFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isApartmentPreview) {
-      return const Center(
-        child: Text(
-          'Sample apartment listings are shown for design preview only.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Color(0xFF82959A), fontSize: 12, height: 1.5),
+      const apartmentSteps = [
+        'Search shortlet apartments by location, dates and nightly price.',
+        'Select an apartment to review its details, photos and video.',
+        'Send an availability request to the apartment manager on WhatsApp.',
+        'The manager confirms availability and the final price directly with you.',
+        'No booking or payment is made through Rooms for shortlet apartments.',
+      ];
+
+      return Center(
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: const Color(0xFFE1E8EA)),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'How Rooms works for apartments',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 10),
+              for (final step in apartmentSteps)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 7),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.only(top: 7, right: 9),
+                        child: Icon(
+                          Icons.circle,
+                          size: 7,
+                          color: Color(0xFF17607A),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          step,
+                          style: const TextStyle(
+                            color: Color(0xFF596B70),
+                            height: 1.45,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
         ),
       );
     }
