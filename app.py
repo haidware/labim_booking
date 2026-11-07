@@ -3020,7 +3020,11 @@ def recent_whatsapp_handoffs(hotel_id=None, month=None):
         "payer_account_number, amount, message_text, status, created_at"
     )
     if SUPABASE_ENABLED:
-        client = get_supabase_admin() if hotel_id is None else get_request_supabase()
+        client = (
+            get_supabase_admin()
+            if hotel_id is None or session.get("user_role") == "controller"
+            else get_request_supabase()
+        )
         start, end = reporting_month_bounds(month) if month else (None, None)
 
         def event_query():

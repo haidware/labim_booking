@@ -1490,6 +1490,41 @@ class MultiHotelFlowTests(unittest.TestCase):
                 self.assertEqual(controller_session["user_role"], "controller")
                 self.assertNotIn("hotel_id", controller_session)
 
+    def test_controller_hotel_report_uses_supabase_admin_client(self):
+        query = Mock()
+        query.select.return_value = query
+        query.eq.return_value = query
+        query.gte.return_value = query
+        query.lt.return_value = query
+        query.order.return_value = query
+        query.range.return_value = query
+        query.execute.return_value.data = []
+        client = Mock()
+        client.table.return_value = query
+        with (
+            self.app_module.app.test_request_context("/commandcenter"),
+            patch.object(self.app_module, "SUPABASE_ENABLED", True),
+            patch.object(
+                self.app_module, "get_supabase_admin", return_value=client
+            ) as get_admin,
+            patch.object(
+                self.app_module, "get_request_supabase"
+            ) as get_request_client,
+        ):
+            from flask import session as request_session
+
+            request_session["user_role"] = "controller"
+            self.assertEqual(
+                self.app_module.recent_whatsapp_handoffs(
+                    hotel_id="hotel-123",
+                    month=date.today().strftime("%Y-%m"),
+                ),
+                [],
+            )
+        get_admin.assert_called_once_with()
+        get_request_client.assert_not_called()
+        query.eq.assert_called_once_with("hotel_id", "hotel-123")
+
     def test_reference_booking_flow_is_at_book_and_flutter_pwa_at_book_app(self):
         with tempfile.TemporaryDirectory() as build_directory:
             build_path = Path(build_directory)
