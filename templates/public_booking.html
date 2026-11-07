@@ -75,14 +75,18 @@
         </article>
         {% endfor %}
       </div>
-      <section class="public-guest-details">
-        <h2>Guest details</h2>
-        <label>Full name<input name="guest_name" maxlength="160" autocomplete="name" required></label>
-        <label>Email address<input name="email" type="email" maxlength="254" autocomplete="email" required></label>
-        <label>Phone number<input name="phone" type="tel" maxlength="40" autocomplete="tel" required></label>
-        <p>Your dates will be held for 30 minutes while you transfer payment. Reception confirms your booking after verifying the transfer.</p>
-        <button class="primary-button" type="submit">Request booking and get payment details</button>
-      </section>
+      <dialog class="public-guest-dialog" aria-labelledby="public-guest-details-title">
+        <section class="public-guest-details">
+          <button class="public-guest-dialog-close" type="button" aria-label="Close guest details" data-close-dialog>×</button>
+          <h2 id="public-guest-details-title">Guest details</h2>
+          <p class="public-selected-room" aria-live="polite"></p>
+          <label>Full name<input name="guest_name" maxlength="160" autocomplete="name" required></label>
+          <label>Email address<input name="email" type="email" maxlength="254" autocomplete="email" required></label>
+          <label>Phone number<input name="phone" type="tel" maxlength="40" autocomplete="tel" required></label>
+          <p>Your dates will be held for 30 minutes while you transfer payment. Reception confirms your booking after verifying the transfer.</p>
+          <button class="primary-button" type="submit">Request booking and get payment details</button>
+        </section>
+      </dialog>
     </form>
     {% else %}
     <section class="public-no-rooms"><h2>No listed rooms available for those dates</h2><p>Try different dates, or contact the hotel for assistance.</p></section>

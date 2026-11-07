@@ -1654,6 +1654,8 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertIn(b"Photo 1 of Room 101", search.data)
         self.assertIn(b"Photo 2 of Room 101", search.data)
         self.assertIn(b"Photo 5 of Room 101", search.data)
+        self.assertIn(b'<dialog class="public-guest-dialog"', search.data)
+        self.assertIn(b'id="public-guest-details-title">Guest details', search.data)
 
         price_filtered_directory = guest.get("/book-legacy", query_string={
             "check_in": stay_start,

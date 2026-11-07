@@ -39,3 +39,24 @@ document.querySelectorAll('.extend-dialog[data-current-departure]').forEach((dia
     quote.textContent = `${addedNights} added night(s) · Additional charge: ₦${additionalCharge.toLocaleString()}.`;
   });
 });
+
+document.querySelectorAll('.public-room-booking-form').forEach((form) => {
+  const dialog = form.querySelector('.public-guest-dialog');
+  const roomSummary = dialog?.querySelector('.public-selected-room');
+
+  if (!dialog || !roomSummary) return;
+
+  form.querySelectorAll('input[name="room_number"]').forEach((roomInput) => {
+    roomInput.addEventListener('change', () => {
+      if (!roomInput.checked) return;
+      roomSummary.textContent = `Selected: Room ${roomInput.value}`;
+      dialog.showModal();
+      dialog.querySelector('input[name="guest_name"]')?.focus();
+    });
+  });
+
+  dialog.addEventListener('close', () => {
+    const selectedRoom = form.querySelector('input[name="room_number"]:checked');
+    if (selectedRoom) selectedRoom.checked = false;
+  });
+});
