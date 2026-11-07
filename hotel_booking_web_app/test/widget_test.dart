@@ -249,6 +249,7 @@ class _ApartmentFlowApi extends _EmptyBookingApi {
     rate: 75000,
     description: 'Furnished shortlet apartment.',
     photoUrls: [],
+    videoUrl: 'https://example.com/serviced-apartment.mp4',
   );
 
   @override
@@ -858,10 +859,10 @@ void main() {
     await tester.tap(find.byTooltip('Play room video').first);
     await tester.pumpAndSettle();
     await tester.ensureVisible(
-      find.byTooltip('Open video full screen in landscape').first,
+      find.byTooltip('Open room video full screen in landscape').first,
     );
     await tester.tap(
-      find.byTooltip('Open video full screen in landscape').first,
+      find.byTooltip('Open room video full screen in landscape').first,
     );
     await tester.pumpAndSettle();
 
@@ -876,6 +877,55 @@ void main() {
     await tester.tap(find.byTooltip('Pause room video'));
     await tester.pumpAndSettle();
     expect(find.byTooltip('Play room video'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byTooltip('Close full-screen video'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('shortlet apartment video uses fullscreen landscape player', (
+    tester,
+  ) async {
+    final previousPlatform = VideoPlayerPlatform.instance;
+    final platform = _TestVideoPlayerPlatform();
+    VideoPlayerPlatform.instance = platform;
+    addTearDown(() async {
+      VideoPlayerPlatform.instance = previousPlatform;
+      await platform.disposeStreams();
+    });
+
+    await tester.pumpWidget(
+      HotelBookingApp(
+        bookingPage: HotelBookingPage(
+          api: _ApartmentFlowApi(),
+          apartmentPreview: true,
+          installPromptDismissed: () => true,
+          installPromptPlatform: () => 'android',
+          isRunningAsInstalledApp: () => true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('View apartment').first);
+    await tester.tap(find.text('View apartment').first);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byTooltip('Play apartment video').first);
+    await tester.tap(find.byTooltip('Play apartment video').first);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byTooltip('Open apartment video full screen in landscape').first,
+    );
+    await tester.tap(
+      find.byTooltip('Open apartment video full screen in landscape').first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Close full-screen video'), findsOneWidget);
+    expect(find.byTooltip('Pause apartment video'), findsOneWidget);
+    expect(
+      find.text('Rotate your device to landscape for the best view.'),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.byTooltip('Close full-screen video'));

@@ -2502,10 +2502,12 @@ class _RoomMediaGallery extends StatefulWidget {
     super.key,
     required this.room,
     required this.aspectRatio,
+    required this.isApartmentPreview,
   });
 
   final HotelRoom room;
   final double aspectRatio;
+  final bool isApartmentPreview;
 
   @override
   State<_RoomMediaGallery> createState() => _RoomMediaGalleryState();
@@ -2536,7 +2538,10 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
     } catch (error, stackTrace) {
       debugPrint('Room video could not be loaded: $error\n$stackTrace');
       if (mounted) {
-        setState(() => _videoError = 'This room video could not be loaded.');
+        final mediaName = widget.isApartmentPreview ? 'apartment' : 'room';
+        setState(
+          () => _videoError = 'This $mediaName video could not be loaded.',
+        );
       }
     }
   }
@@ -2555,7 +2560,10 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           fullscreenDialog: true,
-          builder: (_) => _FullscreenRoomVideoPage(controller: controller),
+          builder: (_) => _FullscreenRoomVideoPage(
+            controller: controller,
+            mediaName: widget.isApartmentPreview ? 'apartment' : 'room',
+          ),
         ),
       );
     } finally {
@@ -2693,7 +2701,9 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
         color: Colors.black,
         child: Center(
           child: IconButton.filled(
-            tooltip: 'Play room video',
+            tooltip: widget.isApartmentPreview
+                ? 'Play apartment video'
+                : 'Play room video',
             onPressed: () {
               final videoUrl = widget.room.videoUrl;
               if (videoUrl != null && videoUrl.isNotEmpty) {
@@ -2749,7 +2759,9 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
               right: 8,
               bottom: 8,
               child: IconButton.filled(
-                tooltip: 'Open video full screen in landscape',
+                tooltip: widget.isApartmentPreview
+                    ? 'Open apartment video full screen in landscape'
+                    : 'Open room video full screen in landscape',
                 onPressed: _openFullscreenVideo,
                 style: IconButton.styleFrom(
                   backgroundColor: Colors.black54,
@@ -2807,9 +2819,13 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
 }
 
 class _FullscreenRoomVideoPage extends StatefulWidget {
-  const _FullscreenRoomVideoPage({required this.controller});
+  const _FullscreenRoomVideoPage({
+    required this.controller,
+    required this.mediaName,
+  });
 
   final VideoPlayerController controller;
+  final String mediaName;
 
   @override
   State<_FullscreenRoomVideoPage> createState() =>
@@ -2874,9 +2890,8 @@ class _FullscreenRoomVideoPageState extends State<_FullscreenRoomVideoPage> {
                 ValueListenableBuilder<VideoPlayerValue>(
                   valueListenable: widget.controller,
                   builder: (context, value, child) => IconButton.filled(
-                    tooltip: value.isPlaying
-                        ? 'Pause room video'
-                        : 'Play room video',
+                    tooltip:
+                        '${value.isPlaying ? 'Pause' : 'Play'} ${widget.mediaName} video',
                     onPressed: () => unawaited(
                       value.isPlaying
                           ? widget.controller.pause()
@@ -2933,6 +2948,7 @@ class _SelectableRoomCard extends StatelessWidget {
               key: ValueKey(room.number),
               room: room,
               aspectRatio: constraints.maxWidth < 600 ? 1.8 : 5.0,
+              isApartmentPreview: isApartmentPreview,
             ),
           ),
           Padding(
