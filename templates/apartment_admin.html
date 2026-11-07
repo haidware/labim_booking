@@ -64,7 +64,7 @@
             <span class="apartment-admin-step">01</span>
             <div>
               <h2>Add an apartment</h2>
-              <p>Enter the property details guests will see in search.</p>
+              <p>Enter the property details guests will see in search. Save it first to add media uploads.</p>
             </div>
           </div>
           <span class="apartment-admin-required-note"><span aria-hidden="true">*</span> Required fields</span>
@@ -167,14 +167,20 @@
                   <span>{{ listing.bedrooms }} bed</span><span>{{ listing.bathrooms }} bath</span>
                   <span>₦{{ '{:,.0f}'.format(listing.nightly_rate) }} / night</span>
                   <span>{{ listing.photo_urls|length }} photo{{ '' if listing.photo_urls|length == 1 else 's' }}</span>
+                  {% if listing.video_url %}<span>Video added</span>{% endif %}
                 </div>
               </div>
             </div>
+            {% if listing.video_url %}
+            <video class="shortlet-admin-video-preview" controls preload="metadata" src="{{ listing.video_url }}">Your browser does not support this apartment video.</video>
+            {% endif %}
             <details class="shortlet-admin-edit">
               <summary><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path></svg>Edit listing</summary>
-              <form class="shortlet-admin-form" method="post" action="{{ url_for('save_command_center_apartment') }}">
+              <form class="shortlet-admin-form" method="post" enctype="multipart/form-data" action="{{ url_for('save_command_center_apartment') }}" data-shortlet-video-upload data-video-label="Apartment" data-storage-bucket="shortlet-videos" data-upload-url="{{ url_for('create_shortlet_video_upload', listing_id=listing.id) if supabase_enabled else '' }}" data-csrf-token="{{ controller_csrf_token }}">
                 <input type="hidden" name="csrf_token" value="{{ controller_csrf_token }}">
                 <input type="hidden" name="listing_id" value="{{ listing.id }}">
+                <input type="hidden" name="video_path">
+                <input type="hidden" name="video_duration">
                 <div class="apartment-admin-fields">
                   <label class="apartment-admin-field apartment-admin-field-wide">
                     <span>Listing title <b aria-hidden="true">*</b></span>
@@ -222,6 +228,11 @@
                     <textarea name="photo_urls" rows="3">{{ listing.photo_urls|join('\n') }}</textarea>
                     <small>Up to 5 HTTPS photo links, one per line.</small>
                   </label>
+                  <label class="apartment-admin-field apartment-admin-field-wide">
+                    <span>Apartment video</span>
+                    <input type="file" name="video" accept=".mp4,.mov,video/mp4,video/quicktime">
+                    <small>Optional. Upload one MP4 or MOV video, up to 100 MB and 3 minutes. A new upload replaces the current video.</small>
+                  </label>
                   <label class="apartment-admin-field">
                     <span>Listing status</span>
                     <select name="status">
@@ -231,6 +242,8 @@
                     </select>
                   </label>
                 </div>
+                <progress max="100" value="0" hidden></progress>
+                <p class="room-video-upload-status" role="status" aria-live="polite"></p>
                 <div class="apartment-admin-form-footer">
                   <span></span>
                   <button class="primary-button" type="submit">
@@ -253,5 +266,6 @@
       </section>
     </main>
   </div>
+  <script src="{{ url_for('static', filename='room_video_upload.js') }}" defer></script>
 </body>
 </html>

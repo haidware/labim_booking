@@ -52,7 +52,9 @@ function roomVideoBase64(value) {
   ));
 }
 
-async function roomVideoUploadChunked(file, uploadDetails, storageKey, progress, status) {
+async function roomVideoUploadChunked(
+  file, uploadDetails, storageKey, progress, status, bucketName, uploadLabel
+) {
   const headers = roomVideoTusHeaders(uploadDetails.token);
   let uploadUrl = uploadDetails.upload_url || "";
   let offset = 0;
@@ -78,7 +80,7 @@ async function roomVideoUploadChunked(file, uploadDetails, storageKey, progress,
       ? "video/quicktime"
       : "video/mp4";
     const metadata = [
-      ["bucketName", "room-photos"],
+      ["bucketName", bucketName],
       ["objectName", uploadDetails.path],
       ["contentType", contentType],
       ["cacheControl", "3600"]
@@ -120,7 +122,7 @@ async function roomVideoUploadChunked(file, uploadDetails, storageKey, progress,
             const uploaded = Math.min(offset + event.loaded, file.size);
             progress.value = Math.floor(uploaded * 100 / file.size);
             status.textContent =
-              `Uploading room video... ${progress.value}%`;
+              `Uploading ${uploadLabel.toLowerCase()} video... ${progress.value}%`;
           }
         );
         const nextOffset = Number(
@@ -162,7 +164,9 @@ async function roomVideoUploadChunked(file, uploadDetails, storageKey, progress,
   localStorage.removeItem(storageKey);
 }
 
-document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
+document.querySelectorAll(
+  "[data-room-video-upload], [data-shortlet-video-upload]"
+).forEach((form) => {
   const videoInput = form.querySelector('input[name="video"]');
   const photosInput = form.querySelector("[data-room-photos]");
   const videoPathInput = form.querySelector('input[name="video_path"]');
@@ -171,13 +175,17 @@ document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
   const status = form.querySelector(".room-video-upload-status");
   const submitButton = form.querySelector('button[type="submit"]');
   const photoStatus = form.querySelector(".room-photo-selection-status");
+  const bucketName = form.dataset.storageBucket || "room-photos";
+  const uploadLabel = form.dataset.videoLabel || "Room";
 
-  photosInput.addEventListener("change", () => {
-    const count = photosInput.files.length;
-    photoStatus.textContent = count
-      ? `${count} room photo${count === 1 ? "" : "s"} selected.`
-      : "";
-  });
+  if (photosInput && photoStatus) {
+    photosInput.addEventListener("change", () => {
+      const count = photosInput.files.length;
+      photoStatus.textContent = count
+        ? `${count} room photo${count === 1 ? "" : "s"} selected.`
+        : "";
+    });
+  }
 
   form.addEventListener("submit", async (event) => {
     const file = videoInput.files[0];
@@ -190,7 +198,8 @@ document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
       ? "video/quicktime"
       : "video/mp4";
     if (file.size > 100 * 1024 * 1024) {
-      status.textContent = "The room video must be 100 MB or smaller.";
+      status.textContent =
+        `The ${uploadLabel.toLowerCase()} video must be 100 MB or smaller.`;
       return;
     }
 
@@ -198,7 +207,7 @@ document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
     submitButton.disabled = true;
     progress.hidden = false;
     progress.value = 0;
-    status.textContent = "Checking video duration...";
+    status.textContent = `Checking ${uploadLabel.toLowerCase()} video duration...`;
 
     let objectUrl;
     const storageKey = [
@@ -220,7 +229,9 @@ document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
         probe.src = objectUrl;
       });
       if (!Number.isFinite(duration) || duration <= 0 || duration > 180) {
-        throw new Error("The room video must be 3 minutes or shorter.");
+        throw new Error(
+          `The ${uploadLabel.toLowerCase()} video must be 3 minutes or shorter.`
+        );
       }
 
       status.textContent = "Preparing secure upload...";
@@ -237,7 +248,10 @@ document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
           body: JSON.stringify({
             filename: file.name,
             content_type: contentType,
-            size: file.size
+            size: file.size,
+            ...(form.dataset.csrfToken
+              ? {csrf_token: form.dataset.csrfToken}
+              : {})
           })
         });
         uploadDetails = await prepared.json();
@@ -250,14 +264,15 @@ document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
       }
 
       await roomVideoUploadChunked(
-        file, uploadDetails, storageKey, progress, status
+        file, uploadDetails, storageKey, progress, status, bucketName,
+        uploadLabel
       );
 
       videoPathInput.value = uploadDetails.path;
       durationInput.value = duration.toString();
       videoInput.value = "";
       form.dataset.videoPrepared = "true";
-      status.textContent = "Video uploaded. Saving room media...";
+      status.textContent = `Video uploaded. Saving ${uploadLabel.toLowerCase()} media...`;
       form.dataset.uploading = "false";
       submitButton.disabled = false;
       form.requestSubmit(submitButton);
@@ -267,7 +282,8 @@ document.querySelectorAll("[data-room-video-upload]").forEach((form) => {
       }
       const message = error.message || "Video upload failed. Please retry.";
       status.textContent = /mime type .* is not supported/i.test(message)
-        ? `${message} Run the MOV storage migration in the Rooms Supabase project.`
+        ? `${message} Run the ${uploadLabel.toLowerCase()} video storage ` +
+          "migration in the Rooms Supabase project."
         : message;
       form.dataset.uploading = "false";
       submitButton.disabled = false;

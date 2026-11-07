@@ -6,6 +6,7 @@ import hmac
 import hashlib
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -68,6 +69,7 @@ RENTAL_PROXY_PREFIX = "/rentals"
 RENTAL_PROXY_RETRYABLE_STATUS_CODES = {502, 503, 504}
 RENTAL_PROXY_RETRY_DELAYS = (1, 2, 4, 8, 15, 20)
 ROOM_PHOTO_BUCKET = "room-photos"
+SHORTLET_VIDEO_BUCKET = "shortlet-videos"
 ONLINE_HOLD_MINUTES = 30
 DEFAULT_HOTEL_ID = "00000000-0000-0000-0000-000000000001"
 TRIAL_DAYS = 30
@@ -400,6 +402,7 @@ def shortlet_listings(*, published_only=False):
             if isinstance(photos, list)
             else []
         )
+        row["video_url"] = shortlet_video_url(row.get("video_path", ""))
     return rows
 
 
@@ -461,16 +464,121 @@ def validate_shortlet_form(form):
     }
 
 
-def save_shortlet_listing(form):
+def _validate_shortlet_video(video):
+    extension = Path(secure_filename(video.filename)).suffix.lower()
+    video_types = {
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+    }
+    content_type = video_types.get(extension)
+    if content_type is None or video.mimetype != content_type:
+        raise ValueError("Use an MP4 or MOV apartment video.")
+    content = video.stream.read(MAX_ROOM_VIDEO_BYTES + 1)
+    if not content or len(content) > MAX_ROOM_VIDEO_BYTES:
+        raise ValueError("The apartment video must be between 1 byte and 100 MB.")
+    duration = _video_container_duration_seconds(content)
+    if duration is None or duration <= 0:
+        raise ValueError("The uploaded file is not a supported MP4 or MOV video.")
+    if duration > MAX_ROOM_VIDEO_SECONDS:
+        raise ValueError("The apartment video must be 3 minutes or shorter.")
+    return content, content_type, extension
+
+
+def _verify_shortlet_video_object(admin, video_path):
+    video_info = admin.storage.from_(SHORTLET_VIDEO_BUCKET).info(video_path)
+    video_metadata = video_info.get("metadata") or {}
+    expected_content_type = (
+        "video/quicktime" if video_path.endswith(".mov") else "video/mp4"
+    )
+    stored_content_types = [
+        value for value in (
+            video_metadata.get("mimetype"),
+            video_metadata.get("contentType"),
+            video_metadata.get("content_type"),
+            video_info.get("mimetype"),
+            video_info.get("contentType"),
+            video_info.get("content_type"),
+        )
+        if isinstance(value, str) and value.strip()
+    ]
+    video_content_type = next(
+        (
+            value for value in stored_content_types
+            if value.split(";", 1)[0].strip().lower()
+            != "application/octet-stream"
+        ),
+        stored_content_types[0] if stored_content_types else "",
+    ).split(";", 1)[0].strip().lower()
+    if video_content_type in ("", "application/octet-stream"):
+        app.logger.warning(
+            "Storage did not retain a specific shortlet video MIME type for "
+            "%s; using the validated object extension",
+            video_path,
+        )
+        video_content_type = expected_content_type
+    try:
+        video_size = int(
+            video_metadata.get(
+                "size",
+                video_metadata.get(
+                    "contentLength",
+                    video_info.get(
+                        "size", video_info.get("contentLength", 0)
+                    ),
+                ),
+            )
+        )
+    except (TypeError, ValueError):
+        video_size = 0
+    if video_content_type != expected_content_type:
+        raise ValueError("The uploaded apartment video has an invalid file type.")
+    if video_size <= 0 or video_size > MAX_ROOM_VIDEO_BYTES:
+        raise ValueError("The apartment video must be between 1 byte and 100 MB.")
+
+
+def _remove_shortlet_video(video_path):
+    if not video_path:
+        return
+    try:
+        if SUPABASE_ENABLED:
+            get_supabase_admin().storage.from_(
+                SHORTLET_VIDEO_BUCKET
+            ).remove([video_path])
+        else:
+            video_file = (
+                ROOM_PHOTO_DIRECTORY.parent
+                / "shortlet_videos"
+                / video_path
+            )
+            if video_file.is_file():
+                video_file.unlink()
+    except Exception:
+        app.logger.exception(
+            "Could not remove video for shortlet listing: %s", video_path
+        )
+
+
+def save_shortlet_listing(form, uploaded_video=None):
     values = validate_shortlet_form(form)
     listing_id = form_text(form.get("listing_id"))
+    uploaded_video = (
+        uploaded_video
+        if uploaded_video and uploaded_video.filename
+        else None
+    )
+    uploaded_video_path = form_text(form.get("video_path"))
+    video_duration = form_text(form.get("video_duration"))
+    if uploaded_video and uploaded_video_path:
+        raise ValueError("Upload the apartment video only once.")
+    if (uploaded_video or uploaded_video_path) and not listing_id:
+        raise ValueError("Save the apartment listing before adding a video.")
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if listing_id:
         if SUPABASE_ENABLED:
             existing = (
                 get_supabase_admin()
                 .table("shortlet_listings")
-                .select("id, slug, created_at")
+                .select("id, slug, created_at, video_path")
                 .eq("id", listing_id)
                 .limit(1)
                 .execute()
@@ -481,7 +589,8 @@ def save_shortlet_listing(form):
                 dict(row)
                 for row in get_db()
                 .execute(
-                    "SELECT id, slug, created_at FROM shortlet_listings "
+                    "SELECT id, slug, created_at, video_path "
+                    "FROM shortlet_listings "
                     "WHERE id = ?",
                     (listing_id,),
                 )
@@ -489,26 +598,104 @@ def save_shortlet_listing(form):
             ]
         if not existing:
             raise ValueError("Shortlet listing not found.")
+        existing_listing = existing[0]
+        old_video_path = existing_listing.get("video_path", "")
+        new_video_path = ""
+        validated_video = _validate_shortlet_video(uploaded_video) if uploaded_video else None
+        if uploaded_video_path:
+            expected_path = re.fullmatch(
+                rf"{re.escape(listing_id)}/[a-f0-9]{{32}}\.(mp4|mov)",
+                uploaded_video_path,
+            )
+            try:
+                reported_duration = float(video_duration)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    "The apartment video duration could not be verified."
+                ) from error
+            if (
+                not expected_path
+                or not math.isfinite(reported_duration)
+                or reported_duration <= 0
+                or reported_duration > MAX_ROOM_VIDEO_SECONDS
+            ):
+                raise ValueError(
+                    "The apartment video must be 3 minutes or shorter."
+                )
+            if not SUPABASE_ENABLED:
+                raise ValueError(
+                    "Direct video uploads require Supabase storage."
+                )
+            _verify_shortlet_video_object(
+                get_supabase_admin(), uploaded_video_path
+            )
+            new_video_path = uploaded_video_path
+        elif validated_video:
+            new_video_path = (
+                f"{listing_id}/{uuid4().hex}{validated_video[2]}"
+            )
+        saved_new_video = bool(uploaded_video_path)
+        try:
+            if validated_video:
+                content, content_type, _ = validated_video
+                if SUPABASE_ENABLED:
+                    get_supabase_admin().storage.from_(
+                        SHORTLET_VIDEO_BUCKET
+                    ).upload(
+                        new_video_path,
+                        content,
+                        {"content-type": content_type, "upsert": "true"},
+                    )
+                else:
+                    destination = (
+                        ROOM_PHOTO_DIRECTORY.parent
+                        / "shortlet_videos"
+                        / new_video_path
+                    )
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(content)
+                saved_new_video = True
+        except Exception:
+            app.logger.exception(
+                "Could not upload video for shortlet listing %s",
+                listing_id,
+            )
+            raise
         values["updated_at"] = now
+        if new_video_path:
+            values["video_path"] = new_video_path
         if SUPABASE_ENABLED:
-            (
-                get_supabase_admin()
-                .table("shortlet_listings")
-                .update(values)
-                .eq("id", listing_id)
-                .execute()
-            )
+            try:
+                (
+                    get_supabase_admin()
+                    .table("shortlet_listings")
+                    .update(values)
+                    .eq("id", listing_id)
+                    .execute()
+                )
+            except Exception:
+                if saved_new_video:
+                    _remove_shortlet_video(new_video_path)
+                raise
         else:
-            columns = ", ".join(f"{key} = ?" for key in values)
-            data = [
-                json.dumps(value) if key == "photo_urls" else value
-                for key, value in values.items()
-            ]
-            get_db().execute(
-                f"UPDATE shortlet_listings SET {columns} WHERE id = ?",
-                (*data, listing_id),
-            )
-            get_db().commit()
+            try:
+                columns = ", ".join(f"{key} = ?" for key in values)
+                data = [
+                    json.dumps(value) if key == "photo_urls" else value
+                    for key, value in values.items()
+                ]
+                get_db().execute(
+                    f"UPDATE shortlet_listings SET {columns} WHERE id = ?",
+                    (*data, listing_id),
+                )
+                get_db().commit()
+            except Exception:
+                get_db().rollback()
+                if saved_new_video:
+                    _remove_shortlet_video(new_video_path)
+                raise
+        if new_video_path and old_video_path and old_video_path != new_video_path:
+            _remove_shortlet_video(old_video_path)
         return
 
     slug_base = re.sub(r"[^a-z0-9]+", "-", values["title"].lower()).strip("-")
@@ -1088,6 +1275,7 @@ def init_db():
             nightly_rate INTEGER NOT NULL,
             manager_whatsapp TEXT NOT NULL,
             photo_urls TEXT NOT NULL DEFAULT '[]',
+            video_path TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'draft',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -1116,6 +1304,15 @@ def init_db():
         );
         """
     )
+    shortlet_columns = {
+        column["name"]
+        for column in db.execute("PRAGMA table_info(shortlet_listings)")
+    }
+    if "video_path" not in shortlet_columns:
+        db.execute(
+            "ALTER TABLE shortlet_listings "
+            "ADD COLUMN video_path TEXT NOT NULL DEFAULT ''"
+        )
     db.execute(
         """CREATE UNIQUE INDEX IF NOT EXISTS hotel_subscription_transaction_idx
         ON hotel_subscription_payments(paystack_transaction_id)
@@ -1659,6 +1856,16 @@ def online_room_video_url(video_path):
             video_path
         )
     return url_for("online_room_video", video_path=video_path)
+
+
+def shortlet_video_url(video_path):
+    if not video_path:
+        return ""
+    if SUPABASE_ENABLED:
+        return get_supabase_admin().storage.from_(
+            SHORTLET_VIDEO_BUCKET
+        ).get_public_url(video_path)
+    return url_for("shortlet_video", video_path=video_path)
 
 
 def available_online_rooms(check_in, check_out, hotel_id=None):
@@ -3323,6 +3530,7 @@ def require_workspace_login():
     if endpoint in {
         "command_center", "command_center_payment_reports", "issue_hotel_id",
         "command_center_apartments", "save_command_center_apartment",
+        "create_shortlet_video_upload",
     }:
         if session.get("user_role") != "controller":
             return redirect(url_for("login", role="controller"))
@@ -3475,6 +3683,7 @@ def public_apartment_api_listings():
             "photo_urls": listing["photo_urls"],
             "description": listing["description"],
             "manager_whatsapp": listing["manager_whatsapp"],
+            "video_url": listing["video_url"],
         })
     return jsonify({
         "apartments": apartments,
@@ -3520,6 +3729,7 @@ def public_apartment_api_details(apartment_slug):
             "photo_urls": listing["photo_urls"],
             "description": listing["description"],
             "manager_whatsapp": listing["manager_whatsapp"],
+            "video_url": listing["video_url"],
         },
         "check_in": check_in.isoformat(),
         "check_out": check_out.isoformat(),
@@ -3530,6 +3740,7 @@ def public_apartment_api_details(apartment_slug):
             "rate": rate,
             "description": listing["description"],
             "photo_urls": listing["photo_urls"],
+            "video_url": listing["video_url"],
             "manager_whatsapp": listing["manager_whatsapp"],
         }],
     })
@@ -4254,6 +4465,7 @@ def command_center_apartments():
     return render_template(
         "apartment_admin.html",
         listings=listings,
+        supabase_enabled=SUPABASE_ENABLED,
         controller_csrf_token=session.setdefault(
             "controller_csrf_token", secrets.token_urlsafe(32)
         ),
@@ -4269,7 +4481,10 @@ def save_command_center_apartment():
         flash("This form expired. Refresh the page and try again.", "error")
         return redirect(url_for("command_center_apartments"))
     try:
-        save_shortlet_listing(request.form)
+        save_shortlet_listing(
+            request.form,
+            request.files.get("video"),
+        )
     except ValueError as error:
         flash(str(error), "error")
     except Exception:
@@ -4278,6 +4493,79 @@ def save_command_center_apartment():
     else:
         flash("Apartment listing saved.", "success")
     return redirect(url_for("command_center_apartments"))
+
+
+@app.post("/commandcenter/apartments/<listing_id>/video-upload")
+def create_shortlet_video_upload(listing_id):
+    csrf_token = session.get("controller_csrf_token", "")
+    payload = request.get_json(silent=True)
+    if not csrf_token or not isinstance(payload, dict) or not hmac.compare_digest(
+        csrf_token, form_text(payload.get("csrf_token"))
+    ):
+        return jsonify({"error": "Refresh the page and try uploading again."}), 400
+    if not SUPABASE_ENABLED:
+        return jsonify({
+            "error": "Direct video uploads require Supabase storage."
+        }), 503
+    if not re.fullmatch(r"[0-9a-f-]{36}", listing_id):
+        return jsonify({"error": "Apartment listing not found."}), 404
+    filename = secure_filename(form_text(payload.get("filename")))
+    extension = Path(filename).suffix.lower()
+    video_types = {
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+    }
+    content_type = video_types.get(extension)
+    try:
+        size = int(payload.get("size", 0))
+    except (TypeError, ValueError):
+        size = 0
+    if not filename or not content_type or payload.get("content_type") != content_type:
+        return jsonify({"error": "Choose a valid MP4 or MOV apartment video."}), 400
+    if size <= 0 or size > MAX_ROOM_VIDEO_BYTES:
+        return jsonify({
+            "error": "The apartment video must be between 1 byte and 100 MB."
+        }), 400
+    admin = get_supabase_admin()
+    listing = (
+        admin.table("shortlet_listings")
+        .select("id")
+        .eq("id", listing_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not listing:
+        return jsonify({"error": "Apartment listing not found."}), 404
+    path = f"{listing_id}/{uuid4().hex}{extension}"
+    try:
+        signed_upload = admin.storage.from_(
+            SHORTLET_VIDEO_BUCKET
+        ).create_signed_upload_url(path)
+    except Exception:
+        app.logger.exception(
+            "Could not create a signed video upload for shortlet %s",
+            listing_id,
+        )
+        return jsonify({
+            "error": "Could not prepare the video upload. Please retry."
+        }), 502
+    storage_host = urlparse(SUPABASE_URL).hostname or ""
+    if storage_host.endswith(".supabase.co"):
+        project_ref = storage_host.removesuffix(".supabase.co")
+        resumable_endpoint = (
+            f"https://{project_ref}.storage.supabase.co"
+            "/storage/v1/upload/resumable/sign"
+        )
+    else:
+        resumable_endpoint = (
+            f"{SUPABASE_URL.rstrip('/')}/storage/v1/upload/resumable/sign"
+        )
+    return jsonify({
+        "path": path,
+        "resumable_endpoint": resumable_endpoint,
+        "token": signed_upload["token"],
+    })
 
 
 @app.get("/commandcenter/payment-reports.csv")
@@ -4384,6 +4672,26 @@ def online_room_video(video_path):
     )
     return send_from_directory(
         ROOM_PHOTO_DIRECTORY,
+        video_path,
+        mimetype=content_type,
+        conditional=True,
+    )
+
+
+@app.get("/shortlet-videos/<path:video_path>")
+def shortlet_video(video_path):
+    valid_path = re.fullmatch(
+        r"[0-9a-f-]{36}/[a-f0-9]{32}\.(?:mp4|mov)",
+        video_path,
+    )
+    if SUPABASE_ENABLED or not valid_path:
+        return "", 404
+    content_type = (
+        "video/quicktime" if video_path.endswith(".mov") else "video/mp4"
+    )
+    video_directory = ROOM_PHOTO_DIRECTORY.parent / "shortlet_videos"
+    return send_from_directory(
+        video_directory,
         video_path,
         mimetype=content_type,
         conditional=True,

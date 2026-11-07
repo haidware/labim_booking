@@ -180,11 +180,103 @@ class MultiHotelFlowTests(unittest.TestCase):
             },
         )
         self.assertEqual(listing_response.status_code, 302)
+        admin_page = client.get("/commandcenter/apartments")
+        self.assertIn(b"data-shortlet-video-upload", admin_page.data)
+        self.assertIn(b'name="video"', admin_page.data)
+        admin_page.close()
         with self.app_module.app.app_context():
             listing_id = self.app_module.get_db().execute(
                 "SELECT id FROM shortlet_listings WHERE title = ?",
                 ("Lagos serviced apartment",),
             ).fetchone()["id"]
+        upload_route = f"/commandcenter/apartments/{listing_id}/video-upload"
+        self.assertEqual(
+            client.post(
+                upload_route,
+                json={
+                    "filename": "apartment-tour.mp4",
+                    "content_type": "video/mp4",
+                    "size": 2048,
+                    "csrf_token": "invalid",
+                },
+            ).status_code,
+            400,
+        )
+        storage_bucket = Mock()
+        storage_bucket.create_signed_upload_url.return_value = {
+            "signed_url": "https://storage.example.test/signed-upload",
+            "token": "shortlet-video-token",
+        }
+        storage_bucket.info.return_value = {
+            "metadata": {"mimetype": "video/mp4", "size": 2048},
+        }
+        supabase_table = Mock()
+        supabase_table.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+            {"id": listing_id, "video_path": ""},
+        ]
+        supabase_admin = Mock()
+        supabase_admin.table.return_value = supabase_table
+        supabase_admin.storage.from_.return_value = storage_bucket
+        with (
+            patch.object(self.app_module, "SUPABASE_ENABLED", True),
+            patch.object(
+                self.app_module, "get_supabase_admin", return_value=supabase_admin
+            ),
+        ):
+            signed_upload = client.post(
+                upload_route,
+                json={
+                    "filename": "apartment-tour.mp4",
+                    "content_type": "video/mp4",
+                    "size": 2048,
+                    "csrf_token": "shortlet-test-token",
+                },
+            )
+            self.assertEqual(signed_upload.status_code, 200)
+            signed_details = signed_upload.json
+            self.assertTrue(
+                signed_details["path"].startswith(f"{listing_id}/")
+            )
+            self.assertEqual(
+                storage_bucket.create_signed_upload_url.call_args.args[0],
+                signed_details["path"],
+            )
+            invalid_duration = client.post(
+                "/commandcenter/apartments",
+                data={
+                    **base_listing,
+                    "listing_id": listing_id,
+                    "status": "published",
+                    "csrf_token": "shortlet-test-token",
+                    "video_path": signed_details["path"],
+                    "video_duration": "NaN",
+                },
+            )
+            self.assertEqual(invalid_duration.status_code, 302)
+            storage_bucket.info.assert_not_called()
+            finalized_upload = client.post(
+                "/commandcenter/apartments",
+                data={
+                    **base_listing,
+                    "listing_id": listing_id,
+                    "title": "Lagos serviced apartment",
+                    "status": "published",
+                    "csrf_token": "shortlet-test-token",
+                    "video_path": signed_details["path"],
+                    "video_duration": "60",
+                },
+            )
+            self.assertEqual(finalized_upload.status_code, 302)
+            self.assertEqual(
+                supabase_table.update.call_args.args[0]["video_path"],
+                signed_details["path"],
+            )
+        with self.app_module.app.app_context():
+            self.app_module.get_db().execute(
+                "UPDATE shortlet_listings SET video_path = ? WHERE id = ?",
+                (f"{listing_id}/{'a' * 32}.mp4", listing_id),
+            )
+            self.app_module.get_db().commit()
         update_response = client.post(
             "/commandcenter/apartments",
             data={
@@ -228,6 +320,7 @@ class MultiHotelFlowTests(unittest.TestCase):
             search.json["apartments"][0]["manager_whatsapp"],
             "+2348012345678",
         )
+        self.assertIn("/shortlet-videos/", search.json["apartments"][0]["video_url"])
         slug = search.json["apartments"][0]["slug"]
 
         details = client.get(
@@ -241,6 +334,10 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(details.json["rooms"][0]["rate"], 75000)
         self.assertEqual(
             details.json["rooms"][0]["type"], "2 bedroom apartment"
+        )
+        self.assertEqual(
+            details.json["rooms"][0]["video_url"],
+            search.json["apartments"][0]["video_url"],
         )
 
     def test_category_preview_routes_serve_flutter_app(self):

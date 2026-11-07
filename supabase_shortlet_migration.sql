@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS public.shortlet_listings (
     manager_whatsapp text NOT NULL,
     photo_urls jsonb NOT NULL DEFAULT '[]'::jsonb
         CHECK (jsonb_typeof(photo_urls) = 'array'),
+    video_path text NOT NULL DEFAULT '',
     status text NOT NULL DEFAULT 'draft'
         CHECK (status IN ('draft', 'published', 'archived')),
     created_at timestamptz NOT NULL DEFAULT now(),
