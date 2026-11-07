@@ -2,7 +2,7 @@ import 'dart:ui' show Size;
 
 import 'package:flutter/material.dart'
     show
-        FilledButton,
+        Dialog,
         GlobalKey,
         MaterialApp,
         MaterialPageRoute,
@@ -658,24 +658,15 @@ void main() {
       );
       expect(find.textContaining('12 Palm Avenue, Abuja, FCT'), findsOneWidget);
       expect(find.text('Available rooms'), findsOneWidget);
-      expect(find.text('Guest details'), findsOneWidget);
+      expect(find.text('Guest details'), findsNothing);
       expect(find.text('Select this room'), findsOneWidget);
-      expect(
-        tester
-            .widget<FilledButton>(
-              find.widgetWithText(
-                FilledButton,
-                'Request booking and get payment details',
-              ),
-            )
-            .onPressed,
-        isNull,
-      );
       await tester.ensureVisible(find.text('Select this room'));
       expect(tester.takeException(), isNull);
       await tester.tap(find.text('Select this room'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
+      expect(find.text('Guest details'), findsOneWidget);
+      expect(find.byType(Dialog), findsOneWidget);
 
       await tester.enterText(find.byType(TextFormField).at(0), 'Guest Name');
       await tester.enterText(

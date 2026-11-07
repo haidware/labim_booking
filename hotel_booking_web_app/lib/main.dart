@@ -390,6 +390,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
         _previewBookingComplete = true;
         _error = null;
       });
+      Navigator.of(context).pop();
       return;
     }
     setState(() {
@@ -436,7 +437,10 @@ class _HotelBookingPageState extends State<HotelBookingPage>
           }
         }
       }
-      if (mounted) setState(() => _confirmation = confirmation);
+      if (mounted) {
+        setState(() => _confirmation = confirmation);
+        Navigator.of(context).pop();
+      }
     } on BookingApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {
@@ -445,6 +449,31 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       }
     } finally {
       if (mounted) setState(() => _submittingBooking = false);
+    }
+  }
+
+  Future<void> _selectRoom(String? roomNumber) async {
+    if (roomNumber == null) return;
+    setState(() {
+      _selectedRoom = _rooms.firstWhere((room) => room.number == roomNumber);
+      _error = null;
+    });
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 620,
+            maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.9,
+          ),
+          child: SingleChildScrollView(child: _buildGuestDetailsForm()),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (_confirmation == null && !_previewBookingComplete) {
+      setState(() => _selectedRoom = null);
     }
   }
 
@@ -1349,14 +1378,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                   const SizedBox(height: 16),
                   RadioGroup<String>(
                     groupValue: _selectedRoom?.number,
-                    onChanged: (roomNumber) {
-                      if (roomNumber == null) return;
-                      setState(() {
-                        _selectedRoom = _rooms.firstWhere(
-                          (room) => room.number == roomNumber,
-                        );
-                      });
-                    },
+                    onChanged: _selectRoom,
                     child: Column(
                       children: [
                         for (final room in _rooms)
@@ -1372,8 +1394,6 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                       ],
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  _buildGuestDetailsForm(),
                 ],
               ],
             ),
@@ -1401,7 +1421,22 @@ class _HotelBookingPageState extends State<HotelBookingPage>
               'Guest details',
               style: Theme.of(context).textTheme.titleLarge,
             ),
+            if (_selectedRoom != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Selected: ${_isApartmentPreview ? 'Apartment' : 'Room'} ${_selectedRoom!.number}',
+                style: const TextStyle(
+                  color: Color(0xFF17607A),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
             const SizedBox(height: 20),
+            if (_error != null) ...[
+              _ErrorBanner(message: _error!),
+              const SizedBox(height: 12),
+            ],
             LayoutBuilder(
               builder: (context, constraints) {
                 final fieldWidth = constraints.maxWidth >= 700
