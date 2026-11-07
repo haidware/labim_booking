@@ -5,6 +5,7 @@ import 'package:flutter/material.dart'
     show
         Dialog,
         GlobalKey,
+        Material,
         MaterialApp,
         MaterialPageRoute,
         NavigatorState,
@@ -200,6 +201,53 @@ class _ApartmentFlowApi extends _EmptyBookingApi {
     required String checkOut,
     String priceRange = '',
   }) async => [unit];
+}
+
+class _ManyRoomsBookingApi extends _EmptyBookingApi {
+  static const hotel = Hotel(
+    id: 'hotel-many-rooms',
+    slug: 'hotel-many-rooms',
+    name: 'Hotel with Many Rooms',
+    address: '12 Palm Avenue',
+    city: 'Abuja',
+    state: 'FCT',
+    availableRoomCount: 12,
+    lowestRate: 30000,
+    coverPhotoUrl: null,
+  );
+
+  @override
+  Future<List<Hotel>> searchHotels({
+    required String checkIn,
+    required String checkOut,
+    String state = '',
+    String city = '',
+    String priceRange = '',
+  }) async => [hotel];
+
+  @override
+  Future<List<HotelRoom>> loadRooms({
+    required String hotelSlug,
+    required String checkIn,
+    required String checkOut,
+    String priceRange = '',
+  }) async => List.generate(
+    12,
+    (index) => HotelRoom(
+      number: '${101 + index}',
+      type: 'Standard',
+      beds: 1,
+      rate: 30000,
+      description: '',
+      photoUrls: index == 0
+          ? const [
+              'https://example.com/room-101.jpg',
+              'https://example.com/room-101-window.jpg',
+            ]
+          : const [],
+      videoUrl: index == 0 ? 'https://example.com/room-101.mp4' : null,
+    ),
+  );
 }
 
 void main() {
@@ -595,6 +643,68 @@ void main() {
     expect(find.text('No hotels match this search'), findsOneWidget);
     final layoutException = tester.takeException();
     expect(layoutException, isNull, reason: '$layoutException');
+  });
+
+  testWidgets('room cards show video first and paginate five rooms at a time', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      HotelBookingApp(
+        bookingPage: HotelBookingPage(
+          api: _ManyRoomsBookingApi(),
+          installPromptPlatform: () => 'android',
+          isRunningAsInstalledApp: () => true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('View rooms'));
+    await tester.tap(find.text('View rooms'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Standard · Room 101'), findsOneWidget);
+    expect(find.text('Standard · Room 105'), findsOneWidget);
+    expect(find.text('Standard · Room 106'), findsNothing);
+    expect(find.text('Showing 1–5 of 12 rooms'), findsOneWidget);
+    expect(find.text('1'), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+    expect(find.text('3'), findsOneWidget);
+
+    final firstRoomCard = find
+        .ancestor(
+          of: find.text('Standard · Room 101'),
+          matching: find.byType(Material),
+        )
+        .first;
+    expect(
+      find.descendant(of: firstRoomCard, matching: find.text('Video')),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(find.text('Video'));
+    final firstRoomGallery = find.descendant(
+      of: firstRoomCard,
+      matching: find.byType(PageView),
+    );
+    await tester.drag(firstRoomGallery, const Offset(-260, 0));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: firstRoomCard, matching: find.text('Photo')),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(find.text('2'));
+    await tester.tap(find.text('2'));
+    await tester.pumpAndSettle();
+    expect(find.text('Standard · Room 106'), findsOneWidget);
+    expect(find.text('Standard · Room 110'), findsOneWidget);
+    expect(find.text('Standard · Room 105'), findsNothing);
+    expect(find.text('Showing 6–10 of 12 rooms'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('home screen setup guide stays dismissed after Got it', (

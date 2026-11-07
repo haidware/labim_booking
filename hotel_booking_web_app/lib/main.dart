@@ -169,6 +169,8 @@ class _HotelBookingPageState extends State<HotelBookingPage>
   bool _paymentHandoffOpened = false;
   bool _bookingApproved = false;
   bool _checkingBookingStatus = false;
+  int _roomPage = 0;
+  static const _roomsPerPage = 5;
   String _pushPublicKey = '';
   String? _pendingPushSubscription;
   String? _paymentWhatsappUrl;
@@ -267,6 +269,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       _error = null;
       _selectedHotel = null;
       _selectedRoom = null;
+      _roomPage = 0;
       _rooms = const [];
       _confirmation = null;
     });
@@ -297,8 +300,10 @@ class _HotelBookingPageState extends State<HotelBookingPage>
     setState(() {
       _selectedHotel = hotel;
       _selectedRoom = null;
+      _roomPage = 0;
       _confirmation = null;
       _loadingRooms = true;
+      _rooms = const [];
       _error = null;
     });
     try {
@@ -308,7 +313,12 @@ class _HotelBookingPageState extends State<HotelBookingPage>
         checkOut: _checkOutIso,
         priceRange: _priceRange,
       );
-      if (mounted) setState(() => _rooms = rooms);
+      if (mounted) {
+        setState(() {
+          _rooms = rooms;
+          _roomPage = 0;
+        });
+      }
     } on BookingApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {
@@ -326,6 +336,8 @@ class _HotelBookingPageState extends State<HotelBookingPage>
     setState(() {
       _loadingRooms = true;
       _selectedRoom = null;
+      _roomPage = 0;
+      _rooms = const [];
       _error = null;
     });
     try {
@@ -335,7 +347,12 @@ class _HotelBookingPageState extends State<HotelBookingPage>
         checkOut: _checkOutIso,
         priceRange: _priceRange,
       );
-      if (mounted) setState(() => _rooms = rooms);
+      if (mounted) {
+        setState(() {
+          _rooms = rooms;
+          _roomPage = 0;
+        });
+      }
     } on BookingApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {
@@ -345,6 +362,12 @@ class _HotelBookingPageState extends State<HotelBookingPage>
     } finally {
       if (mounted) setState(() => _loadingRooms = false);
     }
+  }
+
+  void _goToRoomPage(int page) {
+    final pageCount = (_rooms.length / _roomsPerPage).ceil();
+    if (page < 0 || page >= pageCount || page == _roomPage) return;
+    setState(() => _roomPage = page);
   }
 
   Future<void> _selectDate({required bool isCheckIn}) async {
@@ -1460,7 +1483,10 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                     onChanged: _selectRoom,
                     child: Column(
                       children: [
-                        for (final room in _rooms)
+                        for (final room
+                            in _rooms
+                                .skip(_roomPage * _roomsPerPage)
+                                .take(_roomsPerPage))
                           Padding(
                             padding: const EdgeInsets.only(bottom: 16),
                             child: _SelectableRoomCard(
@@ -1473,11 +1499,78 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                       ],
                     ),
                   ),
+                  if (_rooms.length > _roomsPerPage) ...[
+                    const SizedBox(height: 2),
+                    _buildRoomPagination(),
+                  ],
                 ],
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildRoomPagination() {
+    final pageCount = (_rooms.length / _roomsPerPage).ceil();
+    final firstRoom = _roomPage * _roomsPerPage + 1;
+    final lastRoom = (_roomPage + 1) * _roomsPerPage < _rooms.length
+        ? (_roomPage + 1) * _roomsPerPage
+        : _rooms.length;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        runSpacing: 10,
+        spacing: 12,
+        children: [
+          Text(
+            'Showing $firstRoom–$lastRoom of ${_rooms.length} $_unitPlural',
+            style: const TextStyle(color: Color(0xFF71868C), fontSize: 13),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Previous page',
+                onPressed: _roomPage == 0
+                    ? null
+                    : () => _goToRoomPage(_roomPage - 1),
+                icon: const Icon(Icons.chevron_left_rounded),
+              ),
+              for (var page = 0; page < pageCount; page++)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: TextButton(
+                    onPressed: () => _goToRoomPage(page),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _roomPage == page
+                          ? Colors.white
+                          : const Color(0xFF17607A),
+                      backgroundColor: _roomPage == page
+                          ? const Color(0xFF17607A)
+                          : Colors.transparent,
+                      minimumSize: const Size(40, 40),
+                      padding: EdgeInsets.zero,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: Text('${page + 1}'),
+                  ),
+                ),
+              IconButton(
+                tooltip: 'Next page',
+                onPressed: _roomPage >= pageCount - 1
+                    ? null
+                    : () => _goToRoomPage(_roomPage + 1),
+                icon: const Icon(Icons.chevron_right_rounded),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -2229,7 +2322,11 @@ class _HotelCard extends StatelessWidget {
 }
 
 class _RoomMediaGallery extends StatefulWidget {
-  const _RoomMediaGallery({required this.room, required this.aspectRatio});
+  const _RoomMediaGallery({
+    super.key,
+    required this.room,
+    required this.aspectRatio,
+  });
 
   final HotelRoom room;
   final double aspectRatio;
@@ -2247,11 +2344,17 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
       widget.room.photoUrls.length +
       ((widget.room.videoUrl?.isNotEmpty ?? false) ? 1 : 0);
 
-  Future<void> _initializeVideo(String videoUrl) async {
+  bool get _hasVideo => widget.room.videoUrl?.isNotEmpty ?? false;
+
+  Future<void> _initializeVideo(
+    String videoUrl, {
+    bool autoplay = false,
+  }) async {
     final controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
     _videoController = controller;
     try {
       await controller.initialize();
+      if (autoplay) await controller.play();
       if (mounted) setState(() {});
     } catch (error, stackTrace) {
       debugPrint('Room video could not be loaded: $error\n$stackTrace');
@@ -2270,7 +2373,7 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
   @override
   Widget build(BuildContext context) {
     final count = _mediaCount == 0 ? 1 : _mediaCount;
-    final videoIndex = widget.room.photoUrls.length;
+    final videoIndex = _hasVideo ? 0 : -1;
     return AspectRatio(
       aspectRatio: widget.aspectRatio,
       child: Stack(
@@ -2296,17 +2399,18 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
               }
             },
             itemBuilder: (context, index) {
-              if (index < widget.room.photoUrls.length) {
+              if (_hasVideo && index == videoIndex) {
+                return _buildVideo();
+              }
+              final photoIndex = index - (_hasVideo ? 1 : 0);
+              if (photoIndex >= 0 &&
+                  photoIndex < widget.room.photoUrls.length) {
                 return Image.network(
-                  widget.room.photoUrls[index],
+                  widget.room.photoUrls[photoIndex],
                   fit: BoxFit.cover,
                   errorBuilder: (context, error, stackTrace) =>
                       _roomPhotoFallback(),
                 );
-              }
-              if (index == videoIndex &&
-                  widget.room.videoUrl?.isNotEmpty == true) {
-                return _buildVideo();
               }
               return _roomPhotoFallback();
             },
@@ -2331,7 +2435,7 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
                 ),
               ),
             ),
-          if (widget.room.videoUrl?.isNotEmpty == true)
+          if (_mediaCount > 0)
             Positioned(
               left: 10,
               top: 10,
@@ -2341,14 +2445,22 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
                   color: Colors.black54,
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: const Row(
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.videocam, size: 15, color: Colors.white),
-                    SizedBox(width: 4),
+                    Icon(
+                      _hasVideo && _currentPage == videoIndex
+                          ? Icons.videocam
+                          : Icons.photo_outlined,
+                      size: 15,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(width: 4),
                     Text(
-                      'Video',
-                      style: TextStyle(color: Colors.white, fontSize: 12),
+                      _hasVideo && _currentPage == videoIndex
+                          ? 'Video'
+                          : 'Photo',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
                     ),
                   ],
                 ),
@@ -2372,7 +2484,28 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
         ),
       );
     }
-    if (controller == null || !controller.value.isInitialized) {
+    if (controller == null) {
+      return ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: IconButton.filled(
+            tooltip: 'Play room video',
+            onPressed: () {
+              final videoUrl = widget.room.videoUrl;
+              if (videoUrl != null && videoUrl.isNotEmpty) {
+                _initializeVideo(videoUrl, autoplay: true);
+              }
+            },
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white24,
+              foregroundColor: Colors.white,
+            ),
+            icon: const Icon(Icons.play_arrow, size: 38),
+          ),
+        ),
+      );
+    }
+    if (!controller.value.isInitialized) {
       return Container(
         color: Colors.black,
         alignment: Alignment.center,
@@ -2384,10 +2517,15 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
       child: Stack(
         alignment: Alignment.center,
         children: [
-          Center(
-            child: AspectRatio(
-              aspectRatio: controller.value.aspectRatio,
-              child: VideoPlayer(controller),
+          Positioned.fill(
+            child: FittedBox(
+              fit: BoxFit.cover,
+              clipBehavior: Clip.hardEdge,
+              child: SizedBox(
+                width: controller.value.size.width,
+                height: controller.value.size.height,
+                child: VideoPlayer(controller),
+              ),
             ),
           ),
           IconButton.filled(
@@ -2468,6 +2606,7 @@ class _SelectableRoomCard extends StatelessWidget {
         children: [
           LayoutBuilder(
             builder: (context, constraints) => _RoomMediaGallery(
+              key: ValueKey(room.number),
               room: room,
               aspectRatio: constraints.maxWidth < 600 ? 1.8 : 5.0,
             ),
