@@ -2550,24 +2550,19 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
     }
 
     setState(() => _openingFullscreen = true);
+    unawaited(video_fullscreen.enterVideoFullscreen());
     try {
-      final result = await video_fullscreen.enterVideoFullscreen();
-      if (!mounted) return;
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           fullscreenDialog: true,
-          builder: (_) => _FullscreenRoomVideoPage(
-            controller: controller,
-            browserFullscreen: result.browserFullscreen,
-            landscapeLocked: result.landscapeLocked,
-          ),
+          builder: (_) => _FullscreenRoomVideoPage(controller: controller),
         ),
       );
     } finally {
       try {
         if (controller.value.isPlaying) await controller.pause();
       } finally {
-        await video_fullscreen.exitVideoFullscreen();
+        unawaited(video_fullscreen.exitVideoFullscreen());
         if (mounted) setState(() => _openingFullscreen = false);
       }
     }
@@ -2812,15 +2807,9 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
 }
 
 class _FullscreenRoomVideoPage extends StatefulWidget {
-  const _FullscreenRoomVideoPage({
-    required this.controller,
-    required this.browserFullscreen,
-    required this.landscapeLocked,
-  });
+  const _FullscreenRoomVideoPage({required this.controller});
 
   final VideoPlayerController controller;
-  final bool browserFullscreen;
-  final bool landscapeLocked;
 
   @override
   State<_FullscreenRoomVideoPage> createState() =>
@@ -2874,34 +2863,32 @@ class _FullscreenRoomVideoPageState extends State<_FullscreenRoomVideoPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                if (!widget.browserFullscreen || !widget.landscapeLocked)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 12),
-                    child: Text(
-                      'For the best view, rotate your device to landscape.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white70),
-                    ),
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    'Rotate your device to landscape for the best view.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white70),
                   ),
-                IconButton.filled(
-                  tooltip: widget.controller.value.isPlaying
-                      ? 'Pause room video'
-                      : 'Play room video',
-                  onPressed: () {
-                    setState(() {
-                      widget.controller.value.isPlaying
+                ),
+                ValueListenableBuilder<VideoPlayerValue>(
+                  valueListenable: widget.controller,
+                  builder: (context, value, child) => IconButton.filled(
+                    tooltip: value.isPlaying
+                        ? 'Pause room video'
+                        : 'Play room video',
+                    onPressed: () => unawaited(
+                      value.isPlaying
                           ? widget.controller.pause()
-                          : widget.controller.play();
-                    });
-                  },
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.black54,
-                    foregroundColor: Colors.white,
-                  ),
-                  icon: Icon(
-                    widget.controller.value.isPlaying
-                        ? Icons.pause
-                        : Icons.play_arrow,
+                          : widget.controller.play(),
+                    ),
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.black54,
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: Icon(
+                      value.isPlaying ? Icons.pause : Icons.play_arrow,
+                    ),
                   ),
                 ),
               ],

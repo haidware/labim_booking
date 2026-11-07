@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' show Size;
 
@@ -13,7 +14,8 @@ import 'package:flutter/material.dart'
         Scrollable,
         SizedBox,
         Text,
-        TextFormField;
+        TextFormField,
+        Widget;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -22,6 +24,70 @@ import 'package:hotel_booking_web_app/property_category_preview_page.dart';
 import 'package:hotel_booking_web_app/rental_preview_page.dart';
 import 'package:hotel_booking_web_app/services/apartment_preview_api.dart';
 import 'package:hotel_booking_web_app/services/booking_api.dart';
+import 'package:video_player_platform_interface/video_player_platform_interface.dart';
+
+class _TestVideoPlayerPlatform extends VideoPlayerPlatform {
+  final Map<int, StreamController<VideoEvent>> _streams = {};
+  int _nextPlayerId = 0;
+
+  @override
+  Future<void> init() async {}
+
+  @override
+  Future<int?> createWithOptions(VideoCreationOptions options) async {
+    final playerId = _nextPlayerId++;
+    final events = StreamController<VideoEvent>();
+    _streams[playerId] = events;
+    events.add(
+      VideoEvent(
+        eventType: VideoEventType.initialized,
+        duration: const Duration(seconds: 30),
+        size: const Size(1920, 1080),
+      ),
+    );
+    return playerId;
+  }
+
+  @override
+  Stream<VideoEvent> videoEventsFor(int playerId) => _streams[playerId]!.stream;
+
+  @override
+  Future<void> setLooping(int playerId, bool looping) async {}
+
+  @override
+  Future<void> setVolume(int playerId, double volume) async {}
+
+  @override
+  Future<void> setPlaybackSpeed(int playerId, double speed) async {}
+
+  @override
+  Future<void> play(int playerId) async {}
+
+  @override
+  Future<void> pause(int playerId) async {}
+
+  @override
+  Future<Duration> getPosition(int playerId) async => Duration.zero;
+
+  @override
+  Future<void> seekTo(int playerId, Duration position) async {}
+
+  @override
+  Widget buildView(int playerId) => const SizedBox.shrink();
+
+  @override
+  Future<void> dispose(int playerId) async {
+    final events = _streams.remove(playerId);
+    if (events != null) await events.close();
+  }
+
+  Future<void> disposeStreams() async {
+    for (final stream in _streams.values) {
+      await stream.close();
+    }
+    _streams.clear();
+  }
+}
 
 class _EmptyBookingApi extends BookingApi {
   @override
@@ -761,6 +827,59 @@ void main() {
     expect(find.text('Standard · Room 105'), findsNothing);
     expect(find.text('Showing 6–10 of 12 rooms'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('full-screen room video opens without waiting on orientation', (
+    tester,
+  ) async {
+    final previousPlatform = VideoPlayerPlatform.instance;
+    final platform = _TestVideoPlayerPlatform();
+    VideoPlayerPlatform.instance = platform;
+    addTearDown(() async {
+      VideoPlayerPlatform.instance = previousPlatform;
+      await platform.disposeStreams();
+    });
+
+    await tester.pumpWidget(
+      HotelBookingApp(
+        bookingPage: HotelBookingPage(
+          api: _ManyRoomsBookingApi(),
+          installPromptDismissed: () => true,
+          installPromptPlatform: () => 'android',
+          isRunningAsInstalledApp: () => true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('View rooms'));
+    await tester.tap(find.text('View rooms'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byTooltip('Play room video').first);
+    await tester.tap(find.byTooltip('Play room video').first);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byTooltip('Open video full screen in landscape').first,
+    );
+    await tester.tap(
+      find.byTooltip('Open video full screen in landscape').first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Close full-screen video'), findsOneWidget);
+    expect(
+      find.text('Rotate your device to landscape for the best view.'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byTooltip('Play room video'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Pause room video'), findsOneWidget);
+    await tester.tap(find.byTooltip('Pause room video'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Play room video'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byTooltip('Close full-screen video'));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('home screen setup guide stays dismissed after Got it', (

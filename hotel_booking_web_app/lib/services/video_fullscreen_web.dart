@@ -1,5 +1,6 @@
 import 'dart:js_interop';
 
+import 'package:flutter/foundation.dart';
 import 'package:web/web.dart' as web;
 
 import 'video_fullscreen_result.dart';
@@ -9,9 +10,12 @@ Future<VideoFullscreenResult> enterVideoFullscreen() async {
   var landscapeLocked = false;
 
   try {
-    await web.document.documentElement!.requestFullscreen().toDart;
+    await web.document.documentElement!.requestFullscreen().toDart.timeout(
+      const Duration(seconds: 2),
+    );
     browserFullscreen = true;
-  } on Object {
+  } on Object catch (error, stackTrace) {
+    debugPrint('Browser fullscreen is unavailable: $error\n$stackTrace');
     return const VideoFullscreenResult(
       browserFullscreen: false,
       landscapeLocked: false,
@@ -19,9 +23,15 @@ Future<VideoFullscreenResult> enterVideoFullscreen() async {
   }
 
   try {
-    await web.window.screen.orientation.lock('landscape').toDart;
+    await web.window.screen.orientation
+        .lock('landscape')
+        .toDart
+        .timeout(const Duration(seconds: 2));
     landscapeLocked = true;
-  } on Object {
+  } on Object catch (error, stackTrace) {
+    debugPrint(
+      'Landscape orientation lock is unavailable: $error\n$stackTrace',
+    );
     landscapeLocked = false;
   }
 
@@ -32,8 +42,18 @@ Future<VideoFullscreenResult> enterVideoFullscreen() async {
 }
 
 Future<void> exitVideoFullscreen() async {
-  web.window.screen.orientation.unlock();
-  if (web.document.fullscreenElement != null) {
-    await web.document.exitFullscreen().toDart;
+  try {
+    web.window.screen.orientation.unlock();
+  } on Object catch (error, stackTrace) {
+    debugPrint('Could not unlock screen orientation: $error\n$stackTrace');
+  }
+  try {
+    if (web.document.fullscreenElement != null) {
+      await web.document.exitFullscreen().toDart.timeout(
+        const Duration(seconds: 2),
+      );
+    }
+  } on Object catch (error, stackTrace) {
+    debugPrint('Could not exit browser fullscreen: $error\n$stackTrace');
   }
 }
