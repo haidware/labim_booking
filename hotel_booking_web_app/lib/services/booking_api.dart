@@ -26,6 +26,7 @@ class Hotel {
     required this.coverPhotoUrl,
     this.description = '',
     this.photoUrls = const [],
+    this.managerWhatsapp = '',
   });
 
   factory Hotel.fromJson(Map<String, dynamic> json) {
@@ -43,6 +44,7 @@ class Hotel {
       photoUrls: (json['photo_urls'] as List<dynamic>? ?? const [])
           .map((photo) => photo.toString())
           .toList(),
+      managerWhatsapp: json['manager_whatsapp']?.toString() ?? '',
     );
   }
 
@@ -57,6 +59,7 @@ class Hotel {
   final String? coverPhotoUrl;
   final String description;
   final List<String> photoUrls;
+  final String managerWhatsapp;
 
   String get location =>
       [city, state].where((part) => part.isNotEmpty).join(', ');
@@ -173,6 +176,8 @@ class BookingApi {
   BookingApi({http.Client? client}) : _client = client ?? http.Client();
 
   final http.Client _client;
+
+  http.Client get httpClient => _client;
   final String _baseUrl =
       (apiBaseUrl.isNotEmpty
               ? apiBaseUrl
@@ -184,6 +189,8 @@ class BookingApi {
   Uri _uri(String path, [Map<String, String>? query]) {
     return Uri.parse('$_baseUrl$path').replace(queryParameters: query);
   }
+
+  Uri apiUri(String path, [Map<String, String>? query]) => _uri(path, query);
 
   Future<Map<String, dynamic>> _get(
     String path, [

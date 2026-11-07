@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ui' show Size;
 
 import 'package:flutter/material.dart'
@@ -13,6 +14,8 @@ import 'package:flutter/material.dart'
         Text,
         TextFormField;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:hotel_booking_web_app/main.dart';
 import 'package:hotel_booking_web_app/property_category_preview_page.dart';
 import 'package:hotel_booking_web_app/rental_preview_page.dart';
@@ -158,6 +161,47 @@ class _BookingFlowApi extends _EmptyBookingApi {
   }
 }
 
+class _ApartmentFlowApi extends _EmptyBookingApi {
+  static const apartment = Hotel(
+    id: 'shortlet-1',
+    slug: 'serviced-city-apartment',
+    name: 'Serviced city apartment',
+    address: '12 Palm Avenue',
+    city: 'Lagos',
+    state: 'Lagos',
+    availableRoomCount: 1,
+    lowestRate: 75000,
+    coverPhotoUrl: null,
+    managerWhatsapp: '+2348012345678',
+  );
+
+  static const unit = HotelRoom(
+    number: 'serviced-city-apartment',
+    type: '2 bedroom shortlet',
+    beds: 2,
+    rate: 75000,
+    description: 'Furnished shortlet apartment.',
+    photoUrls: [],
+  );
+
+  @override
+  Future<List<Hotel>> searchHotels({
+    required String checkIn,
+    required String checkOut,
+    String state = '',
+    String city = '',
+    String priceRange = '',
+  }) async => [apartment];
+
+  @override
+  Future<List<HotelRoom>> loadRooms({
+    required String hotelSlug,
+    required String checkIn,
+    required String checkOut,
+    String priceRange = '',
+  }) async => [unit];
+}
+
 void main() {
   test('hotel JSON includes its description and photo gallery', () {
     final hotel = Hotel.fromJson({
@@ -215,23 +259,49 @@ void main() {
     expect(hotel.displayAddress, '12 Palm Avenue, Abuja, FCT');
   });
 
-  test('apartment preview applies city, state, and price filters', () async {
-    final api = ApartmentPreviewApi();
-    addTearDown(api.dispose);
+  test(
+    'apartment API sends search filters to the live listings endpoint',
+    () async {
+      final api = ApartmentPreviewApi(
+        client: MockClient((request) async {
+          expect(request.url.path, '/api/public/apartments');
+          expect(request.url.queryParameters['city'], 'lagos');
+          expect(request.url.queryParameters['state'], 'Lagos');
+          expect(request.url.queryParameters['price_range'], '50000-100000');
+          return http.Response(
+            jsonEncode({
+              'apartments': [
+                {
+                  'id': 'shortlet-1',
+                  'slug': 'serviced-city-apartment',
+                  'name': 'Serviced city apartment',
+                  'address': '12 Palm Avenue',
+                  'city': 'Lagos',
+                  'state': 'Lagos',
+                  'available_room_count': 1,
+                  'lowest_rate': 75000,
+                  'manager_whatsapp': '+2348012345678',
+                },
+              ],
+            }),
+            200,
+          );
+        }),
+      );
+      addTearDown(api.dispose);
 
-    final lagosApartments = await api.searchHotels(
-      checkIn: '2026-10-22',
-      checkOut: '2026-10-23',
-      city: 'lagos',
-      state: 'Lagos',
-      priceRange: '50000-100000',
-    );
+      final apartments = await api.searchHotels(
+        checkIn: '2026-10-22',
+        checkOut: '2026-10-23',
+        city: 'lagos',
+        state: 'Lagos',
+        priceRange: '50000-100000',
+      );
 
-    expect(lagosApartments.map((apartment) => apartment.name), [
-      'Serviced city apartment',
-      'Modern studio apartment',
-    ]);
-  });
+      expect(apartments.single.name, 'Serviced city apartment');
+      expect(apartments.single.managerWhatsapp, '+2348012345678');
+    },
+  );
 
   testWidgets('hotel booking homepage offers hotel and homes tabs', (
     tester,
@@ -304,7 +374,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('apartment page follows the hotel search design with samples', (
+  testWidgets('apartment page shows live shortlet search and admin access', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -313,8 +383,11 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(
-      const HotelBookingApp(
-        bookingPage: HotelBookingPage(apartmentPreview: true),
+      HotelBookingApp(
+        bookingPage: HotelBookingPage(
+          api: _ApartmentFlowApi(),
+          apartmentPreview: true,
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -324,13 +397,12 @@ void main() {
       findsOneWidget,
     );
     expect(find.byTooltip('Apartment Admin'), findsOneWidget);
-    expect(find.text('Serviced city apartment'), findsOneWidget);
     expect(
-      find.textContaining('PREVIEW — sample apartments only'),
+      find.textContaining('Shortlet stays require manager confirmation'),
       findsOneWidget,
     );
     expect(find.text('Search apartments'), findsOneWidget);
-    expect(find.text('Sample apartments for your stay'), findsOneWidget);
+    expect(find.text('Shortlet apartments'), findsOneWidget);
     expect(find.text('Land/Properties'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -378,50 +450,61 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('apartment preview completes a local sample booking flow', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(390, 844);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets(
+    'apartment flow opens WhatsApp with a manual availability request',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(
-      const HotelBookingApp(
-        bookingPage: HotelBookingPage(apartmentPreview: true),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('View apartment').first);
-    await tester.tap(find.text('View apartment').first);
-    await tester.pumpAndSettle();
+      Uri? whatsappUri;
+      await tester.pumpWidget(
+        HotelBookingApp(
+          bookingPage: HotelBookingPage(
+            api: _ApartmentFlowApi(),
+            apartmentPreview: true,
+            whatsappLauncher: (uri) async {
+              whatsappUri = uri;
+              return true;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('View apartment').first);
+      await tester.tap(find.text('View apartment').first);
+      await tester.pumpAndSettle();
 
-    expect(
-      find.text('Find your apartment at Serviced city apartment'),
-      findsOneWidget,
-    );
-    expect(find.text('Available apartments'), findsOneWidget);
-    expect(find.text('Select this apartment'), findsOneWidget);
-    await tester.ensureVisible(find.text('Select this apartment'));
-    await tester.tap(find.text('Select this apartment'));
-    await tester.pumpAndSettle();
+      expect(
+        find.text('Find your apartment at Serviced city apartment'),
+        findsOneWidget,
+      );
+      expect(find.text('Available apartments'), findsOneWidget);
+      expect(find.text('Select this apartment'), findsOneWidget);
+      await tester.ensureVisible(find.text('Select this apartment'));
+      await tester.tap(find.text('Select this apartment'));
+      await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextFormField).at(0), 'Sample Guest');
-    await tester.enterText(
-      find.byType(TextFormField).at(1),
-      'guest@example.com',
-    );
-    await tester.enterText(find.byType(TextFormField).at(2), '08000000000');
-    await tester.ensureVisible(find.text('Preview booking request'));
-    await tester.tap(find.text('Preview booking request'));
-    await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField).at(0), 'Sample Guest');
+      await tester.enterText(find.byType(TextFormField).at(1), '08000000000');
+      await tester.ensureVisible(find.text('Request availability on WhatsApp'));
+      await tester.tap(find.text('Request availability on WhatsApp'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Apartment booking preview'), findsOneWidget);
-    expect(find.text('Sample stay'), findsOneWidget);
-    expect(find.textContaining('No booking was saved'), findsOneWidget);
-    expect(find.text('Back to apartments'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+      expect(whatsappUri?.host, 'wa.me');
+      expect(whatsappUri?.path, '/2348012345678');
+      expect(whatsappUri?.queryParameters['text'], contains('Sample Guest'));
+      expect(whatsappUri?.queryParameters['text'], contains('08000000000'));
+      expect(
+        whatsappUri?.queryParameters['text'],
+        contains('Please confirm availability'),
+      );
+      expect(find.textContaining('Tap Send there'), findsOneWidget);
+      expect(find.text('Apartment booking preview'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('rental preview keeps inspection selection local', (
     tester,

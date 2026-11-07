@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Apartment Listings | HAIDWARE</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='reference_brand.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='icons.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='workspace_nav.css') }}">
+</head>
+<body class="reference-app">
+  {% include '_icons.html' %}
+  <header class="reference-header">
+    <div>
+      <strong><span class="brand-prefix">ROOMS</span> <span class="brand-title">APARTMENT ADMIN</span></strong>
+      <span>Short-stay apartment listings</span>
+      <small>Haidware Superuser</small>
+    </div>
+    <nav class="header-nav">
+      <a href="{{ url_for('command_center') }}">Command Center</a>
+      <a href="{{ url_for('logout') }}">Log Out</a>
+    </nav>
+  </header>
+  <div class="reference-layout">
+    <main class="reference-main">
+      <h1>Manage shortlet apartments</h1>
+      <p>Published listings appear in Apartment search. Guests request availability directly from the listing manager; no booking or payment is created here.</p>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+        <div class="{{ 'account-error' if category == 'error' else 'account-intro' }}">{{ message }}</div>
+        {% endfor %}
+      {% endwith %}
+      <section class="data-panel">
+        <div class="panel-heading"><strong>Add an apartment</strong><small>Manager WhatsApp must include the country code, such as +2348012345678.</small></div>
+        <form class="shortlet-admin-form" method="post" action="{{ url_for('save_command_center_apartment') }}">
+          <input type="hidden" name="csrf_token" value="{{ controller_csrf_token }}">
+          <label>Listing title<input name="title" maxlength="180" required></label>
+          <label>Property type<input name="property_type" maxlength="60" value="Shortlet apartment"></label>
+          <label>Address<input name="address" maxlength="240"></label>
+          <label>City<input name="city" maxlength="100" required></label>
+          <label>State / FCT<input name="state" maxlength="100" required></label>
+          <label>Bedrooms<input name="bedrooms" type="number" min="0" value="1" required></label>
+          <label>Bathrooms<input name="bathrooms" type="number" min="0" value="1" required></label>
+          <label>Nightly rate (NGN)<input name="nightly_rate" type="number" min="1" required></label>
+          <label>Manager WhatsApp<input name="manager_whatsapp" type="tel" placeholder="+2348012345678" maxlength="16" required></label>
+          <label class="shortlet-admin-wide">Description<textarea name="description" rows="3" maxlength="4000"></textarea></label>
+          <label class="shortlet-admin-wide">Photo URLs (one HTTPS URL per line, up to 5)<textarea name="photo_urls" rows="3"></textarea></label>
+          <label>Status<select name="status"><option value="draft">Draft</option><option value="published">Published</option><option value="archived">Archived</option></select></label>
+          <button class="primary-button" type="submit">Save apartment</button>
+        </form>
+      </section>
+      <section class="data-panel">
+        <div class="panel-heading"><strong>Apartment listings</strong><small>{{ listings|length }} total</small></div>
+        {% if listings %}
+        <div class="shortlet-admin-list">
+          {% for listing in listings %}
+          <article class="shortlet-admin-card">
+            <h2>{{ listing.title }}</h2>
+            <p>{{ listing.address }}{% if listing.address %}, {% endif %}{{ listing.city }}, {{ listing.state }} · ₦{{ '{:,.0f}'.format(listing.nightly_rate) }} / night</p>
+            <p>{{ listing.bedrooms }} bed · {{ listing.bathrooms }} bath · Manager {{ listing.manager_whatsapp }} · <strong>{{ listing.status|capitalize }}</strong></p>
+            {% if listing.photo_urls %}<p>{{ listing.photo_urls|length }} photo URL(s)</p>{% endif %}
+            <details>
+              <summary>Edit listing</summary>
+              <form class="shortlet-admin-form" method="post" action="{{ url_for('save_command_center_apartment') }}">
+                <input type="hidden" name="csrf_token" value="{{ controller_csrf_token }}">
+                <input type="hidden" name="listing_id" value="{{ listing.id }}">
+                <label>Listing title<input name="title" maxlength="180" value="{{ listing.title }}" required></label>
+                <label>Property type<input name="property_type" maxlength="60" value="{{ listing.property_type }}"></label>
+                <label>Address<input name="address" maxlength="240" value="{{ listing.address }}"></label>
+                <label>City<input name="city" maxlength="100" value="{{ listing.city }}" required></label>
+                <label>State / FCT<input name="state" maxlength="100" value="{{ listing.state }}" required></label>
+                <label>Bedrooms<input name="bedrooms" type="number" min="0" value="{{ listing.bedrooms }}" required></label>
+                <label>Bathrooms<input name="bathrooms" type="number" min="0" value="{{ listing.bathrooms }}" required></label>
+                <label>Nightly rate (NGN)<input name="nightly_rate" type="number" min="1" value="{{ listing.nightly_rate }}" required></label>
+                <label>Manager WhatsApp<input name="manager_whatsapp" type="tel" maxlength="16" value="{{ listing.manager_whatsapp }}" required></label>
+                <label class="shortlet-admin-wide">Description<textarea name="description" rows="3">{{ listing.description }}</textarea></label>
+                <label class="shortlet-admin-wide">Photo URLs (one HTTPS URL per line)<textarea name="photo_urls" rows="3">{{ listing.photo_urls|join('\n') }}</textarea></label>
+                <label>Status<select name="status">{% for status in ['draft', 'published', 'archived'] %}<option value="{{ status }}" {% if listing.status == status %}selected{% endif %}>{{ status|capitalize }}</option>{% endfor %}</select></label>
+                <button class="primary-button" type="submit">Save changes</button>
+              </form>
+            </details>
+          </article>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No shortlet apartments have been added yet.</p>
+        {% endif %}
+      </section>
+    </main>
+  </div>
+</body>
+</html>

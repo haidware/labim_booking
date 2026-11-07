@@ -374,6 +374,166 @@ def command_center_hotel_ids():
     ]
 
 
+def shortlet_listings(*, published_only=False):
+    if SUPABASE_ENABLED:
+        query = get_supabase_admin().table("shortlet_listings").select("*")
+        if published_only:
+            query = query.eq("status", "published")
+        rows = query.order("updated_at", desc=True).execute().data or []
+    else:
+        query = "SELECT * FROM shortlet_listings"
+        if published_only:
+            query += " WHERE status = 'published'"
+        query += " ORDER BY updated_at DESC"
+        rows = [dict(row) for row in get_db().execute(query).fetchall()]
+    for row in rows:
+        photos = row.get("photo_urls") or []
+        if isinstance(photos, str):
+            try:
+                photos = json.loads(photos)
+            except json.JSONDecodeError:
+                photos = []
+        row["photo_urls"] = (
+            [photo for photo in photos if isinstance(photo, str)][
+                :MAX_HOTEL_PHOTOS
+            ]
+            if isinstance(photos, list)
+            else []
+        )
+    return rows
+
+
+def validate_shortlet_form(form):
+    title = form_text(form.get("title"))
+    city = form_text(form.get("city"))
+    state = form_text(form.get("state"))
+    manager_whatsapp = form_text(form.get("manager_whatsapp"))
+    if not title or not city or not state:
+        raise ValueError("Enter the listing title, city, and state.")
+    if not re.fullmatch(r"\+[1-9]\d{7,14}", manager_whatsapp):
+        raise ValueError(
+            "Enter the manager WhatsApp number in international format, "
+            "such as +2348012345678."
+        )
+    try:
+        nightly_rate = int(form.get("nightly_rate", ""))
+        bedrooms = int(form.get("bedrooms", "1"))
+        bathrooms = int(form.get("bathrooms", "1"))
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "Enter valid nightly rate, bedroom, and bathroom values."
+        ) from error
+    if nightly_rate < 1 or bedrooms < 0 or bathrooms < 0:
+        raise ValueError(
+            "Nightly rate must be positive; bedroom and bathroom counts "
+            "cannot be negative."
+        )
+    status = form_text(form.get("status"), "draft")
+    if status not in {"draft", "published", "archived"}:
+        raise ValueError("Choose a valid shortlet publication status.")
+    photo_urls = [
+        value.strip()
+        for value in (form.get("photo_urls") or "").splitlines()
+        if value.strip()
+    ]
+    if len(photo_urls) > MAX_HOTEL_PHOTOS:
+        raise ValueError(f"Add no more than {MAX_HOTEL_PHOTOS} photo URLs.")
+    if any(
+        urlparse(photo_url).scheme != "https"
+        or not urlparse(photo_url).netloc
+        for photo_url in photo_urls
+    ):
+        raise ValueError("Each photo URL must be a complete HTTPS URL.")
+    return {
+        "title": title,
+        "description": form_text(form.get("description")),
+        "address": form_text(form.get("address")),
+        "city": city,
+        "state": state,
+        "property_type": form_text(form.get("property_type"))
+        or "Shortlet apartment",
+        "bedrooms": bedrooms,
+        "bathrooms": bathrooms,
+        "nightly_rate": nightly_rate,
+        "manager_whatsapp": manager_whatsapp,
+        "photo_urls": photo_urls,
+        "status": status,
+    }
+
+
+def save_shortlet_listing(form):
+    values = validate_shortlet_form(form)
+    listing_id = form_text(form.get("listing_id"))
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if listing_id:
+        if SUPABASE_ENABLED:
+            existing = (
+                get_supabase_admin()
+                .table("shortlet_listings")
+                .select("id, slug, created_at")
+                .eq("id", listing_id)
+                .limit(1)
+                .execute()
+                .data
+            )
+        else:
+            existing = [
+                dict(row)
+                for row in get_db()
+                .execute(
+                    "SELECT id, slug, created_at FROM shortlet_listings "
+                    "WHERE id = ?",
+                    (listing_id,),
+                )
+                .fetchall()
+            ]
+        if not existing:
+            raise ValueError("Shortlet listing not found.")
+        values["updated_at"] = now
+        if SUPABASE_ENABLED:
+            (
+                get_supabase_admin()
+                .table("shortlet_listings")
+                .update(values)
+                .eq("id", listing_id)
+                .execute()
+            )
+        else:
+            columns = ", ".join(f"{key} = ?" for key in values)
+            data = [
+                json.dumps(value) if key == "photo_urls" else value
+                for key, value in values.items()
+            ]
+            get_db().execute(
+                f"UPDATE shortlet_listings SET {columns} WHERE id = ?",
+                (*data, listing_id),
+            )
+            get_db().commit()
+        return
+
+    slug_base = re.sub(r"[^a-z0-9]+", "-", values["title"].lower()).strip("-")
+    values.update({
+        "id": str(uuid4()),
+        "slug": f"{slug_base or 'shortlet'}-{uuid4().hex[:8]}",
+        "created_at": now,
+        "updated_at": now,
+    })
+    if SUPABASE_ENABLED:
+        get_supabase_admin().table("shortlet_listings").insert(values).execute()
+    else:
+        columns = ", ".join(values)
+        placeholders = ", ".join("?" for _ in values)
+        data = [
+            json.dumps(value) if key == "photo_urls" else value
+            for key, value in values.items()
+        ]
+        get_db().execute(
+            f"INSERT INTO shortlet_listings ({columns}) VALUES ({placeholders})",
+            data,
+        )
+        get_db().commit()
+
+
 def parse_hotel_registration_id(value):
     match = re.fullmatch(r"HOTEL-(\d{4,})", form_text(value).upper())
     if not match or len(match.group(1)) > 10:
@@ -913,6 +1073,24 @@ def init_db():
             created_at TEXT NOT NULL,
             notified_at TEXT,
             UNIQUE(endpoint, reservation_id)
+        );
+        CREATE TABLE IF NOT EXISTS shortlet_listings (
+            id TEXT PRIMARY KEY,
+            slug TEXT NOT NULL UNIQUE,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            address TEXT NOT NULL DEFAULT '',
+            city TEXT NOT NULL,
+            state TEXT NOT NULL,
+            property_type TEXT NOT NULL DEFAULT 'Shortlet apartment',
+            bedrooms INTEGER NOT NULL DEFAULT 1,
+            bathrooms INTEGER NOT NULL DEFAULT 1,
+            nightly_rate INTEGER NOT NULL,
+            manager_whatsapp TEXT NOT NULL,
+            photo_urls TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'draft',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS hotel_subscriptions (
             hotel_id TEXT PRIMARY KEY,
@@ -3143,7 +3321,8 @@ def require_workspace_login():
     }:
         return None
     if endpoint in {
-        "command_center", "command_center_payment_reports", "issue_hotel_id"
+        "command_center", "command_center_payment_reports", "issue_hotel_id",
+        "command_center_apartments", "save_command_center_apartment",
     }:
         if session.get("user_role") != "controller":
             return redirect(url_for("login", role="controller"))
@@ -3255,6 +3434,105 @@ def public_booking_api_hotels():
             ],
         })
     return jsonify({"hotels": hotel_results})
+
+
+@app.get("/api/public/apartments")
+def public_apartment_api_listings():
+    try:
+        check_in, check_out = parse_public_stay_dates(request.args)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    price_range = request.args.get("price_range", "").strip()
+    if price_range and price_range_bounds(price_range) is None:
+        return jsonify({"error": "Choose a valid apartment price range."}), 400
+    state = request.args.get("state", "").strip().casefold()
+    city = request.args.get("city", "").strip().casefold()
+    bounds = price_range_bounds(price_range) if price_range else None
+    try:
+        listings = shortlet_listings(published_only=True)
+    except Exception:
+        app.logger.exception("Could not load public shortlet listings.")
+        return jsonify({"error": "Shortlet listings are temporarily unavailable."}), 503
+    apartments = []
+    for listing in listings:
+        if state and listing["state"].casefold() != state:
+            continue
+        if city and city not in listing["city"].casefold():
+            continue
+        rate = int(listing["nightly_rate"])
+        if bounds and (rate < bounds[0] or bounds[1] and rate >= bounds[1]):
+            continue
+        apartments.append({
+            "id": listing["id"],
+            "slug": listing["slug"],
+            "name": listing["title"],
+            "address": listing["address"],
+            "city": listing["city"],
+            "state": listing["state"],
+            "available_room_count": 1,
+            "lowest_rate": rate,
+            "cover_photo_url": listing["photo_urls"][0] if listing["photo_urls"] else None,
+            "photo_urls": listing["photo_urls"],
+            "description": listing["description"],
+            "manager_whatsapp": listing["manager_whatsapp"],
+        })
+    return jsonify({
+        "apartments": apartments,
+        "check_in": check_in.isoformat(),
+        "check_out": check_out.isoformat(),
+    })
+
+
+@app.get("/api/public/apartments/<apartment_slug>/rooms")
+def public_apartment_api_details(apartment_slug):
+    try:
+        check_in, check_out = parse_public_stay_dates(request.args)
+        listings = shortlet_listings(published_only=True)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except Exception:
+        app.logger.exception("Could not load public shortlet listing details.")
+        return jsonify({"error": "Shortlet listings are temporarily unavailable."}), 503
+    listing = next(
+        (item for item in listings if item["slug"] == apartment_slug),
+        None,
+    )
+    if listing is None:
+        return jsonify({"error": "This apartment is not currently listed."}), 404
+    price_range = request.args.get("price_range", "").strip()
+    if price_range and price_range_bounds(price_range) is None:
+        return jsonify({"error": "Choose a valid apartment price range."}), 400
+    bounds = price_range_bounds(price_range) if price_range else None
+    rate = int(listing["nightly_rate"])
+    if bounds and (rate < bounds[0] or bounds[1] and rate >= bounds[1]):
+        return jsonify({"error": "This apartment is outside the selected price range."}), 404
+    return jsonify({
+        "apartment": {
+            "id": listing["id"],
+            "slug": listing["slug"],
+            "name": listing["title"],
+            "address": listing["address"],
+            "city": listing["city"],
+            "state": listing["state"],
+            "available_room_count": 1,
+            "lowest_rate": rate,
+            "cover_photo_url": listing["photo_urls"][0] if listing["photo_urls"] else None,
+            "photo_urls": listing["photo_urls"],
+            "description": listing["description"],
+            "manager_whatsapp": listing["manager_whatsapp"],
+        },
+        "check_in": check_in.isoformat(),
+        "check_out": check_out.isoformat(),
+        "rooms": [{
+            "number": listing["slug"],
+            "type": listing["property_type"],
+            "beds": listing["bedrooms"],
+            "rate": rate,
+            "description": listing["description"],
+            "photo_urls": listing["photo_urls"],
+            "manager_whatsapp": listing["manager_whatsapp"],
+        }],
+    })
 
 
 @app.get("/api/public/hotels/<hotel_slug>/rooms")
@@ -3965,6 +4243,43 @@ def command_center():
     )
 
 
+@app.get("/commandcenter/apartments")
+def command_center_apartments():
+    try:
+        listings = shortlet_listings()
+    except Exception:
+        app.logger.exception("Could not load shortlet listings for admin.")
+        flash("Could not load apartment listings. Please try again.", "error")
+        listings = []
+    return render_template(
+        "apartment_admin.html",
+        listings=listings,
+        controller_csrf_token=session.setdefault(
+            "controller_csrf_token", secrets.token_urlsafe(32)
+        ),
+    )
+
+
+@app.post("/commandcenter/apartments")
+def save_command_center_apartment():
+    csrf_token = session.get("controller_csrf_token", "")
+    if not csrf_token or not hmac.compare_digest(
+        csrf_token, request.form.get("csrf_token", "")
+    ):
+        flash("This form expired. Refresh the page and try again.", "error")
+        return redirect(url_for("command_center_apartments"))
+    try:
+        save_shortlet_listing(request.form)
+    except ValueError as error:
+        flash(str(error), "error")
+    except Exception:
+        app.logger.exception("Could not save shortlet listing.")
+        flash("Could not save the apartment listing. Please try again.", "error")
+    else:
+        flash("Apartment listing saved.", "success")
+    return redirect(url_for("command_center_apartments"))
+
+
 @app.get("/commandcenter/payment-reports.csv")
 def command_center_payment_reports():
     reporting_month = request.args.get("month", "")
@@ -4313,6 +4628,8 @@ def login(role):
                 session.clear()
                 session["user_role"] = "controller"
                 session["username"] = HAIDWARE_CONTROLLER_USERNAME
+                if request.args.get("workspace") == "apartment":
+                    return redirect(url_for("command_center_apartments"))
                 return redirect(url_for("command_center"))
             return render_template(
                 "login.html",

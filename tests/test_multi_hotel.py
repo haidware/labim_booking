@@ -127,6 +127,113 @@ class MultiHotelFlowTests(unittest.TestCase):
             )
             self.app_module.get_db().commit()
 
+    def test_shortlet_admin_manages_published_public_listings(self):
+        client = self.app_module.app.test_client()
+        self.assertEqual(
+            client.get("/commandcenter/apartments").status_code, 302
+        )
+        with client.session_transaction() as current_session:
+            current_session["user_role"] = "controller"
+            current_session["controller_csrf_token"] = "shortlet-test-token"
+
+        base_listing = {
+            "title": "Lagos serviced apartment",
+            "description": "Furnished shortlet.",
+            "address": "12 Palm Avenue",
+            "city": "Lagos",
+            "state": "Lagos",
+            "property_type": "2 bedroom apartment",
+            "bedrooms": "2",
+            "bathrooms": "1",
+            "nightly_rate": "75000",
+            "manager_whatsapp": "+2348012345678",
+            "photo_urls": "https://example.com/apartment.jpg",
+        }
+        rejected = client.post(
+            "/commandcenter/apartments",
+            data={**base_listing, "status": "published"},
+        )
+        self.assertEqual(rejected.status_code, 302)
+        with self.app_module.app.app_context():
+            self.assertEqual(
+                self.app_module.get_db().execute(
+                    "SELECT COUNT(*) FROM shortlet_listings"
+                ).fetchone()[0],
+                0,
+            )
+
+        listing_response = client.post(
+            "/commandcenter/apartments",
+            data={
+                **base_listing,
+                "status": "published",
+                "csrf_token": "shortlet-test-token",
+            },
+        )
+        self.assertEqual(listing_response.status_code, 302)
+        with self.app_module.app.app_context():
+            listing_id = self.app_module.get_db().execute(
+                "SELECT id FROM shortlet_listings WHERE title = ?",
+                ("Lagos serviced apartment",),
+            ).fetchone()["id"]
+        update_response = client.post(
+            "/commandcenter/apartments",
+            data={
+                **base_listing,
+                "listing_id": listing_id,
+                "title": "Updated Lagos apartment",
+                "status": "published",
+                "csrf_token": "shortlet-test-token",
+            },
+        )
+        self.assertEqual(update_response.status_code, 302)
+        draft_response = client.post(
+            "/commandcenter/apartments",
+            data={
+                **base_listing,
+                "title": "Unpublished apartment",
+                "status": "draft",
+                "csrf_token": "shortlet-test-token",
+            },
+        )
+        self.assertEqual(draft_response.status_code, 302)
+
+        check_in = date.today() + timedelta(days=10)
+        check_out = check_in + timedelta(days=2)
+        search = client.get(
+            "/api/public/apartments",
+            query_string={
+                "check_in": check_in.isoformat(),
+                "check_out": check_out.isoformat(),
+                "state": "Lagos",
+                "city": "lag",
+                "price_range": "50000-100000",
+            },
+        )
+        self.assertEqual(search.status_code, 200)
+        self.assertEqual(
+            [apartment["name"] for apartment in search.json["apartments"]],
+            ["Updated Lagos apartment"],
+        )
+        self.assertEqual(
+            search.json["apartments"][0]["manager_whatsapp"],
+            "+2348012345678",
+        )
+        slug = search.json["apartments"][0]["slug"]
+
+        details = client.get(
+            f"/api/public/apartments/{slug}/rooms",
+            query_string={
+                "check_in": check_in.isoformat(),
+                "check_out": check_out.isoformat(),
+            },
+        )
+        self.assertEqual(details.status_code, 200)
+        self.assertEqual(details.json["rooms"][0]["rate"], 75000)
+        self.assertEqual(
+            details.json["rooms"][0]["type"], "2 bedroom apartment"
+        )
+
     def test_category_preview_routes_serve_flutter_app(self):
         with tempfile.TemporaryDirectory() as build_directory:
             build_path = Path(build_directory)

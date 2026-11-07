@@ -169,7 +169,6 @@ class _HotelBookingPageState extends State<HotelBookingPage>
   bool _paymentHandoffOpened = false;
   bool _bookingApproved = false;
   bool _checkingBookingStatus = false;
-  bool _previewBookingComplete = false;
   String _pushPublicKey = '';
   String? _pendingPushSubscription;
   String? _paymentWhatsappUrl;
@@ -270,7 +269,6 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       _selectedRoom = null;
       _rooms = const [];
       _confirmation = null;
-      _previewBookingComplete = false;
     });
     try {
       final hotels = await _api.searchHotels(
@@ -386,11 +384,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
     if (hotel == null || room == null) return;
     if (!_guestFormKey.currentState!.validate()) return;
     if (_isApartmentPreview) {
-      setState(() {
-        _previewBookingComplete = true;
-        _error = null;
-      });
-      Navigator.of(context).pop();
+      await _requestApartmentAvailability(hotel, room);
       return;
     }
     setState(() {
@@ -452,6 +446,69 @@ class _HotelBookingPageState extends State<HotelBookingPage>
     }
   }
 
+  Future<void> _requestApartmentAvailability(
+    Hotel apartment,
+    HotelRoom unit,
+  ) async {
+    final whatsappNumber = apartment.managerWhatsapp.replaceAll(
+      RegExp(r'\D'),
+      '',
+    );
+    if (whatsappNumber.length < 8) {
+      setState(
+        () => _error = 'The apartment manager has not configured WhatsApp.',
+      );
+      return;
+    }
+    final message = [
+      'Hello, I would like to check availability for this shortlet.',
+      'Apartment: ${apartment.name}',
+      'Location: ${apartment.displayAddress}',
+      'Stay: $_checkInIso to $_checkOutIso',
+      'Nightly rate: ${_naira.format(unit.rate)}',
+      'Guest name: ${_guestNameController.text.trim()}',
+      'Guest phone: ${_guestPhoneController.text.trim()}',
+      'Please confirm availability and the total price before I make any payment.',
+    ].join('\n');
+    final whatsappUri = Uri.https('wa.me', '/$whatsappNumber', {
+      'text': message,
+    });
+    final handoffWindow = whatsapp_popup.openWhatsAppPopup();
+    var opened = handoffWindow?.navigate(whatsappUri.toString()) == true;
+    try {
+      if (!opened) {
+        opened =
+            await (widget.whatsappLauncher?.call(whatsappUri) ??
+                launchUrl(whatsappUri, mode: LaunchMode.externalApplication));
+      }
+    } on Exception catch (error) {
+      handoffWindow?.close();
+      if (mounted) {
+        setState(() => _error = 'Could not open WhatsApp: $error');
+      }
+      return;
+    }
+    if (!mounted) return;
+    if (!opened) {
+      handoffWindow?.close();
+      setState(
+        () => _error =
+            'WhatsApp could not be opened. Please retry or contact the apartment manager.',
+      );
+      return;
+    }
+    Navigator.of(context).pop();
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text(
+            'WhatsApp opened with your availability request. Tap Send there to contact the manager.',
+          ),
+        ),
+      );
+  }
+
   Future<void> _selectRoom(String? roomNumber) async {
     if (roomNumber == null) return;
     setState(() {
@@ -472,7 +529,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       ),
     );
     if (!mounted) return;
-    if (_confirmation == null && !_previewBookingComplete) {
+    if (_confirmation == null) {
       setState(() => _selectedRoom = null);
     }
   }
@@ -486,7 +543,6 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       _selectedRoom = null;
       _rooms = const [];
       _confirmation = null;
-      _previewBookingComplete = false;
       _paymentWhatsappUrl = null;
       _paymentHandoffOpened = false;
       _bookingApproved = false;
@@ -854,9 +910,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
 
   @override
   Widget build(BuildContext context) {
-    final page = _previewBookingComplete
-        ? _buildApartmentPreviewConfirmation()
-        : _confirmation != null
+    final page = _confirmation != null
         ? _buildCategoryFlow(
             _paymentHandoffOpened
                 ? _bookingApproved
@@ -1021,7 +1075,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                     Expanded(
                       child: Text(
                         _isApartmentPreview
-                            ? 'Sample apartments for your stay'
+                            ? 'Shortlet apartments'
                             : 'Live hotels',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
@@ -1038,7 +1092,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                 if (_loadingHotels)
                   _LoadingPanel(
                     label: _isApartmentPreview
-                        ? 'Loading sample apartments…'
+                        ? 'Finding available shortlets…'
                         : 'Finding available hotels…',
                   )
                 else if (_hotels.isEmpty)
@@ -1181,7 +1235,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
         borderRadius: BorderRadius.circular(14),
       ),
       child: const Text(
-        'PREVIEW — sample apartments only. Continue through the booking flow to preview the design; no booking or payment is sent or collected.',
+        'Shortlet stays require manager confirmation. Select an apartment to send an availability request; this does not create a booking or collect payment.',
         style: TextStyle(
           color: Color(0xFF173651),
           fontWeight: FontWeight.w600,
@@ -1449,7 +1503,9 @@ class _HotelBookingPageState extends State<HotelBookingPage>
             if (_selectedRoom != null) ...[
               const SizedBox(height: 8),
               Text(
-                'Selected: ${_isApartmentPreview ? 'Apartment' : 'Room'} ${_selectedRoom!.number}',
+                _isApartmentPreview
+                    ? 'Selected shortlet: ${_selectedHotel?.name ?? _selectedRoom!.number}'
+                    : 'Selected room: ${_selectedRoom!.number}',
                 style: const TextStyle(
                   color: Color(0xFF17607A),
                   fontSize: 13,
@@ -1486,27 +1542,28 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                             : null,
                       ),
                     ),
-                    SizedBox(
-                      width: fieldWidth,
-                      child: TextFormField(
-                        controller: _guestEmailController,
-                        maxLength: 254,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: const InputDecoration(
-                          labelText: 'Email address',
-                          counterText: '',
+                    if (!_isApartmentPreview)
+                      SizedBox(
+                        width: fieldWidth,
+                        child: TextFormField(
+                          controller: _guestEmailController,
+                          maxLength: 254,
+                          keyboardType: TextInputType.emailAddress,
+                          decoration: const InputDecoration(
+                            labelText: 'Email address',
+                            counterText: '',
+                          ),
+                          validator: (value) {
+                            if (value == null ||
+                                !RegExp(
+                                  r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
+                                ).hasMatch(value.trim())) {
+                              return 'Enter a valid email address';
+                            }
+                            return null;
+                          },
                         ),
-                        validator: (value) {
-                          if (value == null ||
-                              !RegExp(
-                                r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
-                              ).hasMatch(value.trim())) {
-                            return 'Enter a valid email address';
-                          }
-                          return null;
-                        },
                       ),
-                    ),
                     SizedBox(
                       width: fieldWidth,
                       child: TextFormField(
@@ -1530,7 +1587,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
             const SizedBox(height: 10),
             Text(
               _isApartmentPreview
-                  ? 'This is a sample booking preview. No reservation or payment will be created.'
+                  ? 'The manager must confirm availability. Your message opens in WhatsApp and is only sent when you tap Send. Do not pay until the manager confirms.'
                   : 'Your dates will be held for 30 minutes while you transfer payment. Reception confirms your booking after verifying the transfer.',
               style: const TextStyle(fontSize: 13, height: 1.5),
             ),
@@ -1553,7 +1610,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                   _submittingBooking
                       ? 'Submitting booking request…'
                       : _isApartmentPreview
-                      ? 'Preview booking request'
+                      ? 'Request availability on WhatsApp'
                       : 'Request booking and get payment details',
                 ),
               ),
@@ -1610,91 +1667,6 @@ class _HotelBookingPageState extends State<HotelBookingPage>
             ],
           );
         },
-      ),
-    );
-  }
-
-  Widget _buildApartmentPreviewConfirmation() {
-    final apartment = _selectedHotel!;
-    final unit = _selectedRoom!;
-    final nights = _checkOut.difference(_checkIn).inDays;
-    return SingleChildScrollView(
-      key: const ValueKey('apartment-preview-confirmation'),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 46),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(
-                  width: 72,
-                  height: 72,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEAF3F4),
-                    borderRadius: BorderRadius.circular(36),
-                  ),
-                  child: const Icon(
-                    Icons.visibility_outlined,
-                    size: 38,
-                    color: Color(0xFF17607A),
-                  ),
-                ),
-                const SizedBox(height: 22),
-                Text(
-                  'Apartment booking preview',
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'This preview shows the final step of the apartment flow. No booking was saved, and no payment or message was sent.',
-                  style: TextStyle(color: Color(0xFF596B70), height: 1.5),
-                ),
-                const SizedBox(height: 20),
-                _ConfirmationCard(
-                  title: 'Sample stay',
-                  child: Column(
-                    children: [
-                      _DetailRow(label: 'Apartment', value: apartment.name),
-                      _DetailRow(
-                        label: 'Unit',
-                        value: '${unit.type} · ${unit.number}',
-                      ),
-                      _DetailRow(
-                        label: 'Stay',
-                        value:
-                            '${_dateLabel.format(_checkIn)} – ${_dateLabel.format(_checkOut)}',
-                      ),
-                      _DetailRow(
-                        label: 'Length of stay',
-                        value: '$nights night${nights == 1 ? '' : 's'}',
-                      ),
-                      _DetailRow(
-                        label: 'Sample total',
-                        value: _naira.format(unit.rate * nights),
-                        emphasized: true,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                _buildApartmentPreviewNotice(),
-                const SizedBox(height: 20),
-                FilledButton.icon(
-                  onPressed: _backToHotels,
-                  icon: const Icon(Icons.arrow_back_rounded),
-                  label: const Text('Back to apartments'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF17607A),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }

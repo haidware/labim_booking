@@ -17,12 +17,19 @@
     <p class="entry-subtitle">Book a stay, register your hotel, or choose a workspace</p>
     <p><a class="public-booking-link" href="{{ url_for('home') }}">Explore rooms and book online</a></p>
     <p><a href="{{ url_for('manager_signup') }}">Hotel Manager? Register your hotel</a></p>
+    <h2 class="workspace-group-title">Hotels</h2>
     <div class="workspace-cards">
-      <a class="workspace-card" href="{{ url_for('login', role='controller') }}"><span class="workspace-icon director"><svg aria-hidden="true"><use href="#icon-chart"></use></svg></span><strong>Haidware Controller</strong></a>
-      <a class="workspace-card" href="{{ url_for('login', role='controller', workspace='apartment') }}"><span class="workspace-icon director"><svg aria-hidden="true"><use href="#icon-hotel"></use></svg></span><span><strong>Apartment Admin</strong><small>Superuser login · Apartment workspace</small></span></a>
       <a class="workspace-card" href="{{ url_for('login', role='director') }}"><span class="workspace-icon director"><svg aria-hidden="true"><use href="#icon-chart"></use></svg></span><strong>Hotel Director</strong></a>
       <a class="workspace-card" href="{{ url_for('login', role='manager') }}"><span class="workspace-icon manager"><svg aria-hidden="true"><use href="#icon-hotel"></use></svg></span><strong>Manager</strong></a>
       <a class="workspace-card" href="{{ url_for('login', role='reception') }}"><span class="workspace-icon reception"><svg aria-hidden="true"><use href="#icon-reception"></use></svg></span><strong>Reception</strong></a>
+    </div>
+    <h2 class="workspace-group-title">Apartments · Shortlets</h2>
+    <div class="workspace-cards">
+      <a class="workspace-card" href="{{ url_for('login', role='controller', workspace='apartment') }}"><span class="workspace-icon director"><svg aria-hidden="true"><use href="#icon-hotel"></use></svg></span><span><strong>Apartment Admin</strong><small>Superuser login · Manage shortlet listings</small></span></a>
+    </div>
+    <h2 class="workspace-group-title">Platform administration</h2>
+    <div class="workspace-cards">
+      <a class="workspace-card" href="{{ url_for('login', role='controller') }}"><span class="workspace-icon director"><svg aria-hidden="true"><use href="#icon-chart"></use></svg></span><strong>Haidware Controller</strong></a>
     </div>
   </main>
 </body>
