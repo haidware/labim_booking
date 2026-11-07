@@ -455,6 +455,53 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('apartment owners can apply through WhatsApp', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    Uri? whatsappUri;
+    await tester.pumpWidget(
+      HotelBookingApp(
+        bookingPage: HotelBookingPage(
+          api: _ApartmentFlowApi(),
+          apartmentPreview: true,
+          whatsappLauncher: (uri) async {
+            whatsappUri = uri;
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final applyButton = find.text('Apply to list an apartment');
+    await tester.ensureVisible(applyButton);
+    await tester.tap(applyButton);
+    await tester.pumpAndSettle();
+    expect(find.text('Apply to list a shortlet'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Ada Owner');
+    await tester.enterText(find.byType(TextFormField).at(1), '+2348123456789');
+    await tester.enterText(find.byType(TextFormField).at(2), 'Lekki, Lagos');
+    await tester.tap(find.text('Continue to WhatsApp'));
+    await tester.pumpAndSettle();
+
+    expect(whatsappUri?.host, 'wa.me');
+    expect(whatsappUri?.path, '/2348127499576');
+    expect(whatsappUri?.queryParameters['text'], contains('Name: Ada Owner'));
+    expect(
+      whatsappUri?.queryParameters['text'],
+      contains('Phone: +2348123456789'),
+    );
+    expect(
+      whatsappUri?.queryParameters['text'],
+      contains('Apartment location: Lekki, Lagos'),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('land and properties tab preview includes rent and sale', (
     tester,
   ) async {

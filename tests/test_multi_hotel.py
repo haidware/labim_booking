@@ -139,6 +139,8 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(admin_page.status_code, 200)
         self.assertIn(b"apartment-admin-fields", admin_page.data)
         self.assertIn(b"No apartments listed yet", admin_page.data)
+        self.assertIn(b"data-upload-url-template", admin_page.data)
+        self.assertIn(b"Apartment video", admin_page.data)
         admin_page.close()
         admin_styles = client.get("/static/apartment_admin.css")
         self.assertEqual(admin_styles.status_code, 200)
@@ -178,17 +180,18 @@ class MultiHotelFlowTests(unittest.TestCase):
                 "status": "published",
                 "csrf_token": "shortlet-test-token",
             },
+            headers={"Accept": "application/json"},
         )
-        self.assertEqual(listing_response.status_code, 302)
+        self.assertEqual(listing_response.status_code, 201)
+        listing_id = listing_response.json["listing_id"]
+        self.assertIn(
+            f"/commandcenter/apartments/{listing_id}/video-upload",
+            listing_response.json["video_upload_url"],
+        )
         admin_page = client.get("/commandcenter/apartments")
         self.assertIn(b"data-shortlet-video-upload", admin_page.data)
         self.assertIn(b'name="video"', admin_page.data)
         admin_page.close()
-        with self.app_module.app.app_context():
-            listing_id = self.app_module.get_db().execute(
-                "SELECT id FROM shortlet_listings WHERE title = ?",
-                ("Lagos serviced apartment",),
-            ).fetchone()["id"]
         upload_route = f"/commandcenter/apartments/{listing_id}/video-upload"
         self.assertEqual(
             client.post(
@@ -339,6 +342,44 @@ class MultiHotelFlowTests(unittest.TestCase):
             details.json["rooms"][0]["video_url"],
             search.json["apartments"][0]["video_url"],
         )
+
+        with patch.object(
+            self.app_module,
+            "_video_container_duration_seconds",
+            return_value=60,
+        ):
+            multipart_video = client.post(
+                "/commandcenter/apartments",
+                data={
+                    **base_listing,
+                    "title": "Shortlet with initial video",
+                    "status": "published",
+                    "csrf_token": "shortlet-test-token",
+                    "video": (
+                        BytesIO(b"test apartment video"),
+                        "apartment-tour.mp4",
+                        "video/mp4",
+                    ),
+                },
+                content_type="multipart/form-data",
+            )
+        self.assertEqual(multipart_video.status_code, 302)
+        with self.app_module.app.app_context():
+            saved_video_path = self.app_module.get_db().execute(
+                "SELECT video_path FROM shortlet_listings WHERE title = ?",
+                ("Shortlet with initial video",),
+            ).fetchone()["video_path"]
+        self.assertRegex(
+            saved_video_path,
+            r"^[0-9a-f-]{36}/[a-f0-9]{32}\.mp4$",
+        )
+        served_video = client.get(
+            f"/shortlet-videos/{saved_video_path}",
+            headers={"Range": "bytes=0-3"},
+        )
+        self.assertEqual(served_video.status_code, 206)
+        self.assertEqual(served_video.data, b"test")
+        served_video.close()
 
     def test_category_preview_routes_serve_flutter_app(self):
         with tempfile.TemporaryDirectory() as build_directory:

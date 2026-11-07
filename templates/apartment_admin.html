@@ -64,13 +64,16 @@
             <span class="apartment-admin-step">01</span>
             <div>
               <h2>Add an apartment</h2>
-              <p>Enter the property details guests will see in search. Save it first to add media uploads.</p>
+            <p>Enter the property details guests will see in search. Add an optional video and photos before saving.</p>
             </div>
           </div>
           <span class="apartment-admin-required-note"><span aria-hidden="true">*</span> Required fields</span>
         </div>
-        <form class="shortlet-admin-form" method="post" action="{{ url_for('save_command_center_apartment') }}">
+        <form class="shortlet-admin-form" method="post" enctype="multipart/form-data" action="{{ url_for('save_command_center_apartment') }}" data-shortlet-video-upload data-video-label="Apartment" data-storage-bucket="shortlet-videos" data-upload-url-template="{{ url_for('create_shortlet_video_upload', listing_id='LISTING_ID') if supabase_enabled else '' }}" data-csrf-token="{{ controller_csrf_token }}">
           <input type="hidden" name="csrf_token" value="{{ controller_csrf_token }}">
+          <input type="hidden" name="listing_id">
+          <input type="hidden" name="video_path">
+          <input type="hidden" name="video_duration">
           <div class="apartment-admin-fields">
             <label class="apartment-admin-field apartment-admin-field-wide">
               <span>Listing title <b aria-hidden="true">*</b></span>
@@ -118,6 +121,11 @@
               <textarea name="photo_urls" rows="3" placeholder="Paste one HTTPS photo URL per line"></textarea>
               <small>Add up to 5 HTTPS photo links, one per line.</small>
             </label>
+            <label class="apartment-admin-field apartment-admin-field-wide">
+              <span>Apartment video</span>
+              <input type="file" name="video" accept=".mp4,.mov,video/mp4,video/quicktime">
+              <small>Optional. Add one MP4 or MOV video, up to 100 MB and 3 minutes. The video appears before listing photos.</small>
+            </label>
             <label class="apartment-admin-field">
               <span>Listing status</span>
               <select name="status">
@@ -127,6 +135,8 @@
               </select>
             </label>
           </div>
+          <progress max="100" value="0" hidden></progress>
+          <p class="room-video-upload-status" role="status" aria-live="polite"></p>
           <div class="apartment-admin-form-footer">
             <p>Guests will request availability through WhatsApp. No booking or payment is created here.</p>
             <button class="primary-button" type="submit">

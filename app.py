@@ -570,7 +570,7 @@ def save_shortlet_listing(form, uploaded_video=None):
     video_duration = form_text(form.get("video_duration"))
     if uploaded_video and uploaded_video_path:
         raise ValueError("Upload the apartment video only once.")
-    if (uploaded_video or uploaded_video_path) and not listing_id:
+    if uploaded_video_path and not listing_id:
         raise ValueError("Save the apartment listing before adding a video.")
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if listing_id:
@@ -696,29 +696,69 @@ def save_shortlet_listing(form, uploaded_video=None):
                 raise
         if new_video_path and old_video_path and old_video_path != new_video_path:
             _remove_shortlet_video(old_video_path)
-        return
+        return listing_id
 
     slug_base = re.sub(r"[^a-z0-9]+", "-", values["title"].lower()).strip("-")
+    listing_id = str(uuid4())
     values.update({
-        "id": str(uuid4()),
+        "id": listing_id,
         "slug": f"{slug_base or 'shortlet'}-{uuid4().hex[:8]}",
         "created_at": now,
         "updated_at": now,
     })
-    if SUPABASE_ENABLED:
-        get_supabase_admin().table("shortlet_listings").insert(values).execute()
-    else:
-        columns = ", ".join(values)
-        placeholders = ", ".join("?" for _ in values)
-        data = [
-            json.dumps(value) if key == "photo_urls" else value
-            for key, value in values.items()
-        ]
-        get_db().execute(
-            f"INSERT INTO shortlet_listings ({columns}) VALUES ({placeholders})",
-            data,
-        )
-        get_db().commit()
+    validated_video = _validate_shortlet_video(uploaded_video) if uploaded_video else None
+    new_video_path = ""
+    saved_new_video = False
+    if validated_video:
+        content, content_type, extension = validated_video
+        new_video_path = f"{listing_id}/{uuid4().hex}{extension}"
+        values["video_path"] = new_video_path
+        try:
+            if SUPABASE_ENABLED:
+                get_supabase_admin().storage.from_(
+                    SHORTLET_VIDEO_BUCKET
+                ).upload(
+                    new_video_path,
+                    content,
+                    {"content-type": content_type, "upsert": "true"},
+                )
+            else:
+                destination = (
+                    ROOM_PHOTO_DIRECTORY.parent
+                    / "shortlet_videos"
+                    / new_video_path
+                )
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(content)
+            saved_new_video = True
+        except Exception:
+            app.logger.exception(
+                "Could not upload video for shortlet listing %s",
+                listing_id,
+            )
+            raise
+    try:
+        if SUPABASE_ENABLED:
+            get_supabase_admin().table("shortlet_listings").insert(values).execute()
+        else:
+            columns = ", ".join(values)
+            placeholders = ", ".join("?" for _ in values)
+            data = [
+                json.dumps(value) if key == "photo_urls" else value
+                for key, value in values.items()
+            ]
+            get_db().execute(
+                f"INSERT INTO shortlet_listings ({columns}) VALUES ({placeholders})",
+                data,
+            )
+            get_db().commit()
+    except Exception:
+        if not SUPABASE_ENABLED:
+            get_db().rollback()
+        if saved_new_video:
+            _remove_shortlet_video(new_video_path)
+        raise
+    return listing_id
 
 
 def parse_hotel_registration_id(value):
@@ -4474,23 +4514,42 @@ def command_center_apartments():
 
 @app.post("/commandcenter/apartments")
 def save_command_center_apartment():
+    wants_json = request.accept_mimetypes.best == "application/json"
     csrf_token = session.get("controller_csrf_token", "")
     if not csrf_token or not hmac.compare_digest(
         csrf_token, request.form.get("csrf_token", "")
     ):
+        if wants_json:
+            return jsonify({
+                "error": "This form expired. Refresh the page and try again."
+            }), 400
         flash("This form expired. Refresh the page and try again.", "error")
         return redirect(url_for("command_center_apartments"))
     try:
-        save_shortlet_listing(
+        listing_id = save_shortlet_listing(
             request.form,
             request.files.get("video"),
         )
     except ValueError as error:
+        if wants_json:
+            return jsonify({"error": str(error)}), 400
         flash(str(error), "error")
     except Exception:
         app.logger.exception("Could not save shortlet listing.")
+        if wants_json:
+            return jsonify({
+                "error": "Could not save the apartment listing. Please try again."
+            }), 500
         flash("Could not save the apartment listing. Please try again.", "error")
     else:
+        if wants_json:
+            return jsonify({
+                "listing_id": listing_id,
+                "video_upload_url": url_for(
+                    "create_shortlet_video_upload",
+                    listing_id=listing_id,
+                ),
+            }), 201
         flash("Apartment listing saved.", "success")
     return redirect(url_for("command_center_apartments"))
 

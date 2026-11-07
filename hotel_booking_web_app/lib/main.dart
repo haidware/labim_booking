@@ -25,6 +25,134 @@ void main() {
   runApp(const HotelBookingApp());
 }
 
+class _ApartmentApplicationDetails {
+  const _ApartmentApplicationDetails({
+    required this.name,
+    required this.phone,
+    required this.location,
+  });
+
+  final String name;
+  final String phone;
+  final String location;
+}
+
+class _ApartmentApplicationDialog extends StatefulWidget {
+  const _ApartmentApplicationDialog({required this.openHandoffWindow});
+
+  final void Function() openHandoffWindow;
+
+  @override
+  State<_ApartmentApplicationDialog> createState() =>
+      _ApartmentApplicationDialogState();
+}
+
+class _ApartmentApplicationDialogState
+    extends State<_ApartmentApplicationDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _locationController = TextEditingController();
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _phoneController.dispose();
+    _locationController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+    widget.openHandoffWindow();
+    Navigator.of(context).pop(
+      _ApartmentApplicationDetails(
+        name: _nameController.text.trim(),
+        phone: _phoneController.text.trim(),
+        location: _locationController.text.trim(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      scrollable: true,
+      title: const Text('Apply to list a shortlet'),
+      content: SizedBox(
+        width: 440,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Owners and managers can apply to list their apartments. '
+                'Your details will be sent to our team on WhatsApp.',
+              ),
+              const SizedBox(height: 18),
+              TextFormField(
+                controller: _nameController,
+                textCapitalization: TextCapitalization.words,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: 'Your name',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+                validator: (value) => value == null || value.trim().isEmpty
+                    ? 'Enter your name.'
+                    : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _phoneController,
+                keyboardType: TextInputType.phone,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: 'Phone number',
+                  hintText: '+2348012345678',
+                  prefixIcon: Icon(Icons.phone_outlined),
+                ),
+                validator: (value) {
+                  final digits = (value ?? '').replaceAll(RegExp(r'\D'), '');
+                  return digits.length < 7 || digits.length > 15
+                      ? 'Enter a valid phone number.'
+                      : null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _locationController,
+                textCapitalization: TextCapitalization.words,
+                textInputAction: TextInputAction.done,
+                decoration: const InputDecoration(
+                  labelText: 'Apartment location',
+                  hintText: 'City, state and area',
+                  prefixIcon: Icon(Icons.location_on_outlined),
+                ),
+                validator: (value) => value == null || value.trim().isEmpty
+                    ? 'Enter the apartment location.'
+                    : null,
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: _submit,
+          icon: const Icon(Icons.chat_outlined),
+          label: const Text('Continue to WhatsApp'),
+        ),
+      ],
+    );
+  }
+}
+
 class HotelBookingApp extends StatelessWidget {
   const HotelBookingApp({super.key, this.bookingPage});
 
@@ -931,6 +1059,49 @@ class _HotelBookingPageState extends State<HotelBookingPage>
     }
   }
 
+  Future<void> _applyToListApartment() async {
+    whatsapp_popup.WhatsAppPopup? handoffWindow;
+    var keepHandoffWindowOpen = false;
+    try {
+      final details = await showDialog<_ApartmentApplicationDetails>(
+        context: context,
+        builder: (_) => _ApartmentApplicationDialog(
+          openHandoffWindow: () {
+            handoffWindow = whatsapp_popup.openWhatsAppPopup();
+          },
+        ),
+      );
+      if (details == null || !mounted) return;
+
+      final message = [
+        'Hello, I would like to apply to list a shortlet apartment on Rooms.',
+        'Name: ${details.name}',
+        'Phone: ${details.phone}',
+        'Apartment location: ${details.location}',
+      ].join('\n');
+      final uri = Uri.https('wa.me', '/2348127499576', {'text': message});
+      var opened = handoffWindow?.navigate(uri.toString()) == true;
+      keepHandoffWindowOpen = opened;
+      if (!opened) {
+        opened =
+            await (widget.whatsappLauncher?.call(uri) ??
+                launchUrl(uri, mode: LaunchMode.externalApplication));
+      }
+      if (opened && handoffWindow != null) {
+        keepHandoffWindowOpen = true;
+      }
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to open WhatsApp. Please try again.'),
+          ),
+        );
+      }
+    } finally {
+      if (!keepHandoffWindowOpen) handoffWindow?.close();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final page = _confirmation != null
@@ -1257,13 +1428,31 @@ class _HotelBookingPageState extends State<HotelBookingPage>
         border: Border.all(color: const Color(0xFFE9B45F)),
         borderRadius: BorderRadius.circular(14),
       ),
-      child: const Text(
-        'Shortlet stays require manager confirmation. Select an apartment to send an availability request; this does not create a booking or collect payment.',
-        style: TextStyle(
-          color: Color(0xFF173651),
-          fontWeight: FontWeight.w600,
-          height: 1.45,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Shortlet stays require manager confirmation. Select an apartment to send an availability request; this does not create a booking or collect payment.',
+            style: TextStyle(
+              color: Color(0xFF173651),
+              fontWeight: FontWeight.w600,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: AlignmentDirectional.centerEnd,
+            child: FilledButton.icon(
+              onPressed: _applyToListApartment,
+              icon: const Icon(Icons.add_home_work_outlined),
+              label: const Text('Apply to list an apartment'),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF17607A),
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

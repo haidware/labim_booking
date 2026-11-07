@@ -190,7 +190,7 @@ document.querySelectorAll(
   form.addEventListener("submit", async (event) => {
     const file = videoInput.files[0];
     if (!file || form.dataset.videoPrepared === "true") return;
-    if (!form.dataset.uploadUrl) return;
+    if (!form.dataset.uploadUrl && !form.dataset.uploadUrlTemplate) return;
     event.preventDefault();
     if (form.dataset.uploading === "true") return;
 
@@ -231,6 +231,31 @@ document.querySelectorAll(
       if (!Number.isFinite(duration) || duration <= 0 || duration > 180) {
         throw new Error(
           `The ${uploadLabel.toLowerCase()} video must be 3 minutes or shorter.`
+        );
+      }
+
+      if (!form.dataset.uploadUrl && form.dataset.uploadUrlTemplate) {
+        status.textContent = "Saving apartment details before video upload...";
+        const listingForm = new FormData(form);
+        listingForm.delete("video");
+        listingForm.delete("video_path");
+        listingForm.delete("video_duration");
+        const created = await fetch(form.action, {
+          method: "POST",
+          headers: {"Accept": "application/json"},
+          body: listingForm
+        });
+        const listingDetails = await created.json();
+        if (!created.ok) {
+          throw new Error(
+            listingDetails.error || "Could not save the apartment listing."
+          );
+        }
+        const listingIdInput = form.querySelector('input[name="listing_id"]');
+        listingIdInput.value = listingDetails.listing_id;
+        form.dataset.uploadUrl = form.dataset.uploadUrlTemplate.replace(
+          "LISTING_ID",
+          encodeURIComponent(listingDetails.listing_id)
         );
       }
 
