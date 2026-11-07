@@ -14,6 +14,7 @@ import 'services/booking_api.dart';
 import 'services/pwa_install_prompt_stub.dart'
     if (dart.library.js_interop) 'services/pwa_install_prompt_web.dart'
     as pwa_install_prompt;
+import 'services/video_fullscreen.dart' as video_fullscreen;
 import 'services/push_notifications_stub.dart'
     if (dart.library.js_interop) 'services/push_notifications_web.dart'
     as push_notifications;
@@ -2514,6 +2515,7 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
   VideoPlayerController? _videoController;
   String? _videoError;
   int _currentPage = 0;
+  bool _openingFullscreen = false;
 
   int get _mediaCount =>
       widget.room.photoUrls.length +
@@ -2535,6 +2537,38 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
       debugPrint('Room video could not be loaded: $error\n$stackTrace');
       if (mounted) {
         setState(() => _videoError = 'This room video could not be loaded.');
+      }
+    }
+  }
+
+  Future<void> _openFullscreenVideo() async {
+    final controller = _videoController;
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        _openingFullscreen) {
+      return;
+    }
+
+    setState(() => _openingFullscreen = true);
+    try {
+      final result = await video_fullscreen.enterVideoFullscreen();
+      if (!mounted) return;
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          fullscreenDialog: true,
+          builder: (_) => _FullscreenRoomVideoPage(
+            controller: controller,
+            browserFullscreen: result.browserFullscreen,
+            landscapeLocked: result.landscapeLocked,
+          ),
+        ),
+      );
+    } finally {
+      try {
+        if (controller.value.isPlaying) await controller.pause();
+      } finally {
+        await video_fullscreen.exitVideoFullscreen();
+        if (mounted) setState(() => _openingFullscreen = false);
       }
     }
   }
@@ -2694,7 +2728,7 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
         children: [
           Positioned.fill(
             child: FittedBox(
-              fit: BoxFit.cover,
+              fit: BoxFit.contain,
               clipBehavior: Clip.hardEdge,
               child: SizedBox(
                 width: controller.value.size.width,
@@ -2703,6 +2737,32 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
               ),
             ),
           ),
+          if (_openingFullscreen)
+            const Positioned(
+              right: 12,
+              bottom: 12,
+              child: SizedBox.square(
+                dimension: 24,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
+                ),
+              ),
+            )
+          else
+            Positioned(
+              right: 8,
+              bottom: 8,
+              child: IconButton.filled(
+                tooltip: 'Open video full screen in landscape',
+                onPressed: _openFullscreenVideo,
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.black54,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.fullscreen),
+              ),
+            ),
           IconButton.filled(
             onPressed: () {
               setState(() {
@@ -2749,6 +2809,108 @@ class _RoomMediaGalleryState extends State<_RoomMediaGallery> {
       ),
     ),
   );
+}
+
+class _FullscreenRoomVideoPage extends StatefulWidget {
+  const _FullscreenRoomVideoPage({
+    required this.controller,
+    required this.browserFullscreen,
+    required this.landscapeLocked,
+  });
+
+  final VideoPlayerController controller;
+  final bool browserFullscreen;
+  final bool landscapeLocked;
+
+  @override
+  State<_FullscreenRoomVideoPage> createState() =>
+      _FullscreenRoomVideoPageState();
+}
+
+class _FullscreenRoomVideoPageState extends State<_FullscreenRoomVideoPage> {
+  @override
+  Widget build(BuildContext context) {
+    final aspectRatio = widget.controller.value.aspectRatio;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Center(
+            child: AspectRatio(
+              aspectRatio: aspectRatio > 0 ? aspectRatio : 16 / 9,
+              child: VideoPlayer(widget.controller),
+            ),
+          ),
+          Positioned(
+            top: 8,
+            right: 8,
+            child: SafeArea(
+              child: IconButton.filled(
+                tooltip: 'Close full-screen video',
+                onPressed: () => Navigator.of(context).pop(),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.black54,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.close),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: 16,
+            left: 16,
+            right: 16,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                VideoProgressIndicator(
+                  widget.controller,
+                  allowScrubbing: true,
+                  colors: const VideoProgressColors(
+                    playedColor: Color(0xFF67C3D0),
+                    bufferedColor: Colors.white54,
+                    backgroundColor: Colors.white24,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (!widget.browserFullscreen || !widget.landscapeLocked)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      'For the best view, rotate your device to landscape.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  ),
+                IconButton.filled(
+                  tooltip: widget.controller.value.isPlaying
+                      ? 'Pause room video'
+                      : 'Play room video',
+                  onPressed: () {
+                    setState(() {
+                      widget.controller.value.isPlaying
+                          ? widget.controller.pause()
+                          : widget.controller.play();
+                    });
+                  },
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.black54,
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: Icon(
+                    widget.controller.value.isPlaying
+                        ? Icons.pause
+                        : Icons.play_arrow,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _SelectableRoomCard extends StatelessWidget {

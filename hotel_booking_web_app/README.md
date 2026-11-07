@@ -45,6 +45,8 @@ flutter run -d chrome --dart-define=API_BASE_URL=https://your-booking-service.ex
 1. Search active hotels by stay dates, Nigerian state/FCT, city, and nightly
    price range.
 2. Open a hotel and select a room that is available for those exact dates.
+   Room videos can be opened full screen; the player requests landscape
+   orientation where supported and keeps the video's full frame visible.
 3. Submit guest details. The server rechecks availability and subscription
    status, creates the existing 30-minute pending-transfer hold, and notifies
    Reception.
