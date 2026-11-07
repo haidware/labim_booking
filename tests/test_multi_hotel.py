@@ -1440,9 +1440,32 @@ class MultiHotelFlowTests(unittest.TestCase):
             self.assertIn(b"Other Hotel", controller_center.data)
             self.assertIn(b"private other message", controller_center.data)
             self.assertIn(
+                f"hotel_id={hotel_id}".encode(), controller_center.data
+            )
+            self.assertIn(
                 b"/commandcenter/payment-reports.csv?month=",
                 controller_center.data,
             )
+            selected_hotel_reports = controller.get(
+                "/commandcenter",
+                query_string={
+                    "month": date.today().strftime("%Y-%m"),
+                    "hotel_id": hotel_id,
+                },
+            )
+            self.assertEqual(selected_hotel_reports.status_code, 200)
+            self.assertIn(b"Guest payment reports", selected_hotel_reports.data)
+            self.assertIn(b"Handoff Sender", selected_hotel_reports.data)
+            self.assertNotIn(b"private other message", selected_hotel_reports.data)
+            self.assertIn(b"Show all hotels", selected_hotel_reports.data)
+            unknown_hotel_reports = controller.get(
+                "/commandcenter",
+                query_string={
+                    "month": date.today().strftime("%Y-%m"),
+                    "hotel_id": "unknown-hotel",
+                },
+            )
+            self.assertEqual(unknown_hotel_reports.status_code, 404)
             monthly_export = controller.get(
                 "/commandcenter/payment-reports.csv",
                 query_string={"month": date.today().strftime("%Y-%m")},
@@ -1451,6 +1474,16 @@ class MultiHotelFlowTests(unittest.TestCase):
             self.assertIn(b"Sender account name", monthly_export.data)
             self.assertIn(b"Handoff Sender", monthly_export.data)
             self.assertIn(b"75000", monthly_export.data)
+            selected_export = controller.get(
+                "/commandcenter/payment-reports.csv",
+                query_string={
+                    "month": date.today().strftime("%Y-%m"),
+                    "hotel_id": hotel_id,
+                },
+            )
+            self.assertEqual(selected_export.status_code, 200)
+            self.assertIn(b"Handoff Sender", selected_export.data)
+            self.assertNotIn(b"private other message", selected_export.data)
             self.assertNotIn(b"Operational Overview", controller_center.data)
             self.assertNotIn(b"Director Dashboard", controller_center.data)
             with controller.session_transaction() as controller_session:

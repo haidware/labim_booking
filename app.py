@@ -331,10 +331,10 @@ def hotel_photo_paths(hotel):
 def command_center_hotels():
     if SUPABASE_ENABLED:
         return get_supabase_admin().table("hotels").select(
-            "hotel_number, name, city, state"
+            "id, hotel_number, name, city, state"
         ).order("hotel_number").execute().data
     rows = get_db().execute(
-        """SELECT hotel_number, name, city, state
+        """SELECT id, hotel_number, name, city, state
         FROM hotels ORDER BY hotel_number"""
     ).fetchall()
     return [dict(row) for row in rows]
@@ -3016,7 +3016,7 @@ def spreadsheet_safe_text(value):
 
 def recent_whatsapp_handoffs(hotel_id=None, month=None):
     columns = (
-        "reservation_id, hotel_name, guest_name, payer_account_name, "
+        "hotel_id, reservation_id, hotel_name, guest_name, payer_account_name, "
         "payer_account_number, amount, message_text, status, created_at"
     )
     if SUPABASE_ENABLED:
@@ -3046,7 +3046,7 @@ def recent_whatsapp_handoffs(hotel_id=None, month=None):
             100
         ).execute().data
     query = (
-        "SELECT reservation_id, hotel_name, guest_name, payer_account_name, "
+        "SELECT hotel_id, reservation_id, hotel_name, guest_name, payer_account_name, "
         "payer_account_number, amount, message_text, status, created_at "
         "FROM whatsapp_handoff_events"
     )
@@ -4482,10 +4482,22 @@ def command_center():
         }
         for hotel in command_center_hotels()
     ]
+    selected_hotel_id = request.args.get("hotel_id", "").strip()
+    selected_hotel = next(
+        (hotel for hotel in hotels if hotel["id"] == selected_hotel_id),
+        None,
+    )
+    if selected_hotel_id and selected_hotel is None:
+        abort(404)
     return render_template(
         "command_center.html",
-        handoff_events=recent_whatsapp_handoffs(month=reporting_month),
+        handoff_events=recent_whatsapp_handoffs(
+            hotel_id=selected_hotel_id or None,
+            month=reporting_month,
+        ),
         hotels=hotels,
+        selected_hotel=selected_hotel,
+        selected_hotel_id=selected_hotel_id,
         issued_hotel_ids=command_center_hotel_ids(),
         reporting_month=reporting_month,
         controller_csrf_token=session.setdefault(
@@ -4630,10 +4642,14 @@ def create_shortlet_video_upload(listing_id):
 @app.get("/commandcenter/payment-reports.csv")
 def command_center_payment_reports():
     reporting_month = request.args.get("month", "")
+    selected_hotel_id = request.args.get("hotel_id", "").strip()
     try:
         reporting_month_bounds(reporting_month)
     except ValueError as error:
         return str(error), 400
+    hotel_ids = {hotel["id"] for hotel in command_center_hotels()}
+    if selected_hotel_id and selected_hotel_id not in hotel_ids:
+        abort(404)
 
     output = io.StringIO(newline="")
     writer = csv.writer(output)
@@ -4642,7 +4658,10 @@ def command_center_payment_reports():
         "Sender account name", "Sender account number", "Amount reported paid",
         "Record status", "WhatsApp message",
     ))
-    for event in recent_whatsapp_handoffs(month=reporting_month):
+    for event in recent_whatsapp_handoffs(
+        hotel_id=selected_hotel_id or None,
+        month=reporting_month,
+    ):
         writer.writerow((
             event["created_at"],
             spreadsheet_safe_text(event["hotel_name"]),

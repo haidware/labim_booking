@@ -67,7 +67,9 @@
           <tbody>{% for hotel in hotels %}
           <tr>
             <td>{{ hotel.hotel_code }}</td>
-            <td>{{ hotel.name }}</td>
+            <td>
+              <a href="{{ url_for('command_center', month=reporting_month, hotel_id=hotel.id) }}#guest-payment-reports" {% if selected_hotel_id == hotel.id %}aria-current="page"{% endif %}>{{ hotel.name }}</a>
+            </td>
             <td>{{ hotel.city or '—' }}</td>
             <td>{{ hotel.state or '—' }}</td>
           </tr>
@@ -77,16 +79,20 @@
         <p class="empty-state">No hotels have been registered yet.</p>
         {% endif %}
       </section>
-      <section class="data-panel">
+      <section class="data-panel" id="guest-payment-reports">
         <div class="panel-heading">
           <div>
-            <strong>Guest payment reports</strong>
+            <strong>
+              Guest payment reports{% if selected_hotel %} — {{ selected_hotel.name }}{% else %} — All hotels{% endif %}
+            </strong>
             <small>Guest-reported payments are not bank-verified. Reconcile sender details, amount, and date against each hotel statement.</small>
           </div>
           <form method="get" action="{{ url_for('command_center') }}">
+            {% if selected_hotel_id %}<input type="hidden" name="hotel_id" value="{{ selected_hotel_id }}">{% endif %}
             <label>Month <input type="month" name="month" value="{{ reporting_month }}" required></label>
             <button class="secondary-button" type="submit">View month</button>
-            <a class="primary-button" href="{{ url_for('command_center_payment_reports', month=reporting_month) }}">Download CSV</a>
+            <a class="primary-button" href="{{ url_for('command_center_payment_reports', month=reporting_month, hotel_id=selected_hotel_id or None) }}">Download CSV</a>
+            {% if selected_hotel_id %}<a class="secondary-button" href="{{ url_for('command_center', month=reporting_month) }}#guest-payment-reports">Show all hotels</a>{% endif %}
           </form>
         </div>
         {% if handoff_events %}
@@ -95,7 +101,14 @@
           <tbody>{% for event in handoff_events %}
           <tr>
             <td>{{ event.created_at }}</td>
-            <td>{{ event.hotel_name }}</td>
+            <td>
+              {% set event_hotel = hotels|selectattr('id', 'equalto', event.hotel_id)|first %}
+              {% if event_hotel %}
+              <a href="{{ url_for('command_center', month=reporting_month, hotel_id=event_hotel.id) }}#guest-payment-reports">{{ event.hotel_name }}</a>
+              {% else %}
+              {{ event.hotel_name }}
+              {% endif %}
+            </td>
             <td>{{ event.reservation_id }}</td>
             <td>{{ event.guest_name }}</td>
             <td>{{ event.payer_account_name }}</td>
@@ -107,7 +120,7 @@
           {% endfor %}</tbody>
         </table></div>
         {% else %}
-        <p class="empty-state">No guest payment reports were recorded for {{ reporting_month }}.</p>
+        <p class="empty-state">No guest payment reports were recorded for {% if selected_hotel %}{{ selected_hotel.name }}{% else %}any hotel{% endif %} in {{ reporting_month }}.</p>
         {% endif %}
       </section>
     </main>
