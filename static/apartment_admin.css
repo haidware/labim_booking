@@ -1,0 +1,859 @@
+.apartment-admin-page {
+  width: 100%;
+  max-width: none;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background: #f3f6f8;
+  color: #233746;
+  font-family: "DM Sans", "Segoe UI", Arial, sans-serif;
+}
+
+.apartment-admin-page .reference-header {
+  min-height: 78px;
+  padding: 14px max(24px, calc((100vw - 1120px) / 2));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  background: #123d50;
+  color: #fff;
+}
+
+.apartment-admin-page .reference-header > div {
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 14px;
+  row-gap: 3px;
+}
+
+.apartment-admin-page .reference-header strong {
+  grid-row: 1 / 3;
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+
+.apartment-admin-page .reference-header > div > span,
+.apartment-admin-page .reference-header > div > small {
+  margin: 0;
+  color: #d3e2e8;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.apartment-admin-page .reference-header .header-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.apartment-admin-page .reference-header .header-nav a {
+  min-height: 38px;
+  padding: 9px 13px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #e8f1f4;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.apartment-admin-page .reference-header .header-nav a:hover,
+.apartment-admin-page .reference-header .header-nav a:focus-visible {
+  border-color: #527383;
+  background: #204e62;
+  outline: none;
+}
+
+.apartment-admin-page .reference-layout {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+.apartment-admin-page .apartment-admin-main {
+  width: min(1120px, 100%);
+  max-width: none;
+  margin: 0 auto;
+  padding: 38px 24px 64px;
+}
+
+.apartment-admin-intro {
+  margin-bottom: 25px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 28px;
+}
+
+.apartment-admin-eyebrow {
+  display: inline-block;
+  margin-bottom: 10px;
+  color: #28728b;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.apartment-admin-eyebrow span {
+  padding: 0 5px;
+  color: #9aaab3;
+}
+
+.apartment-admin-intro h1 {
+  margin: 0;
+  color: #173d50;
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  font-size: clamp(28px, 3vw, 36px);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.apartment-admin-intro p {
+  max-width: 700px;
+  margin: 10px 0 0;
+  color: #647580;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.apartment-admin-workflow {
+  flex: none;
+  padding: 9px 12px;
+  border: 1px solid #d6e5e9;
+  border-radius: 20px;
+  background: #f8fbfc;
+  color: #386c7c;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.apartment-admin-alert {
+  margin: 0 0 18px;
+  padding: 12px 15px;
+  border: 1px solid #b9ddca;
+  border-radius: 9px;
+  background: #effaf3;
+  color: #236742;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.apartment-admin-alert.is-error {
+  border-color: #f0c4bd;
+  background: #fff4f1;
+  color: #9e3f31;
+}
+
+.apartment-admin-stats {
+  margin-bottom: 22px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.apartment-admin-stat {
+  min-height: 82px;
+  padding: 15px 18px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  border: 1px solid #e0e7eb;
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 2px 6px rgb(22 53 69 / 3%);
+}
+
+.apartment-admin-stat-icon {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #eaf3f6;
+  color: #25677d;
+}
+
+.apartment-admin-stat-icon.is-published {
+  background: #eaf6ef;
+  color: #278052;
+}
+
+.apartment-admin-stat-icon.is-draft {
+  background: #fff5e7;
+  color: #a56a1c;
+}
+
+.apartment-admin-stat-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.apartment-admin-stat-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.apartment-admin-stat-copy strong {
+  color: #1c3e50;
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.apartment-admin-stat-copy small {
+  color: #788892;
+  font-size: 12px;
+}
+
+.apartment-admin-panel {
+  margin-bottom: 20px;
+  overflow: hidden;
+  border: 1px solid #dfe7eb;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 3px 10px rgb(22 53 69 / 3%);
+}
+
+.apartment-admin-panel-heading {
+  min-height: 83px;
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid #edf1f3;
+}
+
+.apartment-admin-heading-title {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.apartment-admin-step {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: #eef5f7;
+  color: #367286;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.apartment-admin-panel-heading h2 {
+  margin: 0;
+  color: #203f50;
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.apartment-admin-panel-heading p {
+  margin: 4px 0 0;
+  color: #77868f;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.apartment-admin-required-note {
+  color: #77868f;
+  font-size: 11px;
+}
+
+.apartment-admin-required-note span,
+.apartment-admin-field b {
+  color: #c15342;
+}
+
+.apartment-admin-create .shortlet-admin-form,
+.shortlet-admin-edit .shortlet-admin-form {
+  padding: 22px;
+}
+
+.apartment-admin-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 17px 18px;
+}
+
+.apartment-admin-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #344c59;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.apartment-admin-field > span:first-child {
+  line-height: 1.35;
+}
+
+.apartment-admin-field input,
+.apartment-admin-field textarea,
+.apartment-admin-field select {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 10px 11px;
+  border: 1px solid #d4dfe4;
+  border-radius: 7px;
+  background: #fff;
+  color: #263d49;
+  font: 400 13px/1.45 "DM Sans", "Segoe UI", Arial, sans-serif;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.apartment-admin-field textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.apartment-admin-field input::placeholder,
+.apartment-admin-field textarea::placeholder {
+  color: #9aa8b0;
+}
+
+.apartment-admin-field input:focus,
+.apartment-admin-field textarea:focus,
+.apartment-admin-field select:focus {
+  border-color: #4c91a6;
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(76 145 166 / 14%);
+}
+
+.apartment-admin-field small {
+  color: #819099;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.apartment-admin-field-wide {
+  grid-column: span 2;
+}
+
+.apartment-admin-input-prefix {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  border: 1px solid #d4dfe4;
+  border-radius: 7px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.apartment-admin-input-prefix:focus-within {
+  border-color: #4c91a6;
+  box-shadow: 0 0 0 3px rgb(76 145 166 / 14%);
+}
+
+.apartment-admin-input-prefix > span {
+  padding: 0 11px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  border-right: 1px solid #e5ebee;
+  background: #f7f9fa;
+  color: #657985;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.apartment-admin-field .apartment-admin-input-prefix input {
+  min-height: 40px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.apartment-admin-form-footer {
+  margin-top: 21px;
+  padding-top: 17px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-top: 1px solid #edf1f3;
+}
+
+.apartment-admin-form-footer p {
+  max-width: 560px;
+  margin: 0;
+  color: #788891;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.apartment-admin-page .primary-button {
+  min-height: 42px;
+  padding: 10px 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #17607a;
+  border-radius: 7px;
+  background: #17607a;
+  color: #fff;
+  font: 600 13px/1.2 "DM Sans", "Segoe UI", Arial, sans-serif;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.apartment-admin-page .primary-button:hover {
+  border-color: #104c62;
+  background: #104c62;
+}
+
+.apartment-admin-page .primary-button:focus-visible {
+  outline: 3px solid rgb(54 128 151 / 28%);
+  outline-offset: 2px;
+}
+
+.apartment-admin-page .primary-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.apartment-admin-total {
+  padding: 6px 10px;
+  border: 1px solid #e1e9ed;
+  border-radius: 20px;
+  background: #f8fafb;
+  color: #627681;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.shortlet-admin-list {
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.shortlet-admin-card {
+  padding: 17px 18px;
+  border: 1px solid #e2e9ec;
+  border-radius: 10px;
+  background: #fff;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.shortlet-admin-card:hover {
+  border-color: #c8d8df;
+  box-shadow: 0 3px 10px rgb(22 53 69 / 4%);
+}
+
+.shortlet-admin-card-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.shortlet-admin-card-icon,
+.apartment-admin-empty-icon {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #eef5f7;
+  color: #3b788b;
+}
+
+.shortlet-admin-card-icon svg,
+.apartment-admin-empty-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.55;
+}
+
+.shortlet-admin-card-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.shortlet-admin-card-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.shortlet-admin-card-title h3 {
+  margin: 0;
+  color: #203e4d;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.apartment-admin-status {
+  padding: 4px 8px;
+  border-radius: 14px;
+  background: #fff5e7;
+  color: #936118;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.apartment-admin-status.is-published {
+  background: #eaf6ef;
+  color: #26744a;
+}
+
+.apartment-admin-status.is-archived {
+  background: #f0f2f4;
+  color: #67747c;
+}
+
+.shortlet-admin-location {
+  margin: 6px 0 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: #74838c;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.shortlet-admin-location svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin-top: 1px;
+  fill: none;
+  stroke: #82949e;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+.shortlet-admin-meta {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.shortlet-admin-meta span {
+  padding: 5px 8px;
+  border: 1px solid #e8edef;
+  border-radius: 5px;
+  background: #f8fafb;
+  color: #596e79;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.shortlet-admin-edit {
+  margin: 15px 0 0 56px;
+  border-top: 1px solid #edf1f3;
+}
+
+.shortlet-admin-edit summary {
+  width: fit-content;
+  padding: 12px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #28677c;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.shortlet-admin-edit summary::-webkit-details-marker {
+  display: none;
+}
+
+.shortlet-admin-edit summary::after {
+  width: 7px;
+  height: 7px;
+  margin-left: 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  content: "";
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 140ms ease;
+}
+
+.shortlet-admin-edit[open] summary::after {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.shortlet-admin-edit summary svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.shortlet-admin-edit .shortlet-admin-form {
+  padding: 19px 0 2px;
+}
+
+.apartment-admin-empty {
+  padding: 38px 24px 42px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.apartment-admin-empty-icon {
+  width: 52px;
+  height: 52px;
+  margin-bottom: 14px;
+  border-radius: 14px;
+}
+
+.apartment-admin-empty-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.apartment-admin-empty h3 {
+  margin: 0;
+  color: #294858;
+  font-size: 14px;
+}
+
+.apartment-admin-empty p {
+  max-width: 400px;
+  margin: 7px 0 0;
+  color: #7a8991;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+@media (max-width: 760px) {
+  .apartment-admin-page .reference-header {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+
+  .apartment-admin-page .apartment-admin-main {
+    padding: 30px 20px 48px;
+  }
+
+  .apartment-admin-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .apartment-admin-field-wide {
+    grid-column: span 2;
+  }
+
+  .apartment-admin-intro {
+    align-items: flex-start;
+  }
+
+}
+
+@media (max-width: 520px) {
+  .apartment-admin-page .reference-header {
+    padding: 13px 16px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .apartment-admin-page .reference-header > div {
+    column-gap: 10px;
+  }
+
+  .apartment-admin-page .reference-header strong {
+    font-size: 13px;
+  }
+
+  .apartment-admin-page .reference-header .header-nav {
+    width: 100%;
+    justify-content: flex-start;
+    margin-left: -9px;
+  }
+
+  .apartment-admin-page .reference-header .header-nav a {
+    min-height: 34px;
+    padding: 7px 9px;
+  }
+
+  .apartment-admin-page .apartment-admin-main {
+    padding: 25px 14px 40px;
+  }
+
+  .apartment-admin-intro {
+    margin-bottom: 20px;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .apartment-admin-intro h1 {
+    font-size: 28px;
+  }
+
+  .apartment-admin-intro p {
+    font-size: 13px;
+  }
+
+  .apartment-admin-workflow {
+    padding: 7px 10px;
+    font-size: 10px;
+  }
+
+  .apartment-admin-stats {
+    gap: 8px;
+  }
+
+  .apartment-admin-stat {
+    min-height: 74px;
+    padding: 11px 9px;
+    gap: 8px;
+  }
+
+  .apartment-admin-stat-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+  }
+
+  .apartment-admin-stat-icon svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .apartment-admin-stat-copy strong {
+    font-size: 18px;
+  }
+
+  .apartment-admin-stat-copy small {
+    font-size: 10px;
+  }
+
+  .apartment-admin-panel-heading {
+    min-height: 72px;
+    padding: 14px;
+    gap: 8px;
+  }
+
+  .apartment-admin-heading-title {
+    gap: 9px;
+  }
+
+  .apartment-admin-step {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    font-size: 10px;
+  }
+
+  .apartment-admin-panel-heading h2 {
+    font-size: 15px;
+  }
+
+  .apartment-admin-panel-heading p {
+    font-size: 11px;
+  }
+
+  .apartment-admin-required-note {
+    font-size: 9px;
+    text-align: right;
+  }
+
+  .apartment-admin-create .shortlet-admin-form,
+  .shortlet-admin-edit .shortlet-admin-form {
+    padding: 16px 14px;
+  }
+
+  .apartment-admin-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .apartment-admin-field-wide {
+    grid-column: auto;
+  }
+
+  .apartment-admin-form-footer {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 13px;
+  }
+
+  .apartment-admin-form-footer .primary-button {
+    width: 100%;
+  }
+
+  .shortlet-admin-list {
+    padding: 11px;
+  }
+
+  .shortlet-admin-card {
+    padding: 13px;
+  }
+
+  .shortlet-admin-card-summary {
+    gap: 10px;
+  }
+
+  .shortlet-admin-card-icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .shortlet-admin-card-title h3 {
+    font-size: 13px;
+  }
+
+  .shortlet-admin-meta {
+    gap: 5px;
+  }
+
+  .shortlet-admin-meta span {
+    padding: 4px 6px;
+    font-size: 9px;
+  }
+
+  .shortlet-admin-edit {
+    margin-left: 46px;
+  }
+}

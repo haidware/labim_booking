@@ -135,6 +135,15 @@ class MultiHotelFlowTests(unittest.TestCase):
         with client.session_transaction() as current_session:
             current_session["user_role"] = "controller"
             current_session["controller_csrf_token"] = "shortlet-test-token"
+        admin_page = client.get("/commandcenter/apartments")
+        self.assertEqual(admin_page.status_code, 200)
+        self.assertIn(b"apartment-admin-fields", admin_page.data)
+        self.assertIn(b"No apartments listed yet", admin_page.data)
+        admin_page.close()
+        admin_styles = client.get("/static/apartment_admin.css")
+        self.assertEqual(admin_styles.status_code, 200)
+        self.assertIn(b"@media (max-width: 520px)", admin_styles.data)
+        admin_styles.close()
 
         base_listing = {
             "title": "Lagos serviced apartment",
