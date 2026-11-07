@@ -4317,11 +4317,15 @@ def login(role):
             return render_template(
                 "login.html",
                 role=role,
+                workspace=request.args.get("workspace", ""),
                 account_exists=account_exists,
                 error="Invalid login details.",
             )
         return render_template(
-            "login.html", role=role, account_exists=account_exists
+            "login.html",
+            role=role,
+            workspace=request.args.get("workspace", ""),
+            account_exists=account_exists,
         )
     if request.method == "POST":
         username = request.form.get("username", "").strip()

@@ -281,6 +281,7 @@ void main() {
     );
     expect(find.text('Hotels'), findsOneWidget);
     expect(find.text('Apartment'), findsOneWidget);
+    expect(find.text('Apartment Admin'), findsNothing);
     expect(find.text('Homes'), findsOneWidget);
     expect(find.text('Land/Properties'), findsOneWidget);
     expect(find.text('Live hotels'), findsOneWidget);
@@ -322,6 +323,7 @@ void main() {
       find.text('Find your apartment. Make your stay your own.'),
       findsOneWidget,
     );
+    expect(find.byTooltip('Apartment Admin'), findsOneWidget);
     expect(find.text('Serviced city apartment'), findsOneWidget);
     expect(
       find.textContaining('PREVIEW — sample apartments only'),

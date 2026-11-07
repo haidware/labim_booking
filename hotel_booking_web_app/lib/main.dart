@@ -840,6 +840,18 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       '${date.month.toString().padLeft(2, '0')}-'
       '${date.day.toString().padLeft(2, '0')}';
 
+  Future<void> _openApartmentAdmin() async {
+    final opened = await launchUrl(
+      Uri.base.resolve('/book.admin?workspace=apartment'),
+      webOnlyWindowName: '_self',
+    );
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open Apartment Admin.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final page = _previewBookingComplete
@@ -939,22 +951,35 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                       ),
                     ),
                     const Spacer(),
-                    Tooltip(
-                      message: _isApartmentPreview
-                          ? 'Apartment booking preview'
-                          : 'Secure guest booking',
-                      child: const Icon(
-                        Icons.lock_outline,
-                        size: 16,
-                        color: Color(0xFFC1D5D9),
+                    if (_isApartmentPreview && compact)
+                      IconButton(
+                        onPressed: _openApartmentAdmin,
+                        tooltip: 'Apartment Admin',
+                        icon: const Icon(Icons.admin_panel_settings_outlined),
+                        color: Colors.white,
+                      )
+                    else if (_isApartmentPreview)
+                      TextButton.icon(
+                        onPressed: _openApartmentAdmin,
+                        icon: const Icon(Icons.admin_panel_settings_outlined),
+                        label: const Text('Apartment Admin'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white,
+                        ),
+                      )
+                    else
+                      const Tooltip(
+                        message: 'Secure guest booking',
+                        child: Icon(
+                          Icons.lock_outline,
+                          size: 16,
+                          color: Color(0xFFC1D5D9),
+                        ),
                       ),
-                    ),
-                    if (!compact) ...[
+                    if (!compact && !_isApartmentPreview) ...[
                       const SizedBox(width: 7),
                       Text(
-                        _isApartmentPreview
-                            ? 'Apartment booking preview'
-                            : 'Secure guest booking',
+                        'Secure guest booking',
                         style: const TextStyle(
                           color: Color(0xFFC1D5D9),
                           fontSize: 12,

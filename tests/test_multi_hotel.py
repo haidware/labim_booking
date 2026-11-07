@@ -1163,6 +1163,15 @@ class MultiHotelFlowTests(unittest.TestCase):
             })
             self.assertEqual(controller_login.status_code, 302)
             self.assertIn("/commandcenter", controller_login.headers["Location"])
+            apartment_admin_login = controller.post(
+                "/login/controller?workspace=apartment",
+                data={
+                    "username": "haidware-admin",
+                    "password": "ControllerPass123!",
+                },
+            )
+            self.assertEqual(apartment_admin_login.status_code, 302)
+            self.assertIn("/commandcenter", apartment_admin_login.headers["Location"])
             controller_center = controller.get("/commandcenter")
             self.assertEqual(controller_center.status_code, 200)
             self.assertIn(b"<title>Haidware Command Center</title>", controller_center.data)
@@ -1225,8 +1234,16 @@ class MultiHotelFlowTests(unittest.TestCase):
                 self.assertIn(b"HAIDWARE HOTEL BOOKING PLATFORM", admin_landing.data)
                 self.assertIn(b"Hotel Manager? Register your hotel", admin_landing.data)
                 self.assertIn(b"Haidware Controller", admin_landing.data)
+                self.assertIn(b"Apartment Admin", admin_landing.data)
+                self.assertIn(b"workspace=apartment", admin_landing.data)
                 self.assertIn(b"Hotel Director", admin_landing.data)
                 admin_landing.close()
+                apartment_admin_login = client.get(
+                    "/login/controller?workspace=apartment"
+                )
+                self.assertEqual(apartment_admin_login.status_code, 200)
+                self.assertIn(b"Apartment Admin", apartment_admin_login.data)
+                apartment_admin_login.close()
 
                 trailing_slash = client.get(
                     "/book/?hotel=test-hotel",
