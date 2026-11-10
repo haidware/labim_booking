@@ -406,53 +406,23 @@ class MultiHotelFlowTests(unittest.TestCase):
                             path,
                         )
 
-    def test_rental_proxy_keeps_marketplace_routes_on_rooms_origin(self):
-        response_from_rental = Mock()
-        response_from_rental.status = 200
-        response_from_rental.headers = Message()
-        response_from_rental.headers["Content-Type"] = "text/html; charset=utf-8"
-        response_from_rental.read.return_value = (
-            b'<base href="/"><script src="/flutter_bootstrap.js"></script>'
-        )
-        response_from_rental.__enter__ = Mock(return_value=response_from_rental)
-        response_from_rental.__exit__ = Mock(return_value=False)
+    def test_public_rental_categories_redirect_to_rental_service(self):
+        client = self.app_module.app.test_client()
+        for path, destination in (
+            (
+                "/rentals?city=Lagos",
+                "https://labimhouserental-production.up.railway.app/?city=Lagos",
+            ),
+            (
+                "/rentals/land?transaction_type=sale",
+                "https://labimhouserental-production.up.railway.app/land?transaction_type=sale",
+            ),
+        ):
+            with self.subTest(path=path):
+                response = client.get(path)
 
-        with patch.object(
-            self.app_module, "urlopen", return_value=response_from_rental
-        ) as open_upstream:
-            response = self.app_module.app.test_client().get(
-                "/rentals/land?transaction_type=sale"
-            )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(b'<base href="/rentals/">', response.data)
-        self.assertIn(b'src="/rentals/flutter_bootstrap.js"', response.data)
-        upstream_request = open_upstream.call_args.args[0]
-        self.assertEqual(
-            upstream_request.full_url,
-            "https://labimhouserental-production.up.railway.app/land?transaction_type=sale",
-        )
-
-    def test_rental_home_route_proxies_to_rental_homepage(self):
-        upstream_response = Mock()
-        upstream_response.status = 200
-        upstream_response.headers = Message()
-        upstream_response.headers["Content-Type"] = "text/html; charset=utf-8"
-        upstream_response.read.return_value = b"<html><head></head></html>"
-        upstream_response.__enter__ = Mock(return_value=upstream_response)
-        upstream_response.__exit__ = Mock(return_value=False)
-
-        with patch.object(
-            self.app_module, "urlopen", return_value=upstream_response
-        ) as open_upstream:
-            response = self.app_module.app.test_client().get("/rentals")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(b'<base href="/rentals/">', response.data)
-        self.assertEqual(
-            open_upstream.call_args.args[0].full_url,
-            "https://labimhouserental-production.up.railway.app/",
-        )
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(response.headers["Location"], destination)
 
     def test_rental_home_route_retries_transient_gateway_errors(self):
         gateway_errors = [
@@ -478,7 +448,9 @@ class MultiHotelFlowTests(unittest.TestCase):
             "urlopen",
             side_effect=[*gateway_errors, upstream_response],
         ) as open_upstream, patch.object(self.app_module.time, "sleep") as sleep:
-            response = self.app_module.app.test_client().get("/rentals")
+            response = self.app_module.app.test_client().get(
+                "/rentals/api/public/listings/"
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(open_upstream.call_count, 6)
