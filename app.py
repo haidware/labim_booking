@@ -4439,11 +4439,6 @@ def _rental_proxy_response(rental_path):
     methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 )
 def rental_marketplace_proxy(rental_path):
-    if request.method in {"GET", "HEAD"} and rental_path in {"", "land"}:
-        destination = f"{RENTAL_SERVICE_URL}/{rental_path}"
-        if request.query_string:
-            destination = f"{destination}?{request.query_string.decode('latin-1')}"
-        return redirect(destination, code=302)
     return _rental_proxy_response(rental_path)
 
 
