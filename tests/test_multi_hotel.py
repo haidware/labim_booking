@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -1020,6 +1020,45 @@ class MultiHotelFlowTests(unittest.TestCase):
                     self.app_module.now_iso(),
                 ),
             )
+            db.execute(
+                """INSERT INTO rooms
+                (number, hotel_id, name, beds, rate, status)
+                VALUES ('103', ?, 'Video-only room', 1, 84000, 'Available')""",
+                (hotel_id,),
+            )
+            db.execute(
+                """INSERT INTO online_room_listings
+                (hotel_id, room_number, description, photo_path, photo_paths,
+                 video_path, enabled, updated_at)
+                VALUES (?, '103', 'Video-only room', '', '[]', ?, 1, ?)""",
+                (
+                    hotel_id, f"{hotel_id}/{'c' * 32}.mp4",
+                    self.app_module.now_iso(),
+                ),
+            )
+            for room_number, status in (
+                ("104", "booked"),
+                ("105", "occupied"),
+                ("106", "cleaning"),
+                ("107", "unavailable"),
+            ):
+                db.execute(
+                    """INSERT INTO rooms
+                    (number, hotel_id, name, beds, rate, status)
+                    VALUES (?, ?, 'Unavailable room', 1, 80000, ?)""",
+                    (room_number, hotel_id, status),
+                )
+                db.execute(
+                    """INSERT INTO online_room_listings
+                    (hotel_id, room_number, description, photo_path, enabled,
+                     updated_at)
+                    VALUES (?, ?, 'Unavailable room', ?, 1, ?)""",
+                    (
+                        hotel_id, room_number,
+                        f"{hotel_id}/{room_number * 8}.jpg",
+                        self.app_module.now_iso(),
+                    ),
+                )
             db.commit()
         guest = self.app_module.app.test_client()
         config_response = guest.get("/api/public/config")
@@ -1055,6 +1094,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(
             hotels_response.headers["Access-Control-Allow-Origin"], "*"
         )
+        self.assertEqual(hotels_response.headers["Cache-Control"], "no-store")
         hotels = hotels_response.get_json()["hotels"]
         self.assertEqual(len(hotels), 1)
         self.assertEqual(hotels[0]["id"], hotel_id)
@@ -1064,7 +1104,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(len(hotel_result["photo_urls"]), 1)
         self.assertIn(hotel_id, hotel_result["photo_urls"][0])
         self.assertNotIn("photo_paths", hotel_result)
-        self.assertEqual(hotel_result["available_room_count"], 2)
+        self.assertEqual(hotel_result["available_room_count"], 3)
         self.assertIn(hotel_id, hotel_result["cover_photo_url"])
 
         rooms_response = guest.get(
@@ -1075,19 +1115,25 @@ class MultiHotelFlowTests(unittest.TestCase):
             },
         )
         self.assertEqual(rooms_response.status_code, 200)
+        self.assertEqual(rooms_response.headers["Cache-Control"], "no-store")
         room_results = rooms_response.get_json()["rooms"]
         self.assertEqual(
-            {room["number"] for room in room_results}, {"101", "102"}
+            {room["number"] for room in room_results}, {"101", "102", "103"}
         )
         self.assertEqual(
             {room["type"] for room in room_results},
-            {"API Suite", "Premium Suite"},
+            {"API Suite", "Premium Suite", "Video-only room"},
         )
         room_result = next(
             room for room in room_results if room["number"] == "101"
         )
         self.assertEqual(room_result["type"], "API Suite")
         self.assertEqual(room_result["rate"], 75000)
+        video_room = next(
+            room for room in room_results if room["number"] == "103"
+        )
+        self.assertEqual(video_room["photo_urls"], [])
+        self.assertTrue(video_room["video_url"])
 
         with patch.object(
             self.app_module, "send_reception_booking_email"
@@ -1117,6 +1163,69 @@ class MultiHotelFlowTests(unittest.TestCase):
             booking_result["whatsapp_handoff_url"],
         )
         self.assertNotIn("whatsapp_url", booking_result)
+        with patch.object(self.app_module, "send_reception_booking_email"):
+            unavailable_date_response = guest.post(
+                "/api/public/bookings",
+                json={
+                    "hotel_id": hotel_id,
+                    "hotel_slug": hotel_result["slug"],
+                    "room_number": room_result["number"],
+                    "check_in": check_in,
+                    "check_out": check_out,
+                    "guest_name": "Second Flutter Guest",
+                    "email": "second-flutter-guest@example.com",
+                    "phone": "08000000001",
+                },
+            )
+            video_only_response = guest.post(
+                "/api/public/bookings",
+                json={
+                    "hotel_id": hotel_id,
+                    "hotel_slug": hotel_result["slug"],
+                    "room_number": video_room["number"],
+                    "check_in": check_in,
+                    "check_out": check_out,
+                    "guest_name": "Video Flutter Guest",
+                    "email": "video-flutter-guest@example.com",
+                    "phone": "08000000002",
+                },
+            )
+        self.assertEqual(unavailable_date_response.status_code, 409)
+        self.assertIn(
+            "no longer available for the selected dates",
+            unavailable_date_response.get_json()["error"],
+        )
+        self.assertEqual(video_only_response.status_code, 201)
+        self.assertEqual(
+            video_only_response.get_json()["booking"]["room_number"], "103"
+        )
+        with self.app_module.app.app_context():
+            db = self.app_module.get_db()
+            db.execute(
+                """INSERT INTO reservations
+                (hotel_id, guest_name, email, phone, room_number, check_in,
+                 check_out, amount, amount_paid, payment_method, payment_status,
+                 status, created_at, booking_source, hold_expires_at)
+                VALUES (?, 'Reception Guest', 'reception@example.com',
+                '08000000003', '102', ?, ?, 95000, 0, 'Transfer', 'pending',
+                'pending_payment', ?, 'online', ?)""",
+                (
+                    hotel_id, check_in, check_out, self.app_module.now_iso(),
+                    (
+                        datetime.now().astimezone() + timedelta(minutes=30)
+                    ).isoformat(),
+                ),
+            )
+            db.commit()
+        held_room_response = guest.get(
+            f"/api/public/hotels/{hotel_result['slug']}/rooms",
+            query_string={"check_in": check_in, "check_out": check_out},
+        )
+        self.assertEqual(held_room_response.status_code, 200)
+        self.assertEqual(
+            {room["number"] for room in held_room_response.get_json()["rooms"]},
+            set(),
+        )
         pending_status = guest.get(
             "/api/public/booking-status",
             query_string={"token": booking_result["push_token"]},

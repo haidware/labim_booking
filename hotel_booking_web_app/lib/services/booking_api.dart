@@ -5,9 +5,10 @@ import 'package:http/http.dart' as http;
 const apiBaseUrl = String.fromEnvironment('API_BASE_URL', defaultValue: '');
 
 class BookingApiException implements Exception {
-  const BookingApiException(this.message);
+  const BookingApiException(this.message, {this.statusCode});
 
   final String message;
+  final int? statusCode;
 
   @override
   String toString() => message;
@@ -217,6 +218,7 @@ class BookingApi {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw BookingApiException(
         decoded['error']?.toString() ?? 'The request could not be completed.',
+        statusCode: response.statusCode,
       );
     }
     return decoded;

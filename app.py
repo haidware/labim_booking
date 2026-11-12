@@ -138,6 +138,10 @@ class SupabaseSessionExpired(Exception):
         self.role = role
 
 
+class BookingAvailabilityConflict(ValueError):
+    pass
+
+
 @lru_cache(maxsize=1)
 def get_supabase_admin():
     if not SUPABASE_ENABLED:
@@ -1914,7 +1918,7 @@ def available_online_rooms(check_in, check_out, hotel_id=None):
     listings = online_room_listings(hotel_id=hotel_id)
     available = []
     for room in listings:
-        if room["status"].lower() != "available":
+        if str(room["status"]).strip().lower() != "available":
             continue
         if not room.get("photo_urls") and not room.get("video_url"):
             continue
@@ -2550,7 +2554,9 @@ def create_online_booking(form):
     )
     room = next((item for item in available if item["number"] == room_number), None)
     if not room:
-        raise ValueError("That room is no longer available for the selected dates.")
+        raise BookingAvailabilityConflict(
+            "That room is no longer available for the selected dates."
+        )
 
     hold_expires_at = (
         datetime.now().astimezone() + timedelta(minutes=ONLINE_HOLD_MINUTES)
@@ -2569,14 +2575,15 @@ def create_online_booking(form):
                 "p_check_out": check_out.isoformat(),
             }).execute().data
         except APIError as error:
-            if error.code == "P0001" and error.message and (
-                "already has a booking" in error.message
-                or "no longer listed or available" in error.message
-            ):
-                raise ValueError(
-                    "That room is no longer available for those dates. "
-                    "Reception may have changed its status or another guest may have booked it."
-                ) from error
+            if error.code == "P0001" and error.message:
+                if "already has a booking" in error.message:
+                    raise BookingAvailabilityConflict(
+                        "Another booking or payment hold overlaps those dates."
+                    ) from error
+                if "no longer listed or available" in error.message:
+                    raise BookingAvailabilityConflict(
+                        "This room is no longer available for online booking."
+                    ) from error
             raise
         reservation_id = result[0] if isinstance(result, list) else result
     else:
@@ -2586,10 +2593,13 @@ def create_online_booking(form):
             "SELECT status FROM rooms WHERE hotel_id = ? AND number = ?",
             (hotel_id, room_number),
         ).fetchone()
-        if not room_status or room_status["status"] != "available":
+        if (
+            not room_status
+            or str(room_status["status"]).strip().lower() != "available"
+        ):
             db.rollback()
-            raise ValueError(
-                "Reception has changed this room's availability. Choose another room."
+            raise BookingAvailabilityConflict(
+                "This room is no longer available for online booking."
             )
         overlap = db.execute(
             """SELECT 1 FROM reservations WHERE hotel_id = ? AND room_number = ?
@@ -2601,7 +2611,9 @@ def create_online_booking(form):
         ).fetchone()
         if overlap:
             db.rollback()
-            raise ValueError("That room was just booked for the selected dates.")
+            raise BookingAvailabilityConflict(
+                "Another booking or payment hold overlaps those dates."
+            )
         cursor = db.execute(
             """INSERT INTO reservations
             (hotel_id, guest_name, email, phone, room_number, check_in, check_out, amount,
@@ -3560,6 +3572,7 @@ def add_public_api_cors_headers(response):
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Max-Age"] = "600"
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 
@@ -3840,6 +3853,8 @@ def public_booking_api_create():
         return jsonify({"error": "Send booking details as a JSON object."}), 400
     try:
         create_online_booking(payload)
+    except BookingAvailabilityConflict as error:
+        return jsonify({"error": str(error)}), 409
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
     return jsonify({

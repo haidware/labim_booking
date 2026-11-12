@@ -493,6 +493,52 @@ class _HotelBookingPageState extends State<HotelBookingPage>
     }
   }
 
+  Future<void> _refreshRoomsAfterAvailabilityConflict(String message) async {
+    final hotel = _selectedHotel;
+    if (hotel == null) return;
+    setState(() {
+      _loadingRooms = true;
+      _selectedRoom = null;
+      _roomPage = 0;
+      _rooms = const [];
+      _error = message;
+    });
+    try {
+      final rooms = await _api.loadRooms(
+        hotelSlug: hotel.slug,
+        checkIn: _checkInIso,
+        checkOut: _checkOutIso,
+        priceRange: _priceRange,
+      );
+      if (mounted) {
+        setState(() {
+          _rooms = rooms;
+          _error = '$message The available room list has been refreshed.';
+        });
+      }
+    } on BookingApiException catch (error) {
+      if (mounted) {
+        setState(() {
+          _error =
+              'Room availability changed, but the latest list could not be loaded: ${error.message}';
+        });
+      }
+    } catch (error, stackTrace) {
+      debugPrint(
+        'Refreshing rooms after an availability conflict failed: '
+        '$error\n$stackTrace',
+      );
+      if (mounted) {
+        setState(() {
+          _error =
+              'Room availability changed, but the latest list could not be loaded. Please search again.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _loadingRooms = false);
+    }
+  }
+
   void _goToRoomPage(int page) {
     final pageCount = (_rooms.length / _roomsPerPage).ceil();
     if (page < 0 || page >= pageCount || page == _roomPage) return;
@@ -563,6 +609,12 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       if (dialogContext.mounted) Navigator.of(dialogContext).pop();
       _linkPushSubscription(confirmation);
     } on BookingApiException catch (error) {
+      if (error.statusCode == 409) {
+        bookingDialogClosed = true;
+        if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+        await _refreshRoomsAfterAvailabilityConflict(error.message);
+        return;
+      }
       if (mounted) setState(() => _error = error.message);
       if (dialogContext.mounted) setDialogState(() {});
     } catch (_) {

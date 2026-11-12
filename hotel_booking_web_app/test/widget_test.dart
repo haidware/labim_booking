@@ -233,6 +233,37 @@ class _BookingFlowApi extends _EmptyBookingApi {
   }
 }
 
+class _AvailabilityConflictBookingApi extends _BookingFlowApi {
+  int roomLoads = 0;
+
+  @override
+  Future<List<HotelRoom>> loadRooms({
+    required String hotelSlug,
+    required String checkIn,
+    required String checkOut,
+    String priceRange = '',
+  }) async {
+    roomLoads++;
+    return roomLoads == 1 ? [_BookingFlowApi.room] : const [];
+  }
+
+  @override
+  Future<BookingConfirmation> createBooking({
+    required Hotel hotel,
+    required HotelRoom room,
+    required String checkIn,
+    required String checkOut,
+    required String guestName,
+    required String email,
+    required String phone,
+  }) async {
+    throw const BookingApiException(
+      'This room is no longer available for online booking.',
+      statusCode: 409,
+    );
+  }
+}
+
 class _ApartmentFlowApi extends _EmptyBookingApi {
   static const apartment = Hotel(
     id: 'shortlet-1',
@@ -361,6 +392,90 @@ void main() {
 
     expect(room.photoUrls, ['https://example.com/room-1.jpg']);
     expect(room.videoUrl, 'https://example.com/room-tour.mp4');
+  });
+
+  test(
+    'booking API preserves availability conflict status for room refresh',
+    () async {
+      final api = BookingApi(
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'error': 'This room is no longer available for online booking.',
+            }),
+            409,
+          ),
+        ),
+      );
+      addTearDown(api.dispose);
+
+      await expectLater(
+        api.createBooking(
+          hotel: _BookingFlowApi.hotel,
+          room: _BookingFlowApi.room,
+          checkIn: '2026-11-16',
+          checkOut: '2026-11-17',
+          guestName: 'Guest Name',
+          email: 'guest@example.com',
+          phone: '08000000000',
+        ),
+        throwsA(
+          isA<BookingApiException>().having(
+            (error) => error.statusCode,
+            'statusCode',
+            409,
+          ),
+        ),
+      );
+    },
+  );
+
+  testWidgets('booking conflict refreshes and removes the unavailable room', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      HotelBookingApp(
+        bookingPage: HotelBookingPage(
+          api: _AvailabilityConflictBookingApi(),
+          installPromptDismissed: () => true,
+          installPromptPlatform: () => 'android',
+          isRunningAsInstalledApp: () => true,
+          notificationPermissionState: () => 'unsupported',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('View rooms'));
+    await tester.tap(find.text('View rooms'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Select this room'));
+    await tester.tap(find.text('Select this room'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Guest Name');
+    await tester.enterText(
+      find.byType(TextFormField).at(1),
+      'guest@example.com',
+    );
+    await tester.enterText(find.byType(TextFormField).at(2), '08000000000');
+    await tester.ensureVisible(
+      find.text('Request booking and get payment details'),
+    );
+    await tester.tap(find.text('Request booking and get payment details'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.text('No listed rooms available'), findsOneWidget);
+    expect(
+      find.textContaining('The available room list has been refreshed.'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
   });
 
   test('hotel display address includes address, city, and state once', () {
