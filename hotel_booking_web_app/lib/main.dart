@@ -530,7 +530,10 @@ class _HotelBookingPageState extends State<HotelBookingPage>
     });
   }
 
-  Future<void> _requestBooking() async {
+  Future<void> _requestBooking({
+    required BuildContext dialogContext,
+    required StateSetter setDialogState,
+  }) async {
     final hotel = _selectedHotel;
     final room = _selectedRoom;
     if (hotel == null || room == null) return;
@@ -543,6 +546,8 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       _submittingBooking = true;
       _error = null;
     });
+    if (dialogContext.mounted) setDialogState(() {});
+    var bookingDialogClosed = false;
     try {
       final confirmation = await _api.createBooking(
         hotel: hotel,
@@ -553,49 +558,59 @@ class _HotelBookingPageState extends State<HotelBookingPage>
         email: _guestEmailController.text.trim(),
         phone: _guestPhoneController.text.trim(),
       );
-      if (_pendingPushSubscription != null) {
-        try {
-          final result = await _api.savePushSubscription(
-            token: confirmation.pushToken,
-            subscriptionJson: _pendingPushSubscription!,
-          );
-          if (mounted) {
-            setState(() {
-              _pushSubscriptionLinked = true;
-              _pushNotificationMessage = result['notification_sent'] == true
-                  ? 'Reception approved this booking and the alert was sent to this device.'
-                  : 'This device is registered for an alert when Reception approves your booking.';
-            });
-          }
-        } on BookingApiException catch (error) {
-          if (mounted) {
-            setState(() {
-              _pushNotificationMessage =
-                  'Notification permission was granted, but this booking could not be linked: ${error.message}';
-            });
-          }
-        } catch (error) {
-          if (mounted) {
-            setState(() {
-              _pushNotificationMessage =
-                  'Notification permission was granted, but this booking could not be linked: $error';
-            });
-          }
-        }
-      }
-      if (mounted) {
-        setState(() => _confirmation = confirmation);
-        Navigator.of(context).pop();
-      }
+      if (mounted) setState(() => _confirmation = confirmation);
+      bookingDialogClosed = true;
+      if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+      _linkPushSubscription(confirmation);
     } on BookingApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
+      if (dialogContext.mounted) setDialogState(() {});
     } catch (_) {
       if (mounted) {
         setState(() => _error = 'Could not submit the booking. Please retry.');
       }
+      if (dialogContext.mounted) setDialogState(() {});
     } finally {
       if (mounted) setState(() => _submittingBooking = false);
+      if (!bookingDialogClosed && dialogContext.mounted) {
+        setDialogState(() {});
+      }
     }
+  }
+
+  void _linkPushSubscription(BookingConfirmation confirmation) {
+    final subscription = _pendingPushSubscription;
+    if (subscription == null) return;
+    unawaited(() async {
+      try {
+        final result = await _api.savePushSubscription(
+          token: confirmation.pushToken,
+          subscriptionJson: subscription,
+        );
+        if (mounted && _confirmation == confirmation) {
+          setState(() {
+            _pushSubscriptionLinked = true;
+            _pushNotificationMessage = result['notification_sent'] == true
+                ? 'Reception approved this booking and the alert was sent to this device.'
+                : 'This device is registered for an alert when Reception approves your booking.';
+          });
+        }
+      } on BookingApiException catch (error) {
+        if (mounted && _confirmation == confirmation) {
+          setState(() {
+            _pushNotificationMessage =
+                'Notification permission was granted, but this booking could not be linked: ${error.message}';
+          });
+        }
+      } catch (error) {
+        if (mounted && _confirmation == confirmation) {
+          setState(() {
+            _pushNotificationMessage =
+                'Notification permission was granted, but this booking could not be linked: $error';
+          });
+        }
+      }
+    }());
   }
 
   Future<void> _requestApartmentAvailability(
@@ -669,14 +684,26 @@ class _HotelBookingPageState extends State<HotelBookingPage>
     });
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) => Dialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: 620,
-            maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.9,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => Dialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 24,
           ),
-          child: SingleChildScrollView(child: _buildGuestDetailsForm()),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 620,
+              maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.9,
+            ),
+            child: SingleChildScrollView(
+              child: _buildGuestDetailsForm(
+                onSubmit: () => _requestBooking(
+                  dialogContext: dialogContext,
+                  setDialogState: setDialogState,
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -1751,7 +1778,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
     );
   }
 
-  Widget _buildGuestDetailsForm() {
+  Widget _buildGuestDetailsForm({required VoidCallback onSubmit}) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(22),
@@ -1866,7 +1893,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
               child: FilledButton(
                 onPressed: _selectedRoom == null || _submittingBooking
                     ? null
-                    : _requestBooking,
+                    : onSubmit,
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF17607A),
                   foregroundColor: Colors.white,

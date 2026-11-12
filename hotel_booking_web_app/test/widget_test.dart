@@ -112,6 +112,7 @@ class _BookingFlowApi extends _EmptyBookingApi {
   String? savedPushToken;
   String? savedPushSubscription;
   bool bookingApproved = false;
+  Completer<BookingConfirmation>? bookingCompleter;
 
   @override
   Future<Map<String, dynamic>> loadConfig() async => {
@@ -174,24 +175,28 @@ class _BookingFlowApi extends _EmptyBookingApi {
     required String guestName,
     required String email,
     required String phone,
-  }) async => BookingConfirmation(
-    reference: '42',
-    hotelName: hotel.name,
-    roomNumber: room.number,
-    roomType: room.type,
-    checkIn: checkIn,
-    checkOut: checkOut,
-    amount: room.rate,
-    bankName: 'Test Bank',
-    accountName: 'Labim Hotel',
-    accountNumber: '0123456789',
-    holdExpiresAt: '2026-10-22T14:30:00',
-    whatsappHandoffUrl:
-        'https://example.com/api/public/whatsapp-handoff?token=test',
-    emailNotificationSent: true,
-    pushToken: 'signed-push-token',
-    pushPublicKey: 'test-vapid-public-key',
-  );
+  }) async {
+    final pendingBooking = bookingCompleter;
+    if (pendingBooking != null) return pendingBooking.future;
+    return BookingConfirmation(
+      reference: '42',
+      hotelName: hotel.name,
+      roomNumber: room.number,
+      roomType: room.type,
+      checkIn: checkIn,
+      checkOut: checkOut,
+      amount: room.rate,
+      bankName: 'Test Bank',
+      accountName: 'Labim Hotel',
+      accountNumber: '0123456789',
+      holdExpiresAt: '2026-10-22T14:30:00',
+      whatsappHandoffUrl:
+          'https://example.com/api/public/whatsapp-handoff?token=test',
+      emailNotificationSent: true,
+      pushToken: 'signed-push-token',
+      pushPublicKey: 'test-vapid-public-key',
+    );
+  }
 
   @override
   Future<String> reportPayment({
@@ -1098,6 +1103,25 @@ void main() {
       await tester.ensureVisible(
         find.text('Request booking and get payment details'),
       );
+      final pendingBooking = Completer<BookingConfirmation>();
+      api.bookingCompleter = pendingBooking;
+      await tester.tap(find.text('Request booking and get payment details'));
+      await tester.pump();
+      expect(find.text('Submitting booking request…'), findsOneWidget);
+      pendingBooking.completeError(
+        const BookingApiException('That room is no longer available.'),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: find.byType(Dialog),
+          matching: find.text('That room is no longer available.'),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+
+      api.bookingCompleter = null;
       await tester.tap(find.text('Request booking and get payment details'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
