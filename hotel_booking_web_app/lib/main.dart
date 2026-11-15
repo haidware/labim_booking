@@ -299,6 +299,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
   bool _bookingApproved = false;
   bool _checkingBookingStatus = false;
   int _roomPage = 0;
+  String? _selectedRoomType;
   static const _roomsPerPage = 5;
   String _pushPublicKey = '';
   String? _pendingPushSubscription;
@@ -317,6 +318,34 @@ class _HotelBookingPageState extends State<HotelBookingPage>
 
   String get _checkInIso => _isoDate(_checkIn);
   String get _checkOutIso => _isoDate(_checkOut);
+
+  Map<String, int> get _roomTypeCounts {
+    final counts = <String, int>{};
+    for (final room in _rooms) {
+      final type = room.type.trim();
+      if (type.isEmpty) continue;
+      String? matchingType;
+      for (final existingType in counts.keys) {
+        if (existingType.toLowerCase() == type.toLowerCase()) {
+          matchingType = existingType;
+          break;
+        }
+      }
+      final category = matchingType ?? type;
+      counts[category] = (counts[category] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  List<HotelRoom> get _visibleRooms {
+    final selectedType = _selectedRoomType;
+    if (selectedType == null) return _rooms;
+    return _rooms
+        .where(
+          (room) => room.type.trim().toLowerCase() == selectedType.toLowerCase(),
+        )
+        .toList();
+  }
 
   @override
   void initState() {
@@ -399,6 +428,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       _selectedHotel = null;
       _selectedRoom = null;
       _roomPage = 0;
+      _selectedRoomType = null;
       _rooms = const [];
       _confirmation = null;
     });
@@ -430,6 +460,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       _selectedHotel = hotel;
       _selectedRoom = null;
       _roomPage = 0;
+      _selectedRoomType = null;
       _confirmation = null;
       _loadingRooms = true;
       _rooms = const [];
@@ -466,6 +497,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       _loadingRooms = true;
       _selectedRoom = null;
       _roomPage = 0;
+      _selectedRoomType = null;
       _rooms = const [];
       _error = null;
     });
@@ -500,6 +532,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       _loadingRooms = true;
       _selectedRoom = null;
       _roomPage = 0;
+      _selectedRoomType = null;
       _rooms = const [];
       _error = message;
     });
@@ -540,9 +573,17 @@ class _HotelBookingPageState extends State<HotelBookingPage>
   }
 
   void _goToRoomPage(int page) {
-    final pageCount = (_rooms.length / _roomsPerPage).ceil();
+    final pageCount = (_visibleRooms.length / _roomsPerPage).ceil();
     if (page < 0 || page >= pageCount || page == _roomPage) return;
     setState(() => _roomPage = page);
+  }
+
+  void _selectRoomType(String? roomType) {
+    setState(() {
+      _selectedRoomType = roomType;
+      _selectedRoom = null;
+      _roomPage = 0;
+    });
   }
 
   Future<void> _selectDate({required bool isCheckIn}) async {
@@ -1729,17 +1770,23 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                   )
                 else ...[
                   Text(
-                    'Available $_unitPlural',
+                    _isApartmentPreview
+                        ? 'Available $_unitPlural'
+                        : 'Available rooms',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   const SizedBox(height: 16),
+                  if (!_isApartmentPreview) ...[
+                    _buildRoomTypeTabs(),
+                    const SizedBox(height: 16),
+                  ],
                   RadioGroup<String>(
                     groupValue: _selectedRoom?.number,
                     onChanged: _selectRoom,
                     child: Column(
                       children: [
                         for (final room
-                            in _rooms
+                            in _visibleRooms
                                 .skip(_roomPage * _roomsPerPage)
                                 .take(_roomsPerPage))
                           Padding(
@@ -1754,7 +1801,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                       ],
                     ),
                   ),
-                  if (_rooms.length > _roomsPerPage) ...[
+                  if (_visibleRooms.length > _roomsPerPage) ...[
                     const SizedBox(height: 2),
                     _buildRoomPagination(),
                   ],
@@ -1767,12 +1814,38 @@ class _HotelBookingPageState extends State<HotelBookingPage>
     );
   }
 
+  Widget _buildRoomTypeTabs() {
+    final roomTypeCounts = _roomTypeCounts;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          ChoiceChip(
+            label: Text('All rooms (${_rooms.length})'),
+            selected: _selectedRoomType == null,
+            onSelected: (_) => _selectRoomType(null),
+          ),
+          for (final entry in roomTypeCounts.entries) ...[
+            const SizedBox(width: 8),
+            ChoiceChip(
+              label: Text('${entry.key} (${entry.value})'),
+              selected:
+                  _selectedRoomType?.toLowerCase() == entry.key.toLowerCase(),
+              onSelected: (_) => _selectRoomType(entry.key),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildRoomPagination() {
-    final pageCount = (_rooms.length / _roomsPerPage).ceil();
+    final visibleRooms = _visibleRooms;
+    final pageCount = (visibleRooms.length / _roomsPerPage).ceil();
     final firstRoom = _roomPage * _roomsPerPage + 1;
-    final lastRoom = (_roomPage + 1) * _roomsPerPage < _rooms.length
+    final lastRoom = (_roomPage + 1) * _roomsPerPage < visibleRooms.length
         ? (_roomPage + 1) * _roomsPerPage
-        : _rooms.length;
+        : visibleRooms.length;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Wrap(
@@ -1782,7 +1855,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
         spacing: 12,
         children: [
           Text(
-            'Showing $firstRoom–$lastRoom of ${_rooms.length} $_unitPlural',
+            'Showing $firstRoom–$lastRoom of ${visibleRooms.length} $_unitPlural',
             style: const TextStyle(color: Color(0xFF71868C), fontSize: 13),
           ),
           Row(

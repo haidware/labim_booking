@@ -264,6 +264,35 @@ class _AvailabilityConflictBookingApi extends _BookingFlowApi {
   }
 }
 
+class _RoomCategoriesBookingApi extends _ManyRoomsBookingApi {
+  @override
+  Future<List<HotelRoom>> loadRooms({
+    required String hotelSlug,
+    required String checkIn,
+    required String checkOut,
+    String priceRange = '',
+  }) async => [
+    for (var index = 0; index < 7; index++)
+      HotelRoom(
+        number: '${101 + index}',
+        type: 'Standard',
+        beds: 1,
+        rate: 30000,
+        description: '',
+        photoUrls: const [],
+      ),
+    for (var index = 0; index < 2; index++)
+      HotelRoom(
+        number: '${201 + index}',
+        type: 'Executive',
+        beds: 1,
+        rate: 50000,
+        description: '',
+        photoUrls: const [],
+      ),
+  ];
+}
+
 class _ApartmentFlowApi extends _EmptyBookingApi {
   static const apartment = Hotel(
     id: 'shortlet-1',
@@ -947,6 +976,57 @@ void main() {
     expect(find.text('Standard · Room 110'), findsOneWidget);
     expect(find.text('Standard · Room 105'), findsNothing);
     expect(find.text('Showing 6–10 of 12 rooms'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('room type tabs show every available room in its category', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      HotelBookingApp(
+        bookingPage: HotelBookingPage(
+          api: _RoomCategoriesBookingApi(),
+          installPromptPlatform: () => 'android',
+          isRunningAsInstalledApp: () => true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('View rooms'));
+    await tester.tap(find.text('View rooms'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('All rooms (9)'), findsOneWidget);
+    expect(find.text('Standard (7)'), findsOneWidget);
+    expect(find.text('Executive (2)'), findsOneWidget);
+    expect(find.text('Showing 1–5 of 9 rooms'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Standard (7)'));
+    await tester.tap(find.text('Standard (7)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Standard · Room 101'), findsOneWidget);
+    expect(find.text('Standard · Room 105'), findsOneWidget);
+    expect(find.text('Executive · Room 201'), findsNothing);
+    expect(find.text('Showing 1–5 of 7 rooms'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('2'));
+    await tester.tap(find.text('2'));
+    await tester.pumpAndSettle();
+    expect(find.text('Standard · Room 106'), findsOneWidget);
+    expect(find.text('Standard · Room 107'), findsOneWidget);
+    expect(find.text('Executive · Room 201'), findsNothing);
+
+    await tester.ensureVisible(find.text('Executive (2)'));
+    await tester.tap(find.text('Executive (2)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Executive · Room 201'), findsOneWidget);
+    expect(find.text('Executive · Room 202'), findsOneWidget);
+    expect(find.text('Standard · Room 101'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
