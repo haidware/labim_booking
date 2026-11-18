@@ -917,6 +917,40 @@ void main() {
     expect(layoutException, isNull, reason: '$layoutException');
   });
 
+  testWidgets('guest hotel profile shows a swipeable hotel photo gallery', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      HotelBookingApp(
+        bookingPage: HotelBookingPage(
+          api: _BookingFlowApi(),
+          installPromptPlatform: () => 'android',
+          isRunningAsInstalledApp: () => true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('View rooms'));
+    await tester.tap(find.text('View rooms'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Find your room at Labim Hotel and Suite'),
+      findsOneWidget,
+    );
+    expect(find.text('1 / 2'), findsOneWidget);
+    final gallery = find.byType(PageView).first;
+    await tester.drag(gallery, const Offset(-260, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('2 / 2'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('room cards show video first and paginate five rooms at a time', (
     tester,
   ) async {

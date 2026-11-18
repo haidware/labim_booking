@@ -1714,6 +1714,22 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                   _buildApartmentPreviewNotice(),
                   const SizedBox(height: 18),
                 ],
+                SizedBox(
+                  height: 280,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: _HotelPhotoGallery(
+                      hotel: hotel,
+                      emptyIcon: Icons.apartment_rounded,
+                      label: hotel.state.isEmpty
+                          ? _isApartmentPreview
+                                ? 'APARTMENT'
+                                : 'HOTEL'
+                          : hotel.state.toUpperCase(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 22),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
