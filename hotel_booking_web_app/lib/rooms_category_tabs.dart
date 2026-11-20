@@ -26,7 +26,9 @@ class RoomsCategoryTabs extends StatelessWidget {
     );
     if (!opened && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to open that Rooms category.')),
+        const SnackBar(
+          content: Text('Unable to open that NaijaRooms category.'),
+        ),
       );
     }
   }

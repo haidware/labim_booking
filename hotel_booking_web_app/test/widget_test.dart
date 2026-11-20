@@ -590,7 +590,7 @@ void main() {
       find.textContaining('Discover live available hotel rooms'),
       findsOneWidget,
     );
-    expect(find.text('How Rooms works'), findsOneWidget);
+    expect(find.text('How NaijaRooms works'), findsOneWidget);
     expect(
       find.text('Only onboarded hotels with active staff are listed.'),
       findsOneWidget,
@@ -669,12 +669,12 @@ void main() {
     expect(find.text('Search apartments'), findsOneWidget);
     expect(find.text('Shortlet apartments'), findsOneWidget);
     expect(find.text('Land/Properties'), findsOneWidget);
-    final howApartmentsWork = find.text('How Rooms works for apartments');
+    final howApartmentsWork = find.text('How NaijaRooms works for apartments');
     await tester.ensureVisible(howApartmentsWork);
     await tester.pumpAndSettle();
     expect(howApartmentsWork, findsOneWidget);
     expect(
-      find.textContaining('No booking or payment is made through Rooms'),
+      find.textContaining('No booking or payment is made through NaijaRooms'),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
@@ -745,7 +745,7 @@ void main() {
     expect(find.text('Commercial land'), findsOneWidget);
     expect(find.textContaining('for sale'), findsWidgets);
     expect(find.textContaining('per year'), findsOneWidget);
-    expect(find.byTooltip('Back to Rooms home'), findsOneWidget);
+    expect(find.byTooltip('Back to NaijaRooms home'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -760,9 +760,9 @@ void main() {
         MaterialPageRoute<void>(builder: (_) => page),
       );
       await tester.pumpAndSettle();
-      expect(find.byTooltip('Back to Rooms home'), findsOneWidget);
+      expect(find.byTooltip('Back to NaijaRooms home'), findsOneWidget);
 
-      await tester.tap(find.byTooltip('Back to Rooms home'));
+      await tester.tap(find.byTooltip('Back to NaijaRooms home'));
       await tester.pumpAndSettle();
       expect(find.text('Rooms home'), findsOneWidget);
     }
@@ -904,7 +904,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.bySemanticsLabel('Rooms'), findsOneWidget);
+    expect(find.bySemanticsLabel('NaijaRooms'), findsOneWidget);
     expect(find.text('HAIDWARE'), findsNothing);
     expect(
       find.text('Your stay. Your choice. All in one place.'),
@@ -1184,7 +1184,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Add Rooms to your Home Screen'), findsOneWidget);
+    expect(find.text('Add NaijaRooms to your Home Screen'), findsOneWidget);
     expect(find.text('Install with Google Chrome'), findsOneWidget);
     expect(find.text('Got it'), findsOneWidget);
     await tester.tap(find.text('Got it'));
@@ -1204,7 +1204,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Add Rooms to your Home Screen'), findsNothing);
+    expect(find.text('Add NaijaRooms to your Home Screen'), findsNothing);
   });
 
   testWidgets('iPhone Home Screen guide comes before notification settings', (
@@ -1225,7 +1225,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Add Rooms to your Home Screen'), findsOneWidget);
+    expect(find.text('Add NaijaRooms to your Home Screen'), findsOneWidget);
     expect(find.text('Use Safari on your iPhone or iPad'), findsOneWidget);
     expect(find.text('Notification settings'), findsNothing);
     await tester.tap(find.text('Got it'));
@@ -1248,7 +1248,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Notification settings'), findsOneWidget);
     expect(find.text('Allow notifications'), findsOneWidget);
-    expect(find.text('Add Rooms to your Home Screen'), findsNothing);
+    expect(find.text('Add NaijaRooms to your Home Screen'), findsNothing);
   });
 
   testWidgets(
@@ -1283,17 +1283,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       expect(find.text('Notification settings'), findsOneWidget);
-      expect(find.text('Add Rooms to your Home Screen'), findsNothing);
+      expect(find.text('Add NaijaRooms to your Home Screen'), findsNothing);
       expect(find.text('Allow notifications'), findsOneWidget);
       await tester.tap(find.text('Not now'));
       await tester.pumpAndSettle();
       expect(find.text('Notification settings'), findsNothing);
-      expect(find.text('Add Rooms to your Home Screen'), findsOneWidget);
+      expect(find.text('Add NaijaRooms to your Home Screen'), findsOneWidget);
       expect(find.text('Install with Google Chrome'), findsOneWidget);
       expect(find.text('Allow notifications'), findsNothing);
       await tester.tap(find.text('Got it'));
       await tester.pumpAndSettle();
-      expect(find.text('Add Rooms to your Home Screen'), findsNothing);
+      expect(find.text('Add NaijaRooms to your Home Screen'), findsNothing);
       expect(installPromptDismissed, isTrue);
       await tester.ensureVisible(find.text('View rooms'));
       expect(find.text('A quiet city hotel with breakfast.'), findsOneWidget);

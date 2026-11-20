@@ -116,7 +116,7 @@ class _RoomsHomePageState extends State<RoomsHomePage> {
                             border: Border(top: BorderSide(color: _line)),
                           ),
                           child: const Text(
-                            'Rooms · Hotel bookings and a house-rental preview',
+                            'NaijaRooms · Hotel bookings and a house-rental preview',
                             textAlign: TextAlign.center,
                             style: TextStyle(fontSize: 12, color: _muted),
                           ),
@@ -143,7 +143,7 @@ class _RoomsHomePageState extends State<RoomsHomePage> {
       ),
       child: Center(
         child: Semantics(
-          label: 'Rooms homepage',
+          label: 'NaijaRooms homepage',
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -170,7 +170,7 @@ class _RoomsHomePageState extends State<RoomsHomePage> {
                     letterSpacing: -1.2,
                   ),
                   children: const [
-                    TextSpan(text: 'Rooms'),
+                    TextSpan(text: 'NaijaRooms'),
                     TextSpan(
                       text: '.',
                       style: TextStyle(color: _blue),

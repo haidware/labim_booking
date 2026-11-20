@@ -163,7 +163,7 @@ class HotelBookingApp extends StatelessWidget {
   Widget build(BuildContext context) {
     const teal = Color(0xFF17607A);
     return MaterialApp(
-      title: 'Rooms',
+      title: 'NaijaRooms',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -1039,8 +1039,8 @@ class _HotelBookingPageState extends State<HotelBookingPage>
               children: [
                 Text(
                   permission == 'denied'
-                      ? 'Notifications are blocked for Rooms in your browser settings. Enable them in site permissions to receive booking approval alerts.'
-                      : 'Allow Rooms to notify you when Reception approves your booking. Your device will be linked to the booking when you request one.',
+                      ? 'Notifications are blocked for NaijaRooms in your browser settings. Enable them in site permissions to receive booking approval alerts.'
+                      : 'Allow NaijaRooms to notify you when Reception approves your booking. Your device will be linked to the booking when you request one.',
                 ),
                 if (errorMessage != null) ...[
                   const SizedBox(height: 12),
@@ -1123,7 +1123,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
         'Open this link in Chrome. Tap the menu (⋮), choose “Install app” or “Add to Home screen”, then confirm “Install”, “Add”, or “Create shortcut”.',
       ),
       _ => (
-        'Add Rooms to your Home Screen',
+        'Add NaijaRooms to your Home Screen',
         'Open this link in your device’s browser menu and choose “Install app” or “Add to Home screen”. Follow the browser’s confirmation steps.',
       ),
     };
@@ -1132,7 +1132,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       builder: (dialogContext) => AlertDialog(
         scrollable: true,
         icon: const Icon(Icons.add_to_home_screen_outlined),
-        title: const Text('Add Rooms to your Home Screen'),
+        title: const Text('Add NaijaRooms to your Home Screen'),
         content: SizedBox(
           width: 420,
           child: Column(
@@ -1195,7 +1195,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
       if (details == null || !mounted) return;
 
       final message = [
-        'Hello, I would like to apply to list a shortlet apartment on Rooms.',
+        'Hello, I would like to apply to list a shortlet apartment on NaijaRooms.',
         'Name: ${details.name}',
         'Phone: ${details.phone}',
         'Apartment location: ${details.location}',
@@ -1298,18 +1298,18 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                     ),
                     const SizedBox(width: 12),
                     Semantics(
-                      label: 'Rooms',
+                      label: 'NaijaRooms',
                       child: ExcludeSemantics(
                         child: Text.rich(
                           TextSpan(
                             style: TextStyle(
                               color: Colors.white,
-                              fontSize: 27,
+                              fontSize: compact ? 20 : 27,
                               fontWeight: FontWeight.w800,
                               letterSpacing: -1.1,
                             ),
                             children: [
-                              TextSpan(text: 'Rooms'),
+                              TextSpan(text: 'NaijaRooms'),
                               TextSpan(
                                 text: '.',
                                 style: TextStyle(color: Color(0xFFE53950)),
@@ -2211,7 +2211,7 @@ class _HotelBookingPageState extends State<HotelBookingPage>
                       children: [
                         Text(
                           _pushNotificationMessage ??
-                              'Notification permission can be enabled when Rooms opens. This device will be linked to this booking after you allow it.',
+                              'Notification permission can be enabled when NaijaRooms opens. This device will be linked to this booking after you allow it.',
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
                       ],
@@ -3630,7 +3630,7 @@ class _TrustFooter extends StatelessWidget {
         'Select an apartment to review its details, photos and video.',
         'Send an availability request to the apartment manager on WhatsApp.',
         'The manager confirms availability and the final price directly with you.',
-        'No booking or payment is made through Rooms for shortlet apartments.',
+        'No booking or payment is made through NaijaRooms for shortlet apartments.',
       ];
 
       return Center(
@@ -3646,7 +3646,7 @@ class _TrustFooter extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'How Rooms works for apartments',
+                'How NaijaRooms works for apartments',
                 style: Theme.of(
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
@@ -3706,7 +3706,7 @@ class _TrustFooter extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'How Rooms works',
+                  'How NaijaRooms works',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),

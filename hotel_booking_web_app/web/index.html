@@ -18,18 +18,18 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="Rooms — book available hotel rooms or preview sample house-rental listings.">
+  <meta name="description" content="NaijaRooms — book available hotel rooms or preview sample house-rental listings.">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="Rooms">
+  <meta name="apple-mobile-web-app-title" content="NaijaRooms">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>Rooms</title>
+  <title>NaijaRooms</title>
   <link rel="manifest" href="manifest.json">
   <style>
     body {
@@ -70,7 +70,7 @@
   </style>
 </head>
 <body>
-  <div id="app-loading" role="status" aria-label="Loading Rooms"></div>
+  <div id="app-loading" role="status" aria-label="Loading NaijaRooms"></div>
   <script>
     window.roomsInstallPrompt = {
       hasDismissed: function () {
@@ -124,7 +124,7 @@
         if (/iphone|ipad|ipod/i.test(navigator.userAgent) &&
             !('standalone' in navigator && navigator.standalone) &&
             !window.matchMedia('(display-mode: standalone)').matches) {
-          throw new Error('On iPhone or iPad, add Rooms to your Home Screen before enabling notifications.');
+          throw new Error('On iPhone or iPad, add NaijaRooms to your Home Screen before enabling notifications.');
         }
         const permission = Notification.permission === 'default'
           ? await Notification.requestPermission()

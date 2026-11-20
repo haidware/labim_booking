@@ -82,7 +82,7 @@ class _PropertyCategoryPreviewPage extends StatelessWidget {
     if (!opened && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Unable to return to the Rooms homepage.'),
+          content: Text('Unable to return to the NaijaRooms homepage.'),
         ),
       );
     }
@@ -96,12 +96,12 @@ class _PropertyCategoryPreviewPage extends StatelessWidget {
         backgroundColor: Colors.white,
         foregroundColor: _navy,
         leading: IconButton(
-          tooltip: 'Back to Rooms home',
+          tooltip: 'Back to NaijaRooms home',
           onPressed: () => _goBack(context),
           icon: const Icon(Icons.arrow_back),
         ),
         title: const Text(
-          'Rooms',
+          'NaijaRooms',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
       ),

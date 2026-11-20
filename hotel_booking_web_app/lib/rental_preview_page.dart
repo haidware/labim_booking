@@ -137,7 +137,7 @@ class RentalPreviewPage extends StatelessWidget {
         backgroundColor: Colors.white,
         foregroundColor: _navy,
         title: const Text(
-          'Rooms',
+          'NaijaRooms',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
       ),

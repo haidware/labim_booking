@@ -4985,7 +4985,7 @@ def cancel_online_booking_route(reservation_id):
 @app.route("/")
 def home():
     if not (FLUTTER_WEB_BUILD_DIRECTORY / "index.html").is_file():
-        return "The Flutter Rooms app has not been built.", 503
+        return "The NaijaRooms app has not been built.", 503
     return send_from_directory(FLUTTER_WEB_BUILD_DIRECTORY, "index.html")
 
 

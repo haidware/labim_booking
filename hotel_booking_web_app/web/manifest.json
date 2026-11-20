@@ -1,6 +1,6 @@
 {
-    "name": "Rooms",
-    "short_name": "Rooms",
+    "name": "NaijaRooms",
+    "short_name": "NaijaRooms",
     "start_url": "/",
     "scope": "/",
     "display": "standalone",
