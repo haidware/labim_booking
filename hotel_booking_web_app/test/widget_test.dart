@@ -382,6 +382,27 @@ class _ManyRoomsBookingApi extends _EmptyBookingApi {
   );
 }
 
+class _DiscountBookingApi extends _BookingFlowApi {
+  @override
+  Future<List<HotelRoom>> loadRooms({
+    required String hotelSlug,
+    required String checkIn,
+    required String checkOut,
+    String priceRange = '',
+  }) async => [
+    const HotelRoom(
+      number: '101',
+      type: 'Standard',
+      beds: 1,
+      rate: 47500,
+      originalRate: 50000,
+      discountPercent: 5,
+      description: '',
+      photoUrls: [],
+    ),
+  ];
+}
+
 void main() {
   test('hotel JSON includes its description and photo gallery', () {
     final hotel = Hotel.fromJson({
@@ -393,6 +414,8 @@ void main() {
       'state': 'FCT',
       'available_room_count': 20,
       'lowest_rate': 30000,
+      'lowest_original_rate': 50000,
+      'discount_percent': 5,
       'cover_photo_url': 'https://example.com/hotel-front.jpg',
       'description': 'A quiet city hotel.',
       'photo_urls': [
@@ -403,6 +426,8 @@ void main() {
 
     expect(hotel.availableRoomCount, 20);
     expect(hotel.description, 'A quiet city hotel.');
+    expect(hotel.lowestOriginalRate, 50000);
+    expect(hotel.discountPercent, 5);
     expect(hotel.photoUrls, [
       'https://example.com/hotel-front.jpg',
       'https://example.com/hotel-lobby.jpg',
@@ -415,12 +440,17 @@ void main() {
       'type': 'Standard',
       'beds': 1,
       'rate': 30000,
+      'original_rate': 50000,
+      'discount_percent': 5,
       'photo_urls': ['https://example.com/room-1.jpg'],
       'video_url': 'https://example.com/room-tour.mp4',
     });
 
     expect(room.photoUrls, ['https://example.com/room-1.jpg']);
     expect(room.videoUrl, 'https://example.com/room-tour.mp4');
+    expect(room.rate, 30000);
+    expect(room.originalRate, 50000);
+    expect(room.discountPercent, 5);
   });
 
   test(
@@ -677,6 +707,30 @@ void main() {
       find.textContaining('No booking or payment is made through NaijaRooms'),
       findsOneWidget,
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('discounted hotel room shows both posted and guest rates', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      HotelBookingApp(
+        bookingPage: HotelBookingPage(
+          api: _DiscountBookingApi(),
+          installPromptDismissed: () => true,
+          installPromptPlatform: () => 'android',
+          isRunningAsInstalledApp: () => true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('View rooms').first);
+    await tester.tap(find.text('View rooms').first);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('50,000 per night'), findsOneWidget);
+    expect(find.textContaining('47,500 per night'), findsOneWidget);
+    expect(find.text('5% OFF'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

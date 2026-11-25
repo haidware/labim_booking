@@ -68,7 +68,12 @@
           {% if room.photo_urls or room.video_url %}<div class="public-room-photo-gallery">{% for photo_url in room.photo_urls %}<img src="{{ photo_url }}" alt="Photo {{ loop.index }} of Room {{ room.number }}">{% endfor %}{% if room.video_url %}<video controls preload="metadata" src="{{ room.video_url }}">Your browser does not support MP4 video.</video>{% endif %}</div>{% else %}<div class="public-room-no-photo">Photo unavailable</div>{% endif %}
           <span class="public-room-info">
             <strong>{{ room.type }} · Room {{ room.number }}</strong>
-            <small>{{ room.beds }} bed{{ '' if room.beds == 1 else 's' }} · ₦{{ '{:,.0f}'.format(room.rate) }} per night</small>
+            <small>{{ room.beds }} bed{{ '' if room.beds == 1 else 's' }}</small>
+            {% if room.discount_percent %}
+            <small><del>₦{{ '{:,.0f}'.format(room.original_rate) }} per night</del> · <strong>₦{{ '{:,.0f}'.format(room.rate) }} per night</strong> · {{ room.discount_percent }}% off</small>
+            {% else %}
+            <small>₦{{ '{:,.0f}'.format(room.rate) }} per night</small>
+            {% endif %}
             {% if room.description %}<span>{{ room.description }}</span>{% endif %}
             <label class="public-room-select"><input type="radio" name="room_number" value="{{ room.number }}" required> Select this room</label>
           </span>

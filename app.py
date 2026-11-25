@@ -335,13 +335,81 @@ def hotel_photo_paths(hotel):
 def command_center_hotels():
     if SUPABASE_ENABLED:
         return get_supabase_admin().table("hotels").select(
-            "id, hotel_number, name, city, state"
+            "id, hotel_number, name, city, state, discount_percent, "
+            "discount_start_date, discount_end_date, discount_cancelled_at"
         ).order("hotel_number").execute().data
     rows = get_db().execute(
-        """SELECT id, hotel_number, name, city, state
+        """SELECT id, hotel_number, name, city, state, discount_percent,
+        discount_start_date, discount_end_date, discount_cancelled_at
         FROM hotels ORDER BY hotel_number"""
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def active_hotel_discount_percent(hotel_id, booking_date=None):
+    booking_date = booking_date or date.today()
+    if SUPABASE_ENABLED:
+        rows = get_supabase_admin().table("hotels").select(
+            "discount_percent, discount_start_date, discount_end_date, "
+            "discount_cancelled_at"
+        ).eq("id", hotel_id).limit(1).execute().data
+        hotel = rows[0] if rows else None
+    else:
+        row = get_db().execute(
+            """SELECT discount_percent, discount_start_date, discount_end_date,
+            discount_cancelled_at FROM hotels WHERE id = ?""",
+            (hotel_id,),
+        ).fetchone()
+        hotel = dict(row) if row else None
+    if not hotel or hotel.get("discount_cancelled_at"):
+        return 0
+    try:
+        percent = int(hotel.get("discount_percent") or 0)
+    except (TypeError, ValueError):
+        app.logger.warning(
+            "Ignoring invalid discount percentage for hotel %s", hotel_id
+        )
+        return 0
+    if percent == 0:
+        return 0
+    if not 1 <= percent <= 99:
+        app.logger.warning(
+            "Ignoring out-of-range discount percentage for hotel %s", hotel_id
+        )
+        return 0
+    try:
+        starts_on = date.fromisoformat(str(hotel.get("discount_start_date", "")))
+        ends_on = date.fromisoformat(str(hotel.get("discount_end_date", "")))
+    except (TypeError, ValueError):
+        app.logger.warning(
+            "Ignoring discount with invalid dates for hotel %s", hotel_id
+        )
+        return 0
+    return percent if starts_on <= booking_date <= ends_on else 0
+
+
+def discounted_room_rate(rate, discount_percent):
+    rate = int(rate)
+    if rate <= 0 or discount_percent <= 0:
+        return rate
+    return max(1, (rate * (100 - discount_percent) + 50) // 100)
+
+
+def command_center_discount_status(hotel):
+    if not hotel.get("discount_percent") or not hotel.get("discount_start_date"):
+        return "Not set"
+    if hotel.get("discount_cancelled_at"):
+        return "Cancelled"
+    try:
+        starts_on = date.fromisoformat(str(hotel["discount_start_date"]))
+        ends_on = date.fromisoformat(str(hotel["discount_end_date"]))
+    except (KeyError, TypeError, ValueError):
+        return "Not set"
+    if date.today() < starts_on:
+        return "Scheduled"
+    if date.today() > ends_on:
+        return "Expired"
+    return "Active"
 
 
 def command_center_hotel_ids():
@@ -1205,6 +1273,10 @@ def init_db():
             state TEXT NOT NULL DEFAULT '',
             description TEXT NOT NULL DEFAULT '',
             photo_paths TEXT NOT NULL DEFAULT '[]',
+            discount_percent INTEGER NOT NULL DEFAULT 0,
+            discount_start_date TEXT,
+            discount_end_date TEXT,
+            discount_cancelled_at TEXT,
             is_active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL
         );
@@ -1375,6 +1447,16 @@ def init_db():
         db.execute(
             "ALTER TABLE hotels ADD COLUMN photo_paths TEXT NOT NULL DEFAULT '[]'"
         )
+    if "discount_percent" not in hotel_columns:
+        db.execute(
+            "ALTER TABLE hotels ADD COLUMN discount_percent INTEGER NOT NULL DEFAULT 0"
+        )
+    if "discount_start_date" not in hotel_columns:
+        db.execute("ALTER TABLE hotels ADD COLUMN discount_start_date TEXT")
+    if "discount_end_date" not in hotel_columns:
+        db.execute("ALTER TABLE hotels ADD COLUMN discount_end_date TEXT")
+    if "discount_cancelled_at" not in hotel_columns:
+        db.execute("ALTER TABLE hotels ADD COLUMN discount_cancelled_at TEXT")
     next_hotel_number = db.execute(
         "SELECT COALESCE(MAX(hotel_number), 0) + 1 FROM hotels"
     ).fetchone()[0]
@@ -1950,6 +2032,12 @@ def available_online_rooms(check_in, check_out, hotel_id=None):
                 break
         if not collision:
             available.append(room)
+    discount_percent = active_hotel_discount_percent(hotel_id)
+    for room in available:
+        original_rate = int(room["rate"])
+        room["original_rate"] = original_rate
+        room["discount_percent"] = discount_percent
+        room["rate"] = discounted_room_rate(original_rate, discount_percent)
     return available
 
 
@@ -2573,6 +2661,7 @@ def create_online_booking(form):
                 "p_room_number": room_number,
                 "p_check_in": check_in.isoformat(),
                 "p_check_out": check_out.isoformat(),
+                "p_nightly_rate": room["rate"],
             }).execute().data
         except APIError as error:
             if error.code == "P0001" and error.message:
@@ -2580,9 +2669,17 @@ def create_online_booking(form):
                     raise BookingAvailabilityConflict(
                         "Another booking or payment hold overlaps those dates."
                     ) from error
+                if "hotel is no longer accepting bookings" in error.message:
+                    raise BookingAvailabilityConflict(
+                        "This hotel is no longer accepting bookings."
+                    ) from error
                 if "no longer listed or available" in error.message:
                     raise BookingAvailabilityConflict(
                         "This room is no longer available for online booking."
+                    ) from error
+                if "price changed" in error.message:
+                    raise BookingAvailabilityConflict(
+                        "The room price changed. Refresh availability and try again."
                     ) from error
             raise
         reservation_id = result[0] if isinstance(result, list) else result
@@ -2590,7 +2687,7 @@ def create_online_booking(form):
         db = get_db()
         db.execute("BEGIN IMMEDIATE")
         room_status = db.execute(
-            "SELECT status FROM rooms WHERE hotel_id = ? AND number = ?",
+            "SELECT status, rate FROM rooms WHERE hotel_id = ? AND number = ?",
             (hotel_id, room_number),
         ).fetchone()
         if (
@@ -2600,6 +2697,19 @@ def create_online_booking(form):
             db.rollback()
             raise BookingAvailabilityConflict(
                 "This room is no longer available for online booking."
+            )
+        current_discount_percent = active_hotel_discount_percent(hotel_id)
+        room["original_rate"] = int(room_status["rate"])
+        room["discount_percent"] = current_discount_percent
+        room["rate"] = discounted_room_rate(
+            room["original_rate"], current_discount_percent
+        )
+        if price_range and room not in filter_rooms_by_price_range(
+            [room], price_range
+        ):
+            db.rollback()
+            raise BookingAvailabilityConflict(
+                "The room price changed. Refresh availability and try again."
             )
         overlap = db.execute(
             """SELECT 1 FROM reservations WHERE hotel_id = ? AND room_number = ?
@@ -3587,7 +3697,8 @@ def require_workspace_login():
     if endpoint in {
         "command_center", "command_center_payment_reports", "issue_hotel_id",
         "command_center_apartments", "save_command_center_apartment",
-        "create_shortlet_video_upload",
+        "create_shortlet_video_upload", "save_command_center_hotel_discount",
+        "cancel_command_center_hotel_discount",
     }:
         if session.get("user_role") != "controller":
             return redirect(url_for("login", role="controller"))
@@ -3679,13 +3790,13 @@ def public_booking_api_hotels():
         if not matching_rooms:
             continue
         preview_room = matching_rooms[0] if matching_rooms else None
+        lowest_room = min(matching_rooms, key=lambda room: room["rate"])
         hotel_results.append({
             **hotel,
             "available_room_count": len(matching_rooms),
-            "lowest_rate": (
-                min(room["rate"] for room in matching_rooms)
-                if matching_rooms else None
-            ),
+            "lowest_rate": lowest_room["rate"],
+            "lowest_original_rate": lowest_room["original_rate"],
+            "discount_percent": lowest_room["discount_percent"],
             "cover_photo_url": (
                 public_api_photo_url(hotel["photo_urls"][0])
                 if hotel.get("photo_urls")
@@ -3836,6 +3947,8 @@ def public_booking_api_rooms(hotel_slug):
             "type": room["type"],
             "beds": room["beds"],
             "rate": room["rate"],
+            "original_rate": room["original_rate"],
+            "discount_percent": room["discount_percent"],
             "description": room.get("description", ""),
             "photo_urls": [
                 public_api_photo_url(photo_url)
@@ -4494,13 +4607,13 @@ def command_center():
         reporting_month_bounds(reporting_month)
     except ValueError as error:
         return str(error), 400
-    hotels = [
-        {
+    hotels = []
+    for hotel in command_center_hotels():
+        hotels.append({
             **hotel,
             "hotel_code": f"HOTEL-{int(hotel['hotel_number']):04d}",
-        }
-        for hotel in command_center_hotels()
-    ]
+            "discount_status": command_center_discount_status(hotel),
+        })
     selected_hotel_id = request.args.get("hotel_id", "").strip()
     selected_hotel = next(
         (hotel for hotel in hotels if hotel["id"] == selected_hotel_id),
@@ -4523,6 +4636,92 @@ def command_center():
             "controller_csrf_token", secrets.token_urlsafe(32)
         ),
     )
+
+
+@app.post("/commandcenter/hotels/<hotel_id>/discount")
+def save_command_center_hotel_discount(hotel_id):
+    csrf_token = session.get("controller_csrf_token", "")
+    if not csrf_token or not hmac.compare_digest(
+        csrf_token, request.form.get("csrf_token", "")
+    ):
+        flash("This form expired. Refresh the page and try again.", "error")
+        return redirect(url_for("command_center"))
+    if not any(hotel["id"] == hotel_id for hotel in command_center_hotels()):
+        abort(404)
+    try:
+        percent = int(form_text(request.form.get("discount_percent")))
+        starts_on_text = form_text(request.form.get("discount_start_date"))
+        ends_on_text = form_text(request.form.get("discount_end_date"))
+        starts_on = date.fromisoformat(starts_on_text)
+        ends_on = date.fromisoformat(ends_on_text)
+    except (TypeError, ValueError):
+        flash("Enter a discount percentage and valid start and end dates.", "error")
+        return redirect(url_for("command_center"))
+    if not 1 <= percent <= 99:
+        flash("Discount must be between 1% and 99%.", "error")
+        return redirect(url_for("command_center"))
+    if (
+        starts_on.isoformat() != starts_on_text
+        or ends_on.isoformat() != ends_on_text
+        or starts_on > ends_on
+        or ends_on < date.today()
+    ):
+        flash("Choose a valid promotion date range that has not ended.", "error")
+        return redirect(url_for("command_center"))
+    values = {
+        "discount_percent": percent,
+        "discount_start_date": starts_on.isoformat(),
+        "discount_end_date": ends_on.isoformat(),
+        "discount_cancelled_at": None,
+    }
+    if SUPABASE_ENABLED:
+        result = get_supabase_admin().table("hotels").update(
+            values
+        ).eq("id", hotel_id).execute()
+        if not result.data:
+            abort(404)
+    else:
+        result = get_db().execute(
+            """UPDATE hotels SET discount_percent = ?, discount_start_date = ?,
+            discount_end_date = ?, discount_cancelled_at = NULL WHERE id = ?""",
+            (
+                values["discount_percent"], values["discount_start_date"],
+                values["discount_end_date"], hotel_id,
+            ),
+        )
+        if result.rowcount != 1:
+            abort(404)
+        get_db().commit()
+    flash("Hotel discount saved.", "success")
+    return redirect(url_for("command_center"))
+
+
+@app.post("/commandcenter/hotels/<hotel_id>/discount/cancel")
+def cancel_command_center_hotel_discount(hotel_id):
+    csrf_token = session.get("controller_csrf_token", "")
+    if not csrf_token or not hmac.compare_digest(
+        csrf_token, request.form.get("csrf_token", "")
+    ):
+        flash("This form expired. Refresh the page and try again.", "error")
+        return redirect(url_for("command_center"))
+    if not any(hotel["id"] == hotel_id for hotel in command_center_hotels()):
+        abort(404)
+    if SUPABASE_ENABLED:
+        result = get_supabase_admin().table("hotels").update({
+            "discount_cancelled_at": now_iso(),
+        }).eq("id", hotel_id).execute()
+        if not result.data:
+            abort(404)
+    else:
+        result = get_db().execute(
+            "UPDATE hotels SET discount_cancelled_at = ? WHERE id = ?",
+            (now_iso(), hotel_id),
+        )
+        if result.rowcount != 1:
+            abort(404)
+        get_db().commit()
+    flash("Hotel discount cancelled.", "success")
+    return redirect(url_for("command_center"))
 
 
 @app.get("/commandcenter/apartments")

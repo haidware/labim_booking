@@ -1365,6 +1365,132 @@ class MultiHotelFlowTests(unittest.TestCase):
             self.assertIsNotNone(saved_subscription["notified_at"])
         send_reception_email.assert_called_once()
 
+    def test_command_center_hotel_discount_controls_booking_price(self):
+        manager = self.app_module.app.test_client()
+        hotel_id = self.register_hotel(
+            manager, "Discount Test Hotel", "discount",
+            "1 Main Road", "Lagos", "Lagos",
+        )
+        self.configure_online_booking(
+            manager, hotel_id, "Discount Suite", 50000
+        )
+        with self.app_module.app.app_context():
+            db = self.app_module.get_db()
+            db.execute(
+                "UPDATE rooms SET status = 'available' WHERE hotel_id = ? AND number = '101'",
+                (hotel_id,),
+            )
+            db.commit()
+
+        controller = self.app_module.app.test_client()
+        with controller.session_transaction() as current_session:
+            current_session["user_role"] = "controller"
+        dashboard = controller.get("/commandcenter")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn(b"Hotel booking discounts", dashboard.data)
+        with controller.session_transaction() as current_session:
+            csrf_token = current_session["controller_csrf_token"]
+
+        today = date.today()
+        discount_response = controller.post(
+            f"/commandcenter/hotels/{hotel_id}/discount",
+            data={
+                "csrf_token": csrf_token,
+                "discount_percent": "5",
+                "discount_start_date": today.isoformat(),
+                "discount_end_date": today.isoformat(),
+            },
+        )
+        self.assertEqual(discount_response.status_code, 302)
+
+        check_in = today + timedelta(days=4)
+        check_out = check_in + timedelta(days=1)
+        guest = self.app_module.app.test_client()
+        hotel_response = guest.get(
+            "/api/public/hotels",
+            query_string={
+                "check_in": check_in.isoformat(),
+                "check_out": check_out.isoformat(),
+            },
+        )
+        self.assertEqual(hotel_response.status_code, 200)
+        hotel_result = next(
+            item for item in hotel_response.get_json()["hotels"]
+            if item["id"] == hotel_id
+        )
+        self.assertEqual(hotel_result["lowest_rate"], 47500)
+        self.assertEqual(hotel_result["lowest_original_rate"], 50000)
+        self.assertEqual(hotel_result["discount_percent"], 5)
+        hotel_slug = hotel_result["slug"]
+
+        rooms_response = guest.get(
+            f"/api/public/hotels/{hotel_slug}/rooms",
+            query_string={
+                "check_in": check_in.isoformat(),
+                "check_out": check_out.isoformat(),
+            },
+        )
+        self.assertEqual(rooms_response.status_code, 200)
+        room = rooms_response.get_json()["rooms"][0]
+        self.assertEqual(room["original_rate"], 50000)
+        self.assertEqual(room["rate"], 47500)
+        self.assertEqual(room["discount_percent"], 5)
+
+        with patch.object(self.app_module, "send_reception_booking_email"):
+            booking_response = guest.post(
+                "/api/public/bookings",
+                json={
+                    "hotel_id": hotel_id,
+                    "hotel_slug": hotel_slug,
+                    "room_number": "101",
+                    "check_in": check_in.isoformat(),
+                    "check_out": check_out.isoformat(),
+                    "guest_name": "Discount Guest",
+                    "email": "discount-guest@example.com",
+                    "phone": "08000000000",
+                },
+            )
+        self.assertEqual(booking_response.status_code, 201)
+        self.assertEqual(
+            booking_response.get_json()["booking"]["amount"], 47500
+        )
+        with self.app_module.app.app_context():
+            booking = self.app_module.get_db().execute(
+                "SELECT amount FROM reservations WHERE hotel_id = ? AND guest_name = ?",
+                (hotel_id, "Discount Guest"),
+            ).fetchone()
+            self.assertEqual(booking["amount"], 47500)
+
+            yesterday = (today - timedelta(days=1)).isoformat()
+            self.app_module.get_db().execute(
+                """UPDATE hotels SET discount_start_date = ?,
+                discount_end_date = ? WHERE id = ?""",
+                (yesterday, yesterday, hotel_id),
+            )
+            self.app_module.get_db().commit()
+        later_check_in = today + timedelta(days=8)
+        after_expiry = guest.get(
+            f"/api/public/hotels/{hotel_slug}/rooms",
+            query_string={
+                "check_in": later_check_in.isoformat(),
+                "check_out": (later_check_in + timedelta(days=1)).isoformat(),
+            },
+        )
+        self.assertEqual(after_expiry.status_code, 200)
+        self.assertEqual(after_expiry.get_json()["rooms"][0]["rate"], 50000)
+
+        cancel_response = controller.post(
+            f"/commandcenter/hotels/{hotel_id}/discount/cancel",
+            data={"csrf_token": csrf_token},
+        )
+        self.assertEqual(cancel_response.status_code, 302)
+        with self.app_module.app.app_context():
+            cancelled_at = self.app_module.get_db().execute(
+                "SELECT discount_cancelled_at FROM hotels WHERE id = ?",
+                (hotel_id,),
+            ).fetchone()["discount_cancelled_at"]
+            self.assertIsNotNone(cancelled_at)
+
     def test_whatsapp_handoff_command_center_is_controller_only(self):
         manager = self.app_module.app.test_client()
         hotel_id = self.register_hotel(

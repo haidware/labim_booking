@@ -79,6 +79,40 @@
         <p class="empty-state">No hotels have been registered yet.</p>
         {% endif %}
       </section>
+      <section class="data-panel" id="hotel-discounts">
+        <div class="panel-heading">
+          <strong>Hotel booking discounts</strong>
+          <small>Discounts apply to booking requests submitted during the inclusive date range; guests may stay later.</small>
+        </div>
+        {% if hotels %}
+        {% for hotel in hotels %}
+        <div class="table-wrap">
+          <h3>{{ hotel.name }} · {{ hotel.discount_status }}</h3>
+          <form method="post" action="{{ url_for('save_command_center_hotel_discount', hotel_id=hotel.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ controller_csrf_token }}">
+            <label>Discount percentage
+              <input type="number" name="discount_percent" min="1" max="99" step="1" value="{{ hotel.discount_percent or '' }}" required>
+            </label>
+            <label>Starts on
+              <input type="date" name="discount_start_date" value="{{ hotel.discount_start_date or today }}" required>
+            </label>
+            <label>Ends on
+              <input type="date" name="discount_end_date" value="{{ hotel.discount_end_date or today }}" required>
+            </label>
+            <button class="primary-button" type="submit">Save or adjust discount</button>
+          </form>
+          {% if hotel.discount_percent and not hotel.discount_cancelled_at %}
+          <form method="post" action="{{ url_for('cancel_command_center_hotel_discount', hotel_id=hotel.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ controller_csrf_token }}">
+            <button class="secondary-button" type="submit">Cancel discount</button>
+          </form>
+          {% endif %}
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="empty-state">Register a hotel before configuring a discount.</p>
+        {% endif %}
+      </section>
       <section class="data-panel" id="guest-payment-reports">
         <div class="panel-heading">
           <div>

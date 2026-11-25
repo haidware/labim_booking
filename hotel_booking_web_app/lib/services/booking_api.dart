@@ -28,6 +28,8 @@ class Hotel {
     this.description = '',
     this.photoUrls = const [],
     this.managerWhatsapp = '',
+    this.lowestOriginalRate,
+    this.discountPercent = 0,
   });
 
   factory Hotel.fromJson(Map<String, dynamic> json) {
@@ -46,6 +48,8 @@ class Hotel {
           .map((photo) => photo.toString())
           .toList(),
       managerWhatsapp: json['manager_whatsapp']?.toString() ?? '',
+      lowestOriginalRate: (json['lowest_original_rate'] as num?)?.toDouble(),
+      discountPercent: (json['discount_percent'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -61,6 +65,8 @@ class Hotel {
   final String description;
   final List<String> photoUrls;
   final String managerWhatsapp;
+  final double? lowestOriginalRate;
+  final int discountPercent;
 
   String get location =>
       [city, state].where((part) => part.isNotEmpty).join(', ');
@@ -92,6 +98,8 @@ class HotelRoom {
     required this.description,
     required this.photoUrls,
     this.videoUrl,
+    this.originalRate,
+    this.discountPercent = 0,
   });
 
   factory HotelRoom.fromJson(Map<String, dynamic> json) {
@@ -105,6 +113,8 @@ class HotelRoom {
           .map((photo) => photo.toString())
           .toList(),
       videoUrl: json['video_url']?.toString(),
+      originalRate: (json['original_rate'] as num?)?.toDouble(),
+      discountPercent: (json['discount_percent'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -115,6 +125,8 @@ class HotelRoom {
   final String description;
   final List<String> photoUrls;
   final String? videoUrl;
+  final double? originalRate;
+  final int discountPercent;
 }
 
 class BookingConfirmation {

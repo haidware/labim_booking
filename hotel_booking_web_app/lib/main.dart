@@ -2604,7 +2604,52 @@ class _HotelCard extends StatelessWidget {
                         )
                       else
                         const Spacer(),
-                      if (hotel.lowestRate != null)
+                      if (hotel.lowestRate != null &&
+                          hotel.discountPercent > 0 &&
+                          hotel.lowestOriginalRate != null)
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              naira.format(hotel.lowestOriginalRate),
+                              style: const TextStyle(
+                                color: Color(0xFF82959A),
+                                decoration: TextDecoration.lineThrough,
+                                fontSize: 11,
+                              ),
+                            ),
+                            Text.rich(
+                              TextSpan(
+                                children: [
+                                  TextSpan(
+                                    text: '${naira.format(hotel.lowestRate)}/',
+                                    style: const TextStyle(
+                                      color: Color(0xFF153D4C),
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                  const TextSpan(
+                                    text: 'night',
+                                    style: TextStyle(
+                                      color: Color(0xFF82959A),
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Text(
+                              '${hotel.discountPercent}% off',
+                              style: const TextStyle(
+                                color: Color(0xFFB45128),
+                                fontWeight: FontWeight.w700,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        )
+                      else if (hotel.lowestRate != null)
                         Text.rich(
                           TextSpan(
                             children: [
@@ -3130,12 +3175,54 @@ class _SelectableRoomCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  '${room.beds} bed${room.beds == 1 ? '' : 's'} · ${naira.format(room.rate)} per night',
+                  '${room.beds} bed${room.beds == 1 ? '' : 's'} ·',
                   style: const TextStyle(
                     color: Color(0xFF71868C),
                     fontSize: 13,
                   ),
                 ),
+                const SizedBox(height: 4),
+                if (room.discountPercent > 0 &&
+                    room.originalRate != null) ...[
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        '${naira.format(room.originalRate)} per night',
+                        style: const TextStyle(
+                          color: Color(0xFF82959A),
+                          fontSize: 12,
+                          decoration: TextDecoration.lineThrough,
+                        ),
+                      ),
+                      Text(
+                        '${naira.format(room.rate)} per night',
+                        style: const TextStyle(
+                          color: Color(0xFF153D4C),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        '${room.discountPercent}% OFF',
+                        style: const TextStyle(
+                          color: Color(0xFFB45128),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ] else
+                  Text(
+                    '${naira.format(room.rate)} per night',
+                    style: const TextStyle(
+                      color: Color(0xFF71868C),
+                      fontSize: 13,
+                    ),
+                  ),
                 if (room.description.isNotEmpty) ...[
                   const SizedBox(height: 5),
                   Text(
