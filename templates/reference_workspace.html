@@ -65,10 +65,15 @@
           <label>Hotel description<textarea name="description" rows="4" maxlength="1200" placeholder="Describe the hotel, facilities, and what guests can expect.">{{ hotel_profile.get('description', '') }}</textarea></label>
           <button class="secondary-button" type="submit">Save hotel description</button>
         </form>
-        {% if hotel_profile.photo_urls %}<div class="online-room-photo-gallery">{% for photo_url in hotel_profile.photo_urls %}<img src="{{ photo_url }}" alt="{{ hotel_name }} photo {{ loop.index }}">{% endfor %}</div>{% else %}<p>No hotel photos uploaded.</p>{% endif %}
+        {% set hotel_photo_count = hotel_profile.photo_urls|length %}
+        {% if hotel_profile.photo_urls %}<div class="online-room-photo-gallery hotel-photo-gallery">{% for photo_url in hotel_profile.photo_urls %}<img src="{{ photo_url }}" alt="{{ hotel_name }} photo {{ loop.index }}">{% endfor %}</div>{% else %}<p>No hotel photos uploaded.</p>{% endif %}
         <form class="online-photo-upload" method="post" enctype="multipart/form-data" action="{{ url_for('manage_hotel_photos') }}">
-          <label>Hotel photos (choose 1–5 JPG, PNG, or WebP images, max 5 MB each. Uploading replaces the current hotel gallery.)<input type="file" name="photos" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple required></label>
-          <button class="secondary-button" type="submit">Save hotel photos</button>
+          {% if hotel_photo_count < 5 %}
+          <label>Add hotel photos ({{ hotel_photo_count }} of 5 uploaded; add up to {{ 5 - hotel_photo_count }} more. JPG, PNG, or WebP, max 5 MB each. Existing photos are kept.)<input type="file" name="photos" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple required></label>
+          <button class="secondary-button" type="submit">Add hotel photos</button>
+          {% else %}
+          <p>Your hotel gallery has reached the 5-photo limit.</p>
+          {% endif %}
         </form>
       </section>
       <section class="data-panel">

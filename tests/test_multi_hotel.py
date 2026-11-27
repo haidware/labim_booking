@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from werkzeug.datastructures import FileStorage
 
 
 class MultiHotelFlowTests(unittest.TestCase):
@@ -985,6 +986,49 @@ class MultiHotelFlowTests(unittest.TestCase):
         self.assertEqual(photo_upload.status_code, 302)
         profile_page = manager.get("/workspace/manager/online-settings")
         self.assertIn(b"Flutter API Hotel photo 1", profile_page.data)
+        photo_upload = manager.post(
+            "/hotel/profile/photos",
+            data={
+                "photos": (
+                    BytesIO(b"\x89PNG\r\n\x1a\nsecond hotel profile photo"),
+                    "hotel-profile-second.png",
+                    "image/png",
+                ),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(photo_upload.status_code, 302)
+        profile_page = manager.get("/workspace/manager/online-settings")
+        self.assertIn(b"Existing photos are kept", profile_page.data)
+        self.assertIn(b"Flutter API Hotel photo 1", profile_page.data)
+        self.assertIn(b"Flutter API Hotel photo 2", profile_page.data)
+        self.assertIn(b"hotel-photo-gallery", profile_page.data)
+        with self.app_module.app.app_context():
+            saved_photos = self.app_module.hotel_photo_paths(
+                self.app_module.hotel_details(hotel_id)
+            )
+        self.assertEqual(len(saved_photos), 2)
+        self.assertTrue(all(
+            (self.app_module.ROOM_PHOTO_DIRECTORY / photo_path).is_file()
+            for photo_path in saved_photos
+        ))
+        with self.app_module.app.test_request_context():
+            self.app_module.session["hotel_id"] = hotel_id
+            with self.assertRaisesRegex(ValueError, "Add no more than 3 more"):
+                self.app_module.save_hotel_photos([
+                    FileStorage(
+                        stream=BytesIO(b"\x89PNG\r\n\x1a\nextra photo"),
+                        filename=f"extra-hotel-photo-{index}.png",
+                        content_type="image/png",
+                    )
+                    for index in range(4)
+                ])
+            self.assertEqual(
+                self.app_module.hotel_photo_paths(
+                    self.app_module.hotel_details(hotel_id)
+                ),
+                saved_photos,
+            )
         unavailable_manager = self.app_module.app.test_client()
         unavailable_hotel_id = self.register_hotel(
             unavailable_manager, "Flutter No Vacancy Hotel",
@@ -1101,7 +1145,7 @@ class MultiHotelFlowTests(unittest.TestCase):
         hotel_result = hotels[0]
         self.assertTrue(hotel_result["slug"].startswith("flutter-api-hotel"))
         self.assertEqual(hotel_result["description"], hotel_description)
-        self.assertEqual(len(hotel_result["photo_urls"]), 1)
+        self.assertEqual(len(hotel_result["photo_urls"]), 2)
         self.assertIn(hotel_id, hotel_result["photo_urls"][0])
         self.assertNotIn("photo_paths", hotel_result)
         self.assertEqual(hotel_result["available_room_count"], 3)

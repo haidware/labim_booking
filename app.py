@@ -262,6 +262,12 @@ def save_hotel_photos(uploaded_files):
         if not existing_rows:
             raise ValueError("Hotel profile not found.")
         old_paths = hotel_photo_paths(existing_rows[0])
+        if len(old_paths) + len(validated_uploads) > MAX_HOTEL_PHOTOS:
+            remaining = MAX_HOTEL_PHOTOS - len(old_paths)
+            raise ValueError(
+                f"Your hotel gallery has {len(old_paths)} photos. "
+                f"Add no more than {remaining} more."
+            )
         try:
             for extension, content, content_type in validated_uploads:
                 photo_path = f"{hotel_id}/{uuid4().hex}{extension}"
@@ -272,7 +278,7 @@ def save_hotel_photos(uploaded_files):
                 )
                 new_paths.append(photo_path)
             admin.table("hotels").update({
-                "photo_paths": new_paths,
+                "photo_paths": old_paths + new_paths,
             }).eq("id", hotel_id).execute()
         except Exception:
             app.logger.exception(
@@ -281,8 +287,6 @@ def save_hotel_photos(uploaded_files):
             if new_paths:
                 admin.storage.from_(ROOM_PHOTO_BUCKET).remove(new_paths)
             raise
-        if old_paths:
-            admin.storage.from_(ROOM_PHOTO_BUCKET).remove(old_paths)
         return
 
     existing = get_db().execute(
@@ -291,6 +295,12 @@ def save_hotel_photos(uploaded_files):
     if not existing:
         raise ValueError("Hotel profile not found.")
     old_paths = hotel_photo_paths(dict(existing))
+    if len(old_paths) + len(validated_uploads) > MAX_HOTEL_PHOTOS:
+        remaining = MAX_HOTEL_PHOTOS - len(old_paths)
+        raise ValueError(
+            f"Your hotel gallery has {len(old_paths)} photos. "
+            f"Add no more than {remaining} more."
+        )
     ROOM_PHOTO_DIRECTORY.mkdir(parents=True, exist_ok=True)
     try:
         for extension, content, _content_type in validated_uploads:
@@ -301,7 +311,7 @@ def save_hotel_photos(uploaded_files):
             new_paths.append(photo_path)
         result = get_db().execute(
             "UPDATE hotels SET photo_paths = ? WHERE id = ?",
-            (json.dumps(new_paths), hotel_id),
+            (json.dumps(old_paths + new_paths), hotel_id),
         )
         if result.rowcount != 1:
             raise ValueError("Hotel profile not found.")
@@ -314,10 +324,6 @@ def save_hotel_photos(uploaded_files):
             if destination.is_file():
                 destination.unlink()
         raise
-    for photo_path in old_paths:
-        previous = ROOM_PHOTO_DIRECTORY / photo_path
-        if previous.is_file():
-            previous.unlink()
 
 
 def hotel_photo_paths(hotel):
